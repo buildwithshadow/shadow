@@ -4,7 +4,7 @@ Chain: Arc Testnet, chain id `5042002`
 
 Live app: https://shadow-arc.vercel.app
 
-GitHub: https://github.com/dolepee/shadow
+GitHub: https://github.com/buildwithshadow/shadow
 
 ## Contracts (V4)
 

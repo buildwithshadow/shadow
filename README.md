@@ -14,7 +14,7 @@ Live app: https://shadow-arc.vercel.app
 
 Current Float page: https://shadow-arc.vercel.app/float
 
-Repository: https://github.com/dolepee/shadow
+Repository: https://github.com/buildwithshadow/shadow
 
 Chain: Arc Testnet, chain id `5042002`
 
@@ -225,7 +225,7 @@ No private keys are required to verify the current system.
 The quickest public path is the live V2 verifier plus the two read-only APIs that back the site:
 
 ```bash
-git clone https://github.com/dolepee/shadow
+git clone https://github.com/buildwithshadow/shadow
 cd shadow
 pnpm --dir app install --frozen-lockfile
 
