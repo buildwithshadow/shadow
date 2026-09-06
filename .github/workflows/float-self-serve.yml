@@ -71,7 +71,8 @@ jobs:
       - uses: actions/checkout@v4
       - uses: foundry-rs/foundry-toolchain@v1
         with:
-          version: stable
+          # Match the locally verified candidate toolchain; avoid floating upgrades.
+          version: v1.7.1
       - name: Test sponsored-only Mainnet V1 candidate
         run: forge test --root contracts --match-path 'test/ShadowFloatMainnet*.t.sol'
       - name: Enforce implementation runtime and scope locks
