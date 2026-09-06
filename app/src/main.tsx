@@ -2583,7 +2583,7 @@ function App() {
         </article>
         <a
           className="builderReferenceCard"
-          href="https://github.com/dolepee/shadow/blob/main/docs/PILOT_RECRUITMENT.md"
+          href="https://github.com/buildwithshadow/shadow/blob/main/docs/PILOT_RECRUITMENT.md"
           target="_blank"
           rel="noreferrer noopener"
         >
@@ -3591,7 +3591,7 @@ function FloatPilotOperations({
           </article>
         )}
       </div>
-      <a className="pilotOperationsRunbook" href="https://github.com/dolepee/shadow/blob/main/docs/PILOT_OPERATIONS.md" target="_blank" rel="noreferrer noopener">
+      <a className="pilotOperationsRunbook" href="https://github.com/buildwithshadow/shadow/blob/main/docs/PILOT_OPERATIONS.md" target="_blank" rel="noreferrer noopener">
         Open the reconcile-first incident runbook
       </a>
     </section>
@@ -3886,7 +3886,7 @@ function TreasuryRailSplit({
       title: "One read-only check follows the transaction path",
       body: "The current product surface separates Float V2 payments from adapter records and settlement evidence, while keeping every anchor public.",
       stat: "Arc tx anchors",
-      href: "https://github.com/dolepee/shadow",
+      href: "https://github.com/buildwithshadow/shadow",
       cta: "View repo",
     },
   ];
@@ -4203,7 +4203,7 @@ function TreasuryLiveVerifierPanel({
               <a href="/api/treasury" target="_blank" rel="noreferrer">
                 Open JSON
               </a>
-              <a href="https://github.com/dolepee/shadow" target="_blank" rel="noreferrer">
+              <a href="https://github.com/buildwithshadow/shadow" target="_blank" rel="noreferrer">
                 Run CLI
               </a>
             </div>
@@ -4225,7 +4225,7 @@ function TreasuryLiveVerifierPanel({
 
 function TreasuryOnchainLinks() {
   const links = [
-    { label: "V2 live verifier", value: "npm run float:v2-verify-live", href: "https://github.com/dolepee/shadow" },
+    { label: "V2 live verifier", value: "npm run float:v2-verify-live", href: "https://github.com/buildwithshadow/shadow" },
     { label: "V2 provider payment", value: shortAddress(FLOAT_V2_PROOF.directSpendTx), href: txUrl(FLOAT_V2_PROOF.directSpendTx) },
     { label: "V2 blocked spend", value: shortAddress(FLOAT_V2_PROOF.blockedSpendTx), href: txUrl(FLOAT_V2_PROOF.blockedSpendTx) },
     { label: "Vault allocation", value: shortAddress(TREASURY_PROOF.txs.allocation), href: txUrl(TREASURY_PROOF.txs.allocation) },
@@ -4348,7 +4348,7 @@ function ForumFeeRouterCanaryProof() {
             <code>7 / 3 · zero outstanding</code>
           </a>
           <a
-            href="https://github.com/dolepee/shadow/blob/main/docs/FORUM_FEEROUTER_CANARY.md"
+            href="https://github.com/buildwithshadow/shadow/blob/main/docs/FORUM_FEEROUTER_CANARY.md"
             target="_blank"
             rel="noreferrer"
           >
@@ -5126,7 +5126,7 @@ function FloatV2VerificationFooter({
             {anchor.label} <strong>{anchor.value}</strong>
           </a>
         ))}
-        <a href="https://github.com/dolepee/shadow" target="_blank" rel="noreferrer">
+        <a href="https://github.com/buildwithshadow/shadow" target="_blank" rel="noreferrer">
           strict check <strong>float:v2-verify-live</strong>
         </a>
       </div>
@@ -7915,8 +7915,8 @@ function SiteFooter() {
       title: "Builders",
       links: [
         { label: "Builder guide", href: "/builders" },
-        { label: "V2 live verifier", href: "https://github.com/dolepee/shadow" },
-        { label: "Source on GitHub", href: "https://github.com/dolepee/shadow" },
+        { label: "V2 live verifier", href: "https://github.com/buildwithshadow/shadow" },
+        { label: "Source on GitHub", href: "https://github.com/buildwithshadow/shadow" },
       ],
     },
   ];
@@ -8237,7 +8237,7 @@ function HomeProofOverview({
         <Link to="/float">Open Float</Link>
         <a href="/api/float?mode=v2" target="_blank" rel="noreferrer">Open V2 activity API</a>
         <a href={FLOAT_V2_PROOF.sourcify} target="_blank" rel="noreferrer">View source match</a>
-        <a href="https://github.com/dolepee/shadow" target="_blank" rel="noreferrer">View repository</a>
+        <a href="https://github.com/buildwithshadow/shadow" target="_blank" rel="noreferrer">View repository</a>
       </div>
     </section>
   );
