@@ -23,6 +23,7 @@ export const LEPTON_M1_DEPLOYMENTS = Object.freeze({
       generation: "m1-passkey-proof-2026-06-19",
       label: "Historical June 19 Circle passkey proof",
       txHash: "0x98b8b175d4ec8bf6d457d653383932e69d74300bd0b8a7e324e0cae3ac35a529",
+      blockNumber: 47710773n,
       mandateRegistry: "0x394b6955162ce147e813e0eea6104cd1164e3d33",
       bondedEnforcer: "0x05a11588155c6bde55bb7b3986f200ca556b23cc",
       v4StyleAdapter: "0x16ebc65c9f3188734277c9fafd73d9f13b93d868",
@@ -124,6 +125,27 @@ export async function readWithCanonicalFallback(primaryRead, canonicalRead) {
       );
     }
   }
+}
+
+export async function readHistoricalProofInput(readers) {
+  const attempts = [
+    ["RPC", readers.byHash],
+    ["canonical RPC", readers.byCanonicalHash],
+    ["pinned block", readers.byBlock],
+    ["Arcscan index", readers.byExplorer],
+  ];
+  const failures = [];
+  for (const [source, read] of attempts) {
+    if (typeof read !== "function") continue;
+    try {
+      const input = await read();
+      if (input) return { input, source };
+      failures.push(`${source}: no calldata`);
+    } catch (error) {
+      failures.push(`${source}: ${error?.shortMessage || error?.message || String(error)}`);
+    }
+  }
+  return { input: null, source: `unavailable (${failures.join("; ")})` };
 }
 
 export function transactionInputContainsAddress(input, address) {

@@ -58,6 +58,7 @@ export const LEPTON_M1_DEPLOYMENTS: {
       readonly generation: string;
       readonly label: string;
       readonly txHash: Hash;
+      readonly blockNumber: bigint;
       readonly mandateRegistry: Address;
       readonly bondedEnforcer: Address;
       readonly v4StyleAdapter: Address;
@@ -81,4 +82,10 @@ export function readWithCanonicalFallback<T>(
   primaryRead: () => Promise<T> | T,
   canonicalRead?: () => Promise<T> | T,
 ): Promise<T>;
+export function readHistoricalProofInput(readers: {
+  byHash?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+  byCanonicalHash?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+  byBlock?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+  byExplorer?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+}): Promise<{ input: Hex | null; source: string }>;
 export function transactionInputContainsAddress(input: Hex | string | null | undefined, address: Address | string): boolean;

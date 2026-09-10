@@ -5,6 +5,7 @@ import {
   LEPTON_M1_DEPLOYMENTS,
   LEPTON_WRITE_REASON,
   classifyLeptonV4Readiness,
+  readHistoricalProofInput,
   readWithCanonicalFallback,
   runLeptonWalletAction,
   transactionInputContainsAddress,
@@ -169,4 +170,80 @@ test("historical proof read remains fail closed when both RPCs fail", async () =
     ),
     /failed on both the configured and canonical RPC/,
   );
+});
+
+test("historical proof input prefers the RPC and never reaches a later source", async () => {
+  const touched = [];
+  const result = await readHistoricalProofInput({
+    byHash: () => {
+      touched.push("byHash");
+      return "0xabc0";
+    },
+    byBlock: () => {
+      touched.push("byBlock");
+      return "0xdead";
+    },
+    byExplorer: () => {
+      touched.push("byExplorer");
+      return "0xbeef";
+    },
+  });
+  assert.deepEqual(result, { input: "0xabc0", source: "RPC" });
+  assert.deepEqual(touched, ["byHash"]);
+});
+
+test("historical proof input falls through a pruned tx index to the pinned block", async () => {
+  let explorerCalls = 0;
+  const result = await readHistoricalProofInput({
+    byHash: async () => {
+      throw new Error("Transaction with hash could not be found.");
+    },
+    byBlock: async () => "0x765e827f",
+    byExplorer: async () => {
+      explorerCalls += 1;
+      return "0xshouldnotbeused";
+    },
+  });
+  assert.equal(result.input, "0x765e827f");
+  assert.equal(result.source, "pinned block");
+  assert.equal(explorerCalls, 0, "the explorer must stay untouched once the chain answered");
+});
+
+test("historical proof input reaches the Arcscan index only when every chain read fails", async () => {
+  const result = await readHistoricalProofInput({
+    byHash: async () => {
+      throw new Error("pruned");
+    },
+    byBlock: async () => undefined,
+    byExplorer: async () => "0x765e827f",
+  });
+  assert.deepEqual(result, { input: "0x765e827f", source: "Arcscan index" });
+});
+
+test("historical proof input degrades to unusable calldata instead of throwing when every source fails", async () => {
+  const result = await readHistoricalProofInput({
+    byHash: async () => {
+      throw new Error("pruned");
+    },
+    byBlock: async () => {
+      throw new Error("block read failed");
+    },
+    byExplorer: async () => {
+      throw new Error("HTTP 429");
+    },
+  });
+  assert.equal(result.input, null);
+  assert.match(result.source, /RPC: pruned/);
+  assert.match(result.source, /pinned block: block read failed/);
+  assert.match(result.source, /Arcscan index: HTTP 429/);
+  const historical = LEPTON_M1_DEPLOYMENTS.historicalProofs.circlePasskey;
+  assert.equal(
+    transactionInputContainsAddress(result.input, historical.v4StyleAdapter),
+    false,
+    "absent calldata must never satisfy the containment check",
+  );
+});
+
+test("the historical passkey proof pins the block its calldata is read from", () => {
+  assert.equal(LEPTON_M1_DEPLOYMENTS.historicalProofs.circlePasskey.blockNumber, 47710773n);
 });

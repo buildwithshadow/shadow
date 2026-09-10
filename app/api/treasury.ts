@@ -12,7 +12,7 @@ import {
 import {
   LEPTON_M1_DEPLOYMENTS,
   classifyLeptonV4Readiness,
-  readWithCanonicalFallback,
+  readHistoricalProofInput,
   transactionInputContainsAddress,
 } from "../leptonM1Config.js";
 
@@ -181,7 +181,7 @@ async function runTreasuryChecks() {
     txReceipt(publicClient, proof.blockedAllocationTx),
     txReceipt(publicClient, proof.x402SettlementTx),
     txReceipt(publicClient, proof.floatBindTx),
-    historicalProofInput(publicClient, canonicalPublicClient, historicalPasskeyProof.txHash),
+    historicalProofInput(publicClient, canonicalPublicClient, historicalPasskeyProof),
     readCurrentV4Readiness(publicClient),
   ]);
 
@@ -413,18 +413,25 @@ async function txReceipt(publicClient: any, txHash: `0x${string}`) {
   }
 }
 
-async function historicalProofInput(publicClient: any, canonicalPublicClient: any, txHash: `0x${string}`) {
-  try {
-    const tx = await readWithCanonicalFallback<{ input: `0x${string}` }>(
-      () => publicClient.getTransaction({ hash: txHash }),
-      canonicalPublicClient === publicClient ? undefined : () => canonicalPublicClient.getTransaction({ hash: txHash }),
+async function historicalProofInput(
+  publicClient: any,
+  canonicalPublicClient: any,
+  proof: { txHash: `0x${string}`; blockNumber: bigint },
+) {
+  const byHash = async (client: any) => (await client.getTransaction({ hash: proof.txHash })).input;
+  const fromBlock = async (client: any) => {
+    const block = await client.getBlock({ blockNumber: proof.blockNumber, includeTransactions: true });
+    const tx = (block.transactions as any[]).find(
+      (entry) => typeof entry === "object" && entry.hash?.toLowerCase() === proof.txHash.toLowerCase(),
     );
-    return { input: tx.input, source: "RPC" };
-  } catch (error) {
-    const tx = await explorerTransaction(txHash);
-    if (!tx?.raw_input) throw error;
-    return { input: tx.raw_input as `0x${string}`, source: "Arcscan index" };
-  }
+    return tx?.input as `0x${string}` | undefined;
+  };
+  return readHistoricalProofInput({
+    byHash: () => byHash(publicClient),
+    byCanonicalHash: canonicalPublicClient === publicClient ? undefined : () => byHash(canonicalPublicClient),
+    byBlock: () => fromBlock(publicClient),
+    byExplorer: async () => (await explorerTransaction(proof.txHash))?.raw_input,
+  });
 }
 
 async function verifyTransfer(
