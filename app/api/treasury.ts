@@ -181,12 +181,7 @@ async function runTreasuryChecks() {
     txReceipt(publicClient, proof.blockedAllocationTx),
     txReceipt(publicClient, proof.x402SettlementTx),
     txReceipt(publicClient, proof.floatBindTx),
-    readWithCanonicalFallback(
-      () => publicClient.getTransaction({ hash: historicalPasskeyProof.txHash }),
-      canonicalPublicClient === publicClient
-        ? undefined
-        : () => canonicalPublicClient.getTransaction({ hash: historicalPasskeyProof.txHash }),
-    ),
+    historicalProofInput(publicClient, canonicalPublicClient, historicalPasskeyProof.txHash),
     readCurrentV4Readiness(publicClient),
   ]);
 
@@ -198,7 +193,7 @@ async function runTreasuryChecks() {
   check(
     "historical passkey proof contains its declared adapter generation",
     transactionInputContainsAddress(historicalPasskeyTx.input, historicalPasskeyProof.v4StyleAdapter),
-    `${historicalPasskeyProof.generation} -> ${historicalPasskeyProof.v4StyleAdapter}`,
+    `${historicalPasskeyProof.generation} -> ${historicalPasskeyProof.v4StyleAdapter} via ${historicalPasskeyTx.source}`,
   );
   check(
     "current V4 live state matches the declared inactive generation",
@@ -415,6 +410,20 @@ async function txReceipt(publicClient: any, txHash: `0x${string}`) {
     } catch {
       return { ok: false, detail: sanitize(error) };
     }
+  }
+}
+
+async function historicalProofInput(publicClient: any, canonicalPublicClient: any, txHash: `0x${string}`) {
+  try {
+    const tx = await readWithCanonicalFallback<{ input: `0x${string}` }>(
+      () => publicClient.getTransaction({ hash: txHash }),
+      canonicalPublicClient === publicClient ? undefined : () => canonicalPublicClient.getTransaction({ hash: txHash }),
+    );
+    return { input: tx.input, source: "RPC" };
+  } catch (error) {
+    const tx = await explorerTransaction(txHash);
+    if (!tx?.raw_input) throw error;
+    return { input: tx.raw_input as `0x${string}`, source: "Arcscan index" };
   }
 }
 
