@@ -40,6 +40,8 @@ const ARC_CHAIN_ID = 5_042_002;
 const DEFAULT_USDC = "0x3600000000000000000000000000000000000000";
 const LOG_LOOKBACK = BigInt(process.env.FLOAT_LOG_LOOKBACK || "250000");
 const LOG_CHUNK_SIZE = BigInt(process.env.FLOAT_LOG_CHUNK_SIZE || "90000");
+const EXPLORER_API = process.env.FLOAT_EXPLORER_API || "https://testnet.arcscan.app/api/v2";
+const EXPLORER_MAX_PAGES = 20;
 const DEFAULT_INVITED_AGENTS = [
   "0x13585c6004fbA9D7D49219a6435B68348fD30770",
   "0x7891d0B43F067f1bA52B21682847Bb63985862Cc",
@@ -298,6 +300,7 @@ type IndexedLog<TArgs> = {
   args: TArgs;
   transactionHash: `0x${string}`;
   blockNumber: bigint;
+  logIndex: number;
   data: `0x${string}`;
   topics: readonly `0x${string}`[];
 };
@@ -446,7 +449,23 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 
     const lookbackFloor = latestBlock > LOG_LOOKBACK ? latestBlock - LOG_LOOKBACK : 0n;
     const fromBlock = cfg.startBlock > lookbackFloor ? cfg.startBlock : lookbackFloor;
-    const { receiptLogs: logs, x402Logs, warnings: logWarnings } = await readFloatLogs(client, cfg.float, fromBlock, latestBlock);
+    const [windowRead, historical] = await Promise.all([
+      readFloatLogs(client, cfg.float, fromBlock, latestBlock).then(
+        (value) => ({ value, error: null as unknown }),
+        (error: unknown) => ({ value: null, error }),
+      ),
+      readFloatLogsFromExplorer(cfg.float),
+    ]);
+    const historicalEmpty = historical.receiptLogs.length === 0 && historical.x402Logs.length === 0;
+    if (windowRead.error && historicalEmpty) throw windowRead.error;
+    const live = windowRead.value ?? {
+      receiptLogs: [] as Array<IndexedLog<FloatReceiptEventArgs>>,
+      x402Logs: [] as Array<IndexedLog<X402PaymentBoundEventArgs>>,
+      warnings: [`rpc window: ${sanitizeError(windowRead.error)}`],
+    };
+    const logs = mergeIndexedLogs(historical.receiptLogs, live.receiptLogs);
+    const x402Logs = mergeIndexedLogs(historical.x402Logs, live.x402Logs);
+    const logWarnings = [...live.warnings, ...historical.warnings];
     const x402ByRequest = new Map(
       x402Logs.map((log) => [
         log.args.requestHash,
@@ -563,6 +582,8 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
         toBlock: latestBlock.toString(),
         chunkSize: LOG_CHUNK_SIZE.toString(),
         complete: logWarnings.length === 0,
+        source: historical.pages > 0 ? "rpc-window + arcscan-historical-index" : "rpc-window",
+        historicalPages: historical.pages,
         warnings: logWarnings,
       },
       loopRuns: loopRuns.slice(-12).reverse(),
@@ -1412,6 +1433,61 @@ function buildProofChecks(input: {
   };
 }
 
+function mergeIndexedLogs<TArgs>(historical: Array<IndexedLog<TArgs>>, live: Array<IndexedLog<TArgs>>) {
+  const seen = new Set(historical.map((log) => `${log.transactionHash}:${log.logIndex}`));
+  const merged = [...historical];
+  for (const log of live) {
+    const key = `${log.transactionHash}:${log.logIndex}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    merged.push(log);
+  }
+  return merged.sort((a, b) =>
+    a.blockNumber === b.blockNumber ? a.logIndex - b.logIndex : a.blockNumber < b.blockNumber ? -1 : 1,
+  );
+}
+
+async function readFloatLogsFromExplorer(address: Address) {
+  const receiptLogs: Array<IndexedLog<FloatReceiptEventArgs>> = [];
+  const x402Logs: Array<IndexedLog<X402PaymentBoundEventArgs>> = [];
+  const warnings: string[] = [];
+  let query = "";
+  let pages = 0;
+  try {
+    while (pages < EXPLORER_MAX_PAGES) {
+      const response = await fetch(`${EXPLORER_API}/addresses/${address}/logs${query}`, {
+        headers: { "User-Agent": "shadow-float-api" },
+        signal: AbortSignal.timeout(8_000),
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const body = (await response.json()) as { items?: any[]; next_page_params?: Record<string, unknown> | null };
+      pages += 1;
+      for (const item of Array.isArray(body?.items) ? body.items : []) {
+        const log = {
+          transactionHash: item.transaction_hash as `0x${string}`,
+          blockNumber: BigInt(item.block_number),
+          logIndex: Number(item.index),
+          data: (item.data || "0x") as `0x${string}`,
+          topics: (Array.isArray(item.topics) ? item.topics.filter(Boolean) : []) as `0x${string}`[],
+        };
+        const receipt = decodeFloatReceiptLog(log);
+        if (receipt) {
+          receiptLogs.push({ ...log, args: receipt.args });
+          continue;
+        }
+        const x402 = decodeX402PaymentBoundLog(log);
+        if (x402) x402Logs.push({ ...log, args: x402.args });
+      }
+      if (!body?.next_page_params) return { receiptLogs, x402Logs, warnings, pages };
+      query = `?${new URLSearchParams(body.next_page_params as Record<string, string>).toString()}`;
+    }
+    warnings.push(`explorer logs: stopped at the ${EXPLORER_MAX_PAGES} page cap`);
+  } catch (error) {
+    warnings.push(`explorer logs: ${sanitizeError(error)}`);
+  }
+  return { receiptLogs, x402Logs, warnings, pages };
+}
+
 async function readFloatLogs(client: any, address: Address, fromBlock: bigint, toBlock: bigint) {
   const receiptLogs: Array<IndexedLog<FloatReceiptEventArgs>> = [];
   const x402Logs: Array<IndexedLog<X402PaymentBoundEventArgs>> = [];
@@ -1426,6 +1502,7 @@ async function readFloatLogs(client: any, address: Address, fromBlock: bigint, t
         topics: readonly `0x${string}`[];
         transactionHash: `0x${string}`;
         blockNumber: bigint;
+        logIndex: number;
       }>(client, { address, fromBlock: start, toBlock: end });
       for (const log of rawLogs) {
         const receipt = decodeFloatReceiptLog(log);
