@@ -54,7 +54,8 @@ npm run contracts:mainnet:test
 npm run float:mainnet:tooling:test
 ```
 
-Node 20.12 or later is required (`--env-file` and `util.parseEnv`); the tools fall back to an argv entrypoint check below Node 24.2. Params files are LF-only (`.gitattributes`), so sourcing them in Git Bash leaves no trailing `` in values.
+Node 20.12 or later is required (`--env-file` and `util.parseEnv`); the tools fall back to an argv entrypoint check below Node 24.2. On Windows, use Node 22, or 24.20.0 or later: Node 23.0–24.19 can abort with exit code `0xC0000409` after HTTP requests, often with no output (nodejs/node#56645, fixed in 24.20.0 by #61999). Params files are LF-only (`.gitattributes`), so sourcing them in Git Bash leaves no trailing `
+` in values.
 
 `contracts/foundry.toml` pins solc `0.8.24`, optimizer on with `runs = 1`, `via_ir`, `bytecode_hash = "none"` and `cbor_metadata = false`. The runtime therefore carries no metadata tail. The only difference between the artifact and on-chain code is the ten immutable slots.
 
