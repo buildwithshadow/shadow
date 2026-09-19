@@ -13,7 +13,8 @@ These command-line tools let each pilot participant run their own part of the li
 | Agent | `float-mainnet-intent.mjs`, `float-mainnet-cancel-nonce.mjs` | `FLOAT_AGENT_PRIVATE_KEY` (EOA agents), or an external signer for smart-account agents |
 | Executor (relayer) | `float-mainnet-submit.mjs` | `FLOAT_EXECUTOR_PRIVATE_KEY`, or none with `--calldata --from <executor>` |
 | Repayer (anyone) | `float-mainnet-repay.mjs` | `FLOAT_REPAYER_PRIVATE_KEY`, falling back to `FLOAT_AGENT_PRIVATE_KEY` |
-| Anyone, read only | `float-mainnet-line.mjs` | none |
+| Provider | `float-mainnet-provider.mjs` | `FLOAT_PROVIDER_PRIVATE_KEY` (EOA providers), or an external signer for a provider address with code |
+| Anyone, read only | `float-mainnet-line.mjs`, `float-mainnet-indexer.mjs`, `float-mainnet-evidence.mjs`, `float-mainnet-verify.mjs` | none |
 
 ## Setup
 
@@ -110,13 +111,46 @@ FLOAT_EXECUTOR_PRIVATE_KEY=... node app/scripts/float-mainnet-submit.mjs submit 
 
 Dry runs and `--calldata` output include `simulatedAt`, the block the simulation was taken at: a Safe executing later should simulate again. `submit` never sends an intent whose digest is already recorded. It never sends a simulated revert, and sends a simulated block only with `--allow-block`. The result is `paid` (with the provider payment) or `blocked` (with the reason). If an intent names an executor, only that address can submit it.
 
-### 6. Provider checks the payment
+### 6. Provider accepts, checks the payment, and delivers
+
+The provider protocol is Shadow's own convention for this candidate. It is not x402 or any other payment standard, and no seller in an existing catalog supports it: a provider has to adopt it. The kit signs with `FLOAT_PROVIDER_PRIVATE_KEY`, an EOA key. A provider address with code has its receipts checked with ERC-1271: it calls the kit's `acceptIntent` and `deliverResult` with a custom account `{ address, signTypedData }` that signs with its own signer, so every acceptance and delivery check still runs. Receipts are EIP-712 (`ShadowFloatMainnetProvider` version `1`), bound to the chain and the Float address.
+
+**1. Accept before payment.** The agent sends its signed intent file to the provider between steps 4 and 5, before the executor submits it. The provider checks the file and signs a `ServiceAcceptance`:
 
 ```bash
-node app/scripts/float-mainnet-line.mjs receipt --digest <digest from intent.json> --manifest $M
+FLOAT_PROVIDER_PRIVATE_KEY=... node app/scripts/float-mainnet-provider.mjs accept --intent intent.json \
+  --endpoint "https://provider.example/api/ask" --price 1000000 --request-id <the provider's request id> \
+  --store provider-store --out acceptance.json --manifest $M
 ```
 
-A `paid` receipt carries the `ProviderPaid` event: provider, principal and due date for that digest. `receiptStatus` is read from the contract and is authoritative. If the event lookup fails (for example because an RPC rejects the log range), the command still reports the status, with `event: null` and a hint. The provider serves the request tied to that digest; how a request is tied to a digest is agreed before the first purchase. No provider-side acceptance kit is included here.
+`accept` refuses an intent that:
+
+- does not pay this key's address, at this endpoint, at least `--price`;
+- is unsigned, or not signed by the agent;
+- would not pay now: stale, or predicted to be recorded as a refusal.
+
+The acceptance binds the request id (as its keccak256) to the intent's digest, provider, endpoint hash and principal. `acceptedAt` is the timestamp of the block the checks were read at; in the signed receipt it is the provider's own assertion, not a time the chain records. The digest commits to the provider, the endpoint and the principal, so a paid status for it proves that this exact intent paid this provider.
+
+**2. Serve only a paid digest.** After the executor submits:
+
+```bash
+node app/scripts/float-mainnet-provider.mjs check-payment --intent intent.json --acceptance acceptance.json --manifest $M
+```
+
+`receiptStatus[digest]` is read from the contract and is authoritative. The provider serves the request only when it is `2` (paid). `blocked` means the contract recorded a refusal and paid nothing; `none` means nothing is paid yet. The `ProviderPaid` event is looked up for reference only: if the lookup fails, for example because an RPC rejects the log range, the command still reports the status, with a hint. `float-mainnet-line.mjs receipt --digest <digest>` reads the same status.
+
+**3. Sign the delivery.**
+
+```bash
+FLOAT_PROVIDER_PRIVATE_KEY=... node app/scripts/float-mainnet-provider.mjs deliver --acceptance acceptance.json \
+  --result-file result.bin --result-ref <where the result is kept> --store provider-store --out delivery.json --manifest $M
+```
+
+`deliver` refuses unless the contract records the accepted digest as paid, and only the provider named in the acceptance can sign. When it finds the digest's `ProviderPaid` event, it also refuses unless that payment went to the acceptance's provider for the acceptance's principal. Its output's `crossCheck` says `passed: ...`, or `skipped: <reason>` when the event lookup found nothing or failed; the paid status alone is then all that was checked. The `DeliveryReceipt` carries keccak256 of the result and the accepted request id. Its `deliveredAt` is the timestamp of the block the payment was read at, again the provider's own assertion in the signed receipt.
+
+**4. Serve each paid digest once.** Providers MUST de-duplicate by digest, not by request id: an agent can retry, or ask again under a new request id, for the same paid digest. The provider's server stores each acceptance, and each result with its receipt, by digest, and a retried or concurrent request for that digest gets the stored ones back: no new work, and no new payment. `--store <dir>` does this for the CLI's receipts (the result itself stays with the provider), with one file per digest for each receipt kind. Each file is written in full to a temporary file and then hard-linked into place, so a stored receipt is never partial and never replaced; `--store` therefore needs a directory on a filesystem with hard links. `accept` returns the stored acceptance for the same `--request-id` and refuses any other request id for that digest. `deliver` returns the stored delivery for the same request id and refuses a different request id. A stored file naming another provider (a store shared by two keys), digest or request id is refused; a stored file whose signature does not verify is refused. Two concurrent first runs for a digest may both sign, but only one receipt is stored, and that is the one returned. Without `--store`, the output says `deduplication: "none: pass --store, or de-duplicate by digest in your server"`.
+
+`verify-receipt --file <receipt.json>` checks a receipt's binding and its signature at the latest block.
 
 ### 7. Repay, then reclaim
 
@@ -133,9 +167,59 @@ A partial repayment restores reserve but keeps the line locked. A full repayment
 - **Default.** After the due date, the sponsor runs `declare-default`. Before then it is refused with the seconds remaining; `--calldata` can prepare it early and reports `executableAt`. Repayment after default goes to the sponsor's recovery balance and never reopens the line. `claim-defaulted` pays out the reserve plus recovery, and explains when there is nothing yet to claim.
 - **Cancelling a signed intent.** Run `cancel-nonce --line-id $LINE --nonce <n>`. Smart-account agents use `--calldata --from $AGENT`. An intent signed while the line owed money is not consumed by the resulting revert; it becomes executable again after full repayment, so cancel intents you no longer want.
 
+## Evidence and verification
+
+Three tools, in order: the indexer, the exporter, and an independent verifier. None of them signs anything.
+
+```bash
+node app/scripts/float-mainnet-indexer.mjs index --out index.json --manifest $M
+node app/scripts/float-mainnet-evidence.mjs export --line-id $LINE --index index.json \
+  --intent c1.json --intent c2.json --intent c3.json --intent refusal.json \
+  --acceptance a1.json --delivery d1.json --request-id <digest>=<request id> \
+  --declared declared.json --out bundle.json --manifest $M
+node app/scripts/float-mainnet-verify.mjs verify --bundle bundle.json --manifest <the reviewed release manifest> --out report.json
+```
+
+Pass every `--acceptance`, `--delivery` and `--request-id` for each cycle, not only the first.
+
+- **Indexer.** Records every Float event from the manifest's deployment block to a pinned head, with each event's block hash, timestamp and transaction sender. `--resume` extends an index from its checkpoint, and rebuilds it if the checkpoint was reorganized away.
+- **Exporter.** Writes one line's evidence bundle (`ShadowFloatMainnet.EvidenceBundle`, schema 1) and a Markdown summary at `<out>.md` that keeps on-chain records, signed files and declarations apart. It attaches the agent's signed intents and the provider's receipts to the cycles and refusals they belong to, and checks the line's state on-chain against the indexed events. With `--index`, it first checks that each event has the indexer's shape, a position (block and log index) of its own and a block within the index's range, and orders the events by block and log index. It checks provider receipts with the provider kit's own rules. It refuses a file for another deployment or line, a file that contradicts the line's records, and a signature that does not verify. It also refuses a line with more than one `SponsorClaimed`: schema 1 records a single exit. It checks each signature where the verifier does: an intent at the block before the transaction that recorded it, a receipt at the observed block. A smart account that later rotates its signer therefore cannot fail the export of a genuine bundle. A missing file is recorded as `null` and counted. `--declared` takes a JSON file with any of `independentControl`, `customerPurpose`, `assistance` and `commercial`, copied verbatim.
+- **Verifier.** Does not import the indexer or the exporter. It reads only `ARC_RPC_URL`, the bundle and the release manifest, which is required, and re-derives every claim from the chain. Each check is `PASS`, `FAIL`, `MANUAL` (what it cannot check, for example a cycle without its intent file, or a rehearsal manifest's provenance) or `DECLARED`. Any `FAIL` exits 1; `MANUAL` and `DECLARED` never pass or fail the report. `ok` means no `FAIL`. `qualifying` means `ok` with nothing `MANUAL` (`DECLARED` does not count): only a qualifying report has checked everything the verifier can check, and only a report against a manifest committed in the verifying checkout can qualify. Even then, the reviewer must confirm where that commit comes from (see "Which manifest").
+
+**Which manifest.** Take `--manifest` from the repository's reviewed release record: a manifest committed at a reviewed commit. Never take it from the bundle's author. `deployment.manifestProvenance` passes only when the bytes the verifier read from `--manifest` are that file as committed at HEAD in this checkout, and it reports the commit that last changed it. The verifier reads the manifest once, hashes those bytes with `git hash-object` through the path's git filters and compares the result with HEAD's blob. An edit hidden from `git status` by `--assume-unchanged` or `--skip-worktree` therefore still fails, and a checkout whose line endings git converted (`core.autocrlf`, `.gitattributes`) still matches. The check also fails if the file changes while the verifier runs. A pass proves only that the manifest is committed in this checkout's history. It does not identify the reviewed deployment: an author can commit a manifest of their own on a local branch, and a reviewer can be on the author's branch. The reviewer must still confirm that the reported commit is on the reviewed upstream branch and that the checkout is that branch; the checkout also supplies the source pins and the verifier itself. Any other manifest is a rehearsal. The check is then `MANUAL` ("rehearsal manifest: not a committed release record"), so the report can be `ok` but never `qualifying`. The anchor checks catch a manifest that is inconsistent with the chain or with the reviewed code. `deployment.manifest` requires a passing manifest and compares its chain, address, runtime code hash, deploy block and source commit with the bundle's. `deployment.artifact` requires the code at the address, with its immutables masked, to equal the local artifact compiled from the pinned reviewed source with the release compiler profile (`contracts/out`, from `forge build`, which the verifier therefore needs). `deployment.config` requires the immutables in that code, `usdc()` among them, to equal the manifest's config. They do not establish which deployment was reviewed. Anyone can write a consistent manifest for a deployment of their own, for example a genuine-bytecode Float with their own token recorded as `config.usdc`, and pass all three. Only its provenance tells such a manifest from the reviewed release, and only once the reviewer has confirmed the reported commit as above.
+
+**Shared building blocks.** The verifier does not use the exporter's or the indexer's code, but it shares building blocks with them and with the manifest tool:
+
+- `validateIntentFile` (intent file rules), `signatureAt` (the signature rule) and `connectCandidate` (the connection and generation check);
+- `readDeployment`, which parses the manifest for `deployment.manifest`;
+- the provider kit's `validateReceiptFile` (receipt rules);
+- `findLogs`, the same chunked log scan that feeds the indexer and the verifier's completeness checks;
+- `floatAbi` (event decoding), and `read` and `readPolicy` (contract reads);
+- the CLI's parse helpers `parseAddress`, `parseBytes32` and `parseUint`, which parse the bundle's fields and the manifest's config;
+- the manifest tool's `maskImmutables`, `decodeImmutables`, `immutableWord` (used by `deployment.config` and by the manifest tool) and `IMMUTABLE_GETTERS`, and the `loadArtifact`, `readSourceState`, `pinnedLineageMismatches` and `compilerSettings` it uses;
+- the pinned constants `EXPECTED_COMPILER` and `PINNED_SOURCE_COMMIT`/`PINNED_SOURCE_BLOBS`, the same pins the manifest tool records.
+
+So `deployment.artifact` and `deployment.config` re-run the code that produced the manifest rather than checking it independently. A bug in any of these building blocks would affect the other tools and the verifier alike, so the verifier's agreement with them is not independent evidence about them.
+
+What the verifier establishes:
+
+- **On-chain.** The deployment's chain, address and runtime code hash, that they and the deploy block match the release manifest, that the code is the build of the pinned reviewed source with the release compiler profile, and that its immutables and `usdc()` are the manifest's config. The observed block's hash. The line's opening, id, sponsor, agent and epoch. Every `ProviderPaid`, `SpendBlocked`, `Repaid` and exit event for the line up to the observed block is in the bundle, and the bundle lists no other. Each payment's USDC transfer to the provider and the transaction's sender. Each repayment's payer, amount and USDC transfer. The line's state before each spend and at the observed block. The exporter's summary, recomputed rather than trusted; an intent file without a signature counts as missing, so stripping a signature fails the summary instead of only leaving a check `MANUAL`.
+- **Against the bundle's signatures only.** Each intent file, for a paid cycle or a refusal, recomputes to the recorded digest and carries a valid agent signature (ECDSA, or ERC-1271 for a smart account). Each signature is checked at the block before its spend or refusal. Each provider acceptance and delivery receipt is an EIP-712 signature by the paid provider that binds its request id to the digest. The acceptance names the paid principal and the endpoint the intent names or, without the intent file, the endpoint the provider's policy approved at the block before the spend. `acceptedAt` and `deliveredAt` are the provider's own assertions: the provider asserts it accepted before payment and delivered after it, and the verifier only compares those times with the payment block's timestamp. The chain records no signature, request id or result, so a missing file cannot be recovered from it. A delivery receipt is the provider's own statement that it served the request, not proof of the result's content or quality.
+- **Declared only.** Independent control, customer purpose, assistance and commercial terms are copied from the operator's declaration and reported as `DECLARED`. They are neither verified nor verifiable on-chain. The declaration's label must be the exporter's fixed label.
+
+The bundle's shape is strict: an unknown key in any of its own objects, its declaration included, or another `declared.label`, fails `bundle.shape`. The report's `afterObservedAt` counts the line's events after the observed block, up to `scannedTo`: the `head` it names, or 1,000,000 blocks past the observed block when the head is further, with `truncated: true`. It is informational: a bundle pinned at an older block still verifies, and this shows what it leaves out.
+
+Requirements and known limits:
+
+- **Archive RPC.** Code, state and signatures are read at historical blocks, so the RPC must serve archive state.
+- **A repository checkout with a build.** The verifier compares the deployed code with `contracts/out` and checks that the build was compiled from the pinned reviewed source files; it reads them, and runs `git`, in the checkout. A qualifying report also needs the release manifest committed in that checkout.
+- **One exit per bundle.** The exporter refuses a line with more than one `SponsorClaimed`, and the verifier fails a bundle whose line has more than one exit event.
+- **Same-block activity.** Pre-spend state and signatures are read at the end of the block before the spend, so the verifier cannot tell apart two transactions on the line in one block.
+- **Contract executors.** The spend checks require the executor to send `executeSpend` directly to the Float. A spend relayed through a Safe or another contract fails them.
+
 ## What is checked, and what is not yet
 
-Tested end to end on anvil through these CLIs only (`npm run float:mainnet:tools:test`):
+Tested end to end on anvil through these CLIs, unless noted (`npm run float:mainnet:tools:test`):
 
 - allowlisting, opening, status, build, sign, verify, preflight, paid submission;
 - a duplicate submission sends nothing;
@@ -147,14 +231,21 @@ Tested end to end on anvil through these CLIs only (`npm run float:mainnet:tools
 - keyless calldata modes;
 - a receipt lookup through an RPC that rejects log ranges over 10,000 blocks;
 - a send whose outcome is unknown, a follow-up read that fails after a mined transaction, and a race lost to another executor, each reporting the transaction hashes;
-- the new expiry floors, and the refusal of an intent that outlives its provider policy.
+- the new expiry floors, and the refusal of an intent that outlives its provider policy;
+- provider acceptance before payment, and its refusal of an intent for another provider or endpoint, below the price, unsigned, or predicted to be refused;
+- no delivery receipt for an unpaid or refused digest, or for an acceptance whose provider or principal the digest's `ProviderPaid` contradicts; an ERC-1271 provider's receipts;
+- a retried request answered with the stored result and receipt and no new work, through a local stub provider server built on the kit's exported functions; concurrent first requests for one digest get one acceptance (other request ids refused) and one piece of work;
+- `accept --store` and `deliver --store` returning the stored acceptance and delivery for a digest, and refusing a second request id for it, a stored receipt naming another provider (in a store shared with another key), a stored file under another digest's name, and a stored acceptance that another key signed; a leftover temporary file is ignored;
+- indexing, resuming from a checkpoint, and rebuilding after a reorg; an export from an index with its events out of order, and the refusal of a malformed one (unit-tested: two events at one position, an event outside the index's blocks, or a block number with a leading zero);
+- the evidence round trip. A pilot line with three purchases on separate UTC days (one repaid in two parts), a recorded refusal and a close, with a release manifest from `float-mainnet-manifest.mjs`, is indexed, exported and verified. The report is `ok`, and every check passes except `deployment.manifestProvenance`, which is `MANUAL`: the test's manifest is a temporary rehearsal file, not a committed release record, so the report is not qualifying. A dropped cycle, an altered repayment, swapped delivery receipts, a replaced intent signature (on a cycle or a refusal) and an edited exporter summary each fail at their own check; an edited declaration does not. A cycle exported without its intent file is `MANUAL`, not `PASS`;
+- verifier tampers, each failing at its own check: the observed block's hash, a missing exit, the spend's executor, an acceptance's principal, endpoint (with and without the intent file) or time, a delivery's time, a refusal's reason, a fabricated repayment, a stripped intent signature, an unknown key (the declaration's included) and another declaration label; an RPC failing mid-run fails the checks that needed it; a bundle observed before a later repayment still verifies and reports it;
+- the manifest anchors: a manifest naming a genuine-bytecode Float deployed with its own token, but carrying the reviewed config, fails `deployment.config`; a Float whose runtime differs from the artifact by one byte outside its immutables fails `deployment.artifact`; a manifest that records that Float's own token as its config passes every anchor check, and its provenance alone (`MANUAL`, since it is not committed) keeps the report from qualifying; a manifest file that changes while the verifier runs fails `deployment.manifestProvenance`. Repayment-to-log matching and the provenance check are also unit-tested: a file outside the checkout, a gitignored build file inside it, and other bytes for a tracked file are not passed; in a scratch repository, a committed file passes, and an edit fails it, even one hidden from `git status` by `--skip-worktree`;
+- the export of a smart-account agent's cycle after the account rotated its signer (simulated by replacing the account's code).
 
 The end-to-end suites need Foundry's `anvil` and fail without it; set `FLOAT_E2E_OPTIONAL=1` to skip them instead.
 
 Not yet validated, and required by the roadmap before pilot claims:
 
 - signing with a real Circle Agent Wallet on Arc testnet;
-- a provider accepting a request-bound payment proof;
-- recovery of an interrupted provider request;
-- a per-cycle evidence export;
+- a real provider adopting the acceptance and delivery protocol, including storing results by digest so that an interrupted request can be retried (tested only against the local stub and `--store`);
 - any run by an independent participant.
