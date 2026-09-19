@@ -1,9 +1,9 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir, userInfo } from "node:os";
-import { join, relative } from "node:path";
+import { basename, delimiter, join, relative } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -262,6 +262,10 @@ test("treeState reports uncommitted packaged inputs and remote-tracking branches
   git("init", "-q");
   writeFileSync(join(repo, "docs/spec.md"), "spec\n");
   writeFileSync(join(repo, "README.md"), "readme\n");
+  // The builder's own modules are packaged inputs; other scripts are not.
+  const scripts = ["float-mainnet-manifest.mjs", "float-mainnet-preflight.mjs", "rpc-read-queue.mjs", "other.mjs"];
+  mkdirSync(join(repo, "app/scripts"), { recursive: true });
+  for (const name of scripts) writeFileSync(join(repo, "app/scripts", name), "// v1\n");
   git("add", ".");
   git("commit", "-q", "-m", "init");
   assert.deepEqual(treeState(repo), { dirty: [], remoteBranches: [] });
@@ -271,7 +275,15 @@ test("treeState reports uncommitted packaged inputs and remote-tracking branches
   mkdirSync(join(repo, "contracts"));
   writeFileSync(join(repo, "contracts/New.sol"), "");
   writeFileSync(join(repo, "package.json"), "{}\n");
-  assert.deepEqual(treeState(repo).dirty, [" M docs/spec.md", "?? contracts/", "?? package.json"]);
+  for (const name of scripts) writeFileSync(join(repo, "app/scripts", name), "// v2\n");
+  assert.deepEqual(treeState(repo).dirty, [
+    " M app/scripts/float-mainnet-manifest.mjs",
+    " M app/scripts/float-mainnet-preflight.mjs",
+    " M app/scripts/rpc-read-queue.mjs",
+    " M docs/spec.md",
+    "?? contracts/",
+    "?? package.json",
+  ]);
 
   git("update-ref", "refs/remotes/origin/main", "HEAD");
   assert.deepEqual(treeState(repo).remoteBranches, ["origin/main"]);
@@ -377,6 +389,59 @@ test("writePackage removes the partial package on a mismatch or a missing solc",
 
 test("a missing solc is refused", () => {
   assert.throws(() => findSolc([join(root, "no-svm", "0.8.24")]), /solc 0\.8\.24\+commit\.e11b9ed9 not found/);
+});
+
+test("a fresh checkout on a machine with no solc is built by forge before solc is looked up", () => {
+  // A new clone of HEAD running this builder, with a home directory that holds
+  // no compiler and a PATH with no forge. The home's forge is a copy of node,
+  // so `forge build` runs the clone's `build` script, which does what forge
+  // build does on a new machine: installs solc into the home's svm directory
+  // and writes the artifact and its build-info.
+  const checkout = join(root, "fresh-checkout");
+  const home = join(root, "fresh-home");
+  const svm = join(home, ".svm", "0.8.24");
+  const git = (...args) => {
+    const run = spawnSync("git", args, { encoding: "utf8", env: gitEnv, windowsHide: true });
+    assert.equal(run.status, 0, run.stderr);
+    return run.stdout.trim();
+  };
+  git("clone", "-q", "--no-checkout", REPO_ROOT, checkout);
+  git("-C", checkout, "checkout", "-q", git("-C", REPO_ROOT, "rev-parse", "HEAD"));
+  cpSync(SCRIPT, join(checkout, "app/scripts/float-mainnet-review-package.mjs"));
+  symlinkSync(join(REPO_ROOT, "app/node_modules"), join(checkout, "app/node_modules"), "junction");
+  const forge = process.platform === "win32" ? "forge.exe" : "forge";
+  mkdirSync(join(home, ".foundry", "bin"), { recursive: true });
+  cpSync(process.execPath, join(home, ".foundry", "bin", forge));
+  const built = join(REPO_ROOT, "contracts", "out");
+  writeFileSync(
+    join(checkout, "build"),
+    [
+      'const { cpSync, mkdirSync } = require("node:fs");',
+      `mkdirSync(${JSON.stringify(svm)}, { recursive: true });`,
+      `cpSync(${JSON.stringify(solc)}, ${JSON.stringify(join(svm, basename(solc)))});`,
+      `cpSync(${JSON.stringify(join(built, "ShadowFloatMainnet.sol"))}, "contracts/out/ShadowFloatMainnet.sol", { recursive: true });`,
+      `cpSync(${JSON.stringify(join(built, "build-info"))}, "contracts/out/build-info", { recursive: true });`,
+    ].join("\n"),
+  );
+  const pathKey = Object.keys(process.env).find((name) => name.toUpperCase() === "PATH");
+  const env = {
+    ...process.env,
+    [pathKey]: process.env[pathKey].split(delimiter).filter((dir) => !existsSync(join(dir, forge))).join(delimiter),
+    HOME: home,
+    USERPROFILE: home,
+    APPDATA: join(home, "AppData"),
+  };
+  assert.throws(() => findSolc([svm]), /not found/);
+
+  const run = spawnSync(
+    process.execPath,
+    [join(checkout, "app/scripts/float-mainnet-review-package.mjs"), "build", "--out", join(root, "fresh-package"), "--skip-tests", "--allow-dirty"],
+    { encoding: "utf8", env, windowsHide: true },
+  );
+  assert.equal(run.status, 0, run.stderr);
+  assert.match(run.stderr, /no build-info matches the artifact; running forge build --root contracts --build-info/);
+  assert.equal(JSON.parse(run.stdout).solcReproduction, "creation and runtime bytecode match");
+  assert.equal(findSolc([svm]), join(svm, basename(solc)));
 });
 
 test("packaged files naming this machine are refused", () => {

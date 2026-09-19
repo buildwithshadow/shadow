@@ -35,8 +35,17 @@ const REVIEW_DOCS = [
   "docs/MAINNET_PATH.md",
 ];
 // Everything the package reads from the working tree: the reviewed docs, the
-// contracts and foundry.toml, this builder and the scripts that name it.
-const PACKAGED_INPUTS = ["docs/", "contracts/", "app/scripts/float-mainnet-review-package.mjs", "package.json"];
+// contracts and foundry.toml, this builder, the modules it loads and the
+// scripts that name it.
+const PACKAGED_INPUTS = [
+  "docs/",
+  "contracts/",
+  "app/scripts/float-mainnet-review-package.mjs",
+  "app/scripts/float-mainnet-preflight.mjs",
+  "app/scripts/float-mainnet-manifest.mjs",
+  "app/scripts/rpc-read-queue.mjs",
+  "package.json",
+];
 const FORGE_TEST_ARGS = ["test", "--root", "contracts", "--match-path", "test/ShadowFloatMainnet*.t.sol", "--json"];
 const FORGE_TEST_COMMAND = 'forge test --root contracts --match-path "test/ShadowFloatMainnet*.t.sol" --json';
 const SCOPE_GATE_COMMAND = "node contracts/test/mainnet-scope.test.mjs";
@@ -493,9 +502,10 @@ async function main() {
       `refusing to package: uncommitted changes to packaged inputs (${tree.dirty.join(", ")}); commit them, or pass --allow-dirty for a rehearsal package`,
     );
   }
-  const solc = findSolc();
 
+  // After loadBuild: its forge build installs solc on a machine that has none yet.
   const { artifact, artifactBytes, buildInfo } = loadBuild();
+  const solc = findSolc();
   const source = readSourceState(artifact);
   const problems = lineageProblems({ artifact, source, buildInfo });
   if (problems.length) throw new Error(`refusing to package: ${problems.join("; ")}`);
