@@ -66,12 +66,21 @@ function sha256(content) {
   return createHash("sha256").update(content).digest("hex");
 }
 
+// The same ABI entries. Order carries no meaning, and solc and Foundry list
+// the entries, and their keys, in different orders.
+function sameAbi(a, b) {
+  const entries = (abi) => abi.map((entry) => stableStringify(entry)).sort();
+  return sameJson(entries(a), entries(b));
+}
+
+// The ABI too: the package ships the artifact's ABI, and the scope gate reads it.
 function producesArtifact(buildInfo, artifact) {
-  const evm = buildInfo.output?.contracts?.[CONTRACT_SOURCE]?.[CONTRACT_NAME]?.evm;
+  const contract = buildInfo.output?.contracts?.[CONTRACT_SOURCE]?.[CONTRACT_NAME];
   return (
-    evm !== undefined &&
-    `0x${evm.bytecode.object}` === artifact.bytecode.object &&
-    `0x${evm.deployedBytecode.object}` === artifact.deployedBytecode.object
+    contract?.evm !== undefined &&
+    `0x${contract.evm.bytecode.object}` === artifact.bytecode.object &&
+    `0x${contract.evm.deployedBytecode.object}` === artifact.deployedBytecode.object &&
+    sameAbi(contract.abi, artifact.abi)
   );
 }
 
@@ -101,7 +110,7 @@ export function lineageProblems({ artifact, source, buildInfo }) {
   if (stale.length) {
     problems.push(`artifact was not built from the working tree: ${stale.join(", ")}; rebuild with forge build --root contracts --build-info`);
   }
-  if (!producesArtifact(buildInfo, artifact)) problems.push("build-info does not contain this artifact's bytecode");
+  if (!producesArtifact(buildInfo, artifact)) problems.push("build-info does not contain this artifact's bytecode and ABI");
   const drifted = driftedSources(buildInfo);
   if (drifted.length) problems.push(`build-info sources differ from the pinned blobs: ${drifted.join(", ")}`);
   return problems;
@@ -158,7 +167,7 @@ export function findSolc(directories = solcDirectories()) {
 
 // Compiles the package's reduced standard-JSON input (the two pinned sources
 // only) and compares the result with the package's artifact. Empty means the
-// shipped input alone reproduces the shipped bytecode.
+// shipped input alone reproduces the shipped bytecode and ABI.
 export function reproductionProblems(packageDir, solc) {
   const input = JSON.parse(readFileSync(join(packageDir, "build/build-info.json"), "utf8")).input;
   const artifact = JSON.parse(readFileSync(join(packageDir, "build/ShadowFloatMainnet.json"), "utf8"));
@@ -172,7 +181,8 @@ export function reproductionProblems(packageDir, solc) {
     return [`solc --standard-json did not run (status ${run.status}): ${run.error?.message ?? run.stderr.trim()}`];
   }
   const output = JSON.parse(run.stdout);
-  const evm = output.contracts?.[CONTRACT_SOURCE]?.[CONTRACT_NAME]?.evm;
+  const contract = output.contracts?.[CONTRACT_SOURCE]?.[CONTRACT_NAME];
+  const evm = contract?.evm;
   if (!evm) {
     const errors = (output.errors ?? []).filter((entry) => entry.severity === "error").map((entry) => entry.message);
     return [`solc produced no ${CONTRACT_SOURCE}:${CONTRACT_NAME} from build/build-info.json: ${errors.join("; ")}`];
@@ -184,6 +194,7 @@ export function reproductionProblems(packageDir, solc) {
   if (`0x${evm.deployedBytecode.object}` !== artifact.deployedBytecode.object) {
     problems.push("solc's runtime bytecode from build/build-info.json differs from build/ShadowFloatMainnet.json");
   }
+  if (!sameAbi(contract.abi, artifact.abi)) problems.push("solc's ABI from build/build-info.json differs from build/ShadowFloatMainnet.json");
   return problems;
 }
 
@@ -385,7 +396,9 @@ function reviewScope({ artifact, commit, dirty, tests }) {
     "node -e '",
     'const art = require("./build/ShadowFloatMainnet.json");',
     'const out = require("../float-review-build/out/ShadowFloatMainnet.sol/ShadowFloatMainnet.json");',
-    "const same = out.bytecode.object === art.bytecode.object && out.deployedBytecode.object === art.deployedBytecode.object;",
+    'const canon = (v) => (Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v));',
+    'const abi = (list) => JSON.stringify(list.map(canon).sort());',
+    "const same = out.bytecode.object === art.bytecode.object && out.deployedBytecode.object === art.deployedBytecode.object && abi(out.abi) === abi(art.abi);",
     `console.log(same ? "reproduces the artifact" : "MISMATCH"); process.exit(same ? 0 : 1);'`,
     "```",
     "",
@@ -395,13 +408,15 @@ function reviewScope({ artifact, commit, dirty, tests }) {
     `node -e 'process.stdout.write(JSON.stringify(require("./build/build-info.json").input))' > ../float-review-input.json`,
     "solc-0.8.24 --standard-json < ../float-review-input.json > ../float-review-output.json",
     "node -e '",
-    'const out = require("../float-review-output.json").contracts["src/ShadowFloatMainnet.sol"].ShadowFloatMainnet.evm;',
+    'const out = require("../float-review-output.json").contracts["src/ShadowFloatMainnet.sol"].ShadowFloatMainnet;',
     'const art = require("./build/ShadowFloatMainnet.json");',
-    'const same = "0x" + out.bytecode.object === art.bytecode.object && "0x" + out.deployedBytecode.object === art.deployedBytecode.object;',
+    'const canon = (v) => (Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v));',
+    'const abi = (list) => JSON.stringify(list.map(canon).sort());',
+    'const same = "0x" + out.evm.bytecode.object === art.bytecode.object && "0x" + out.evm.deployedBytecode.object === art.deployedBytecode.object && abi(out.abi) === abi(art.abi);',
     `console.log(same ? "reproduces the artifact" : "MISMATCH"); process.exit(same ? 0 : 1);'`,
     "```",
     "",
-    "`build/build-info.json` is the Foundry build-info reduced to the two in-scope sources. Its `input` is a solc standard JSON input: Foundry's `version`, `allowPaths`, `basePath` and `includePaths` keys are removed, because solc rejects them and the paths are local to the build machine. Its `output` is Foundry's compiler output for those sources. Compare bytecode, not ASTs: AST node ids depend on which other sources were in the compilation.",
+    "`build/build-info.json` is the Foundry build-info reduced to the two in-scope sources. Its `input` is a solc standard JSON input: Foundry's `version`, `allowPaths`, `basePath` and `includePaths` keys are removed, because solc rejects them and the paths are local to the build machine. Its `output` is Foundry's compiler output for those sources. Compare bytecode and ABI, not ASTs: AST node ids depend on which other sources were in the compilation. The ABI is compared as a set of entries, because solc and Foundry list them in different orders.",
     "",
     "## Test results",
     "",
@@ -530,7 +545,7 @@ async function main() {
         manifestSha256: sha256(manifestText),
         dirty: manifest.dirty,
         runtimeBytes: manifest.runtimeBytes,
-        solcReproduction: "creation and runtime bytecode match",
+        solcReproduction: "creation and runtime bytecode and ABI match",
         tests: manifest.tests,
         warnings,
       },

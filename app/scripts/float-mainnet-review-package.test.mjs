@@ -136,7 +136,7 @@ test("the manifest lists every packaged file with its sha256", () => {
 
 test("the summary prints the manifest's own sha256 and the solc reproduction", () => {
   assert.equal(summary.manifestSha256, sha256(readPackaged(first, "PACKAGE_MANIFEST.json")));
-  assert.equal(summary.solcReproduction, "creation and runtime bytecode match");
+  assert.equal(summary.solcReproduction, "creation and runtime bytecode and ABI match");
 });
 
 test("packaged sources are byte for byte the pinned git blobs", () => {
@@ -366,6 +366,16 @@ test("a reduced input that compiles to other bytecode is refused", () => {
   ]);
 });
 
+test("a packaged artifact whose ABI is not solc's is refused", () => {
+  const copy = join(root, "abi-edited-copy");
+  cpSync(first, copy, { recursive: true });
+  const edited = JSON.parse(readFileSync(join(copy, "build/ShadowFloatMainnet.json"), "utf8"));
+  edited.abi = edited.abi.filter((item) => item.name !== "repay");
+  assert.notEqual(edited.abi.length, artifact.abi.length, "the edit must drop an ABI entry");
+  writeFileSync(join(copy, "build/ShadowFloatMainnet.json"), JSON.stringify(edited));
+  assert.deepEqual(reproductionProblems(copy, solc), ["solc's ABI from build/build-info.json differs from build/ShadowFloatMainnet.json"]);
+});
+
 test("writePackage removes the partial package on a mismatch or a missing solc", () => {
   const manifestText = readFileSync(join(first, "PACKAGE_MANIFEST.json"), "utf8");
 
@@ -440,7 +450,7 @@ test("a fresh checkout on a machine with no solc is built by forge before solc i
   );
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stderr, /no build-info matches the artifact; running forge build --root contracts --build-info/);
-  assert.equal(JSON.parse(run.stdout).solcReproduction, "creation and runtime bytecode match");
+  assert.equal(JSON.parse(run.stdout).solcReproduction, "creation and runtime bytecode and ABI match");
   assert.equal(findSolc([svm]), join(svm, basename(solc)));
 });
 
@@ -548,5 +558,13 @@ test("a build-info that did not produce the artifact is refused", () => {
   const foreign = structuredClone(buildInfo);
   const { evm } = foreign.output.contracts[CONTRACT].ShadowFloatMainnet;
   evm.deployedBytecode.object = `${evm.deployedBytecode.object.slice(0, -2)}${evm.deployedBytecode.object.endsWith("00") ? "01" : "00"}`;
-  assert.deepEqual(lineageProblems({ artifact, source, buildInfo: foreign }), ["build-info does not contain this artifact's bytecode"]);
+  assert.deepEqual(lineageProblems({ artifact, source, buildInfo: foreign }), ["build-info does not contain this artifact's bytecode and ABI"]);
+});
+
+test("a cached artifact whose ABI was edited is not matched to any build-info", () => {
+  const edited = structuredClone(artifact);
+  edited.abi = edited.abi.filter((item) => item.name !== "repay");
+  assert.notEqual(edited.abi.length, artifact.abi.length, "the edit must drop an ABI entry");
+  assert.equal(pickBuildInfo([buildInfo], edited), null);
+  assert.deepEqual(lineageProblems({ artifact: edited, source, buildInfo }), ["build-info does not contain this artifact's bytecode and ABI"]);
 });
