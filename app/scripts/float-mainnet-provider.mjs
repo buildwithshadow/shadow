@@ -1,6 +1,6 @@
 import { randomBytes } from "node:crypto";
-import { existsSync, linkSync, mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import {
   encodeFunctionData,
@@ -488,20 +488,42 @@ async function storedReceipt(file, connection, kind, { account, digest, requestI
   return stored;
 }
 
-// False when another run stored the file first. The temporary file is removed
-// whether the write or the link fails or succeeds; when it is already gone, or
-// Windows holds it (EBUSY, EPERM), the outcome stands: a leftover is never read.
+// Flushes a directory's entries to disk. Windows cannot open a directory to
+// flush it, so there a file linked just before a power loss may be missing
+// afterwards (never partial: its bytes were flushed before the link).
+function syncDirectory(dir) {
+  if (process.platform === "win32") return;
+  const fd = openSync(dir, "r");
+  try {
+    fsyncSync(fd);
+  } finally {
+    closeSync(fd);
+  }
+}
+
+// False when another run stored the file first. The receipt's bytes are
+// flushed to disk before the link, and the directory after it. The temporary
+// file is removed whether the write or the link fails or succeeds; when it is
+// already gone, or Windows holds it (EBUSY, EPERM), the outcome stands: a
+// leftover is never read.
 function storeOnce(file, receipt) {
   const temporary = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
   try {
-    writeFileSync(temporary, `${stableStringify(receipt)}\n`, { flag: "wx" });
+    const fd = openSync(temporary, "wx");
+    try {
+      writeFileSync(fd, `${stableStringify(receipt)}\n`);
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
     try {
       linkSync(temporary, file);
-      return true;
     } catch (error) {
       if (error.code === "EEXIST") return false;
       throw error;
     }
+    syncDirectory(dirname(file));
+    return true;
   } finally {
     try {
       unlinkSync(temporary);
