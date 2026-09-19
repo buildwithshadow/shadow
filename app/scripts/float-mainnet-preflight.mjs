@@ -13,6 +13,7 @@ import {
   isAddress,
   keccak256,
   parseAbi,
+  stringToBytes,
   toBytes,
   zeroAddress,
 } from "viem";
@@ -238,14 +239,18 @@ export function runtimeBytes(artifact) {
   return (artifact.deployedBytecode.object.length - 2) / 2;
 }
 
+// git gets no GIT_* variable (GIT_DIR, GIT_INDEX_FILE, ...) that could point it
+// at another repository or index. Windows variable names are case-insensitive.
+const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
+
 // Forge compiles LF-normalized sources, so hashes are line-ending independent.
 export function readSourceState(artifact) {
-  const git = (args) => execFileSync("git", args, { cwd: repoRoot, encoding: "utf8" }).trim();
+  const git = (args) => execFileSync("git", args, { cwd: repoRoot, encoding: "utf8", env: gitEnv }).trim();
   const files = {};
   for (const [path, meta] of Object.entries(artifact.metadata.sources)) {
     const content = readFileSync(resolve(contractsRoot, path), "utf8").replace(/\r\n/g, "\n");
     files[`contracts/${path}`] = {
-      artifactMatchesWorkingTree: keccak256(toBytes(content)) === meta.keccak256,
+      artifactMatchesWorkingTree: keccak256(stringToBytes(content)) === meta.keccak256,
       gitBlob: createHash("sha1").update(`blob ${Buffer.byteLength(content)}\0`).update(content).digest("hex"),
       modifiedVsHead: git(["status", "--porcelain", "--", `contracts/${path}`]) !== "",
       sha256: createHash("sha256").update(content).digest("hex"),
