@@ -3,8 +3,8 @@ import { isDeepStrictEqual } from "node:util";
 import { BLOCK_REASONS } from "./float-mainnet-config.mjs";
 import { UsageError, bytes32Flag, connect, parseBytes32, readLine, required, runCli, stateName } from "./float-mainnet-cli.mjs";
 import { validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
-import { byPosition, checkpointStatus, indexEvents, readIndexFile } from "./float-mainnet-indexer.mjs";
-import { errorMessage, isEntrypoint } from "./float-mainnet-preflight.mjs";
+import { byPosition, checkpointStatus, indexEvents, lineEvents, readIndexFile } from "./float-mainnet-indexer.mjs";
+import { errorMessage, isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
 import { ACCEPTANCE_KIND, DELIVERY_KIND, signatureAt, validateReceiptFile } from "./float-mainnet-provider.mjs";
 
 // Per-line evidence export for the ShadowFloatMainnet candidate. The bundle
@@ -309,9 +309,10 @@ function deploymentFrom(manifestPath, connection) {
 
 // The events and the block they are pinned at: an index file (its events
 // checked by readIndexFile, then put in block and log order), provided it
-// covers the deployment and its checkpoint is still canonical, or a fresh scan
-// from the deployment block to the head.
-async function observedEvents(connection, indexPath) {
+// covers the deployment, its checkpoint is still canonical and it holds the
+// line's events exactly as the chain does, or a fresh scan from the deployment
+// block to the head.
+async function observedEvents(connection, indexPath, lineId) {
   if (indexPath === undefined) {
     const { index } = await indexEvents(connection, { fromBlock: connection.deployBlock });
     return { events: index.events, observedAt: index.checkpoint };
@@ -324,7 +325,24 @@ async function observedEvents(connection, indexPath) {
   if (!status.canonical) {
     throw new Error(`${indexPath}: checkpoint block ${index.checkpoint.blockNumber} is no longer ${index.checkpoint.blockHash} (reorg); run index --resume first`);
   }
-  return { events: [...index.events].sort(byPosition), observedAt: index.checkpoint };
+  const events = [...index.events].sort(byPosition);
+  // The index file is not trusted for the line: its events are read again from
+  // the chain and must match exactly, so an edited or truncated index can
+  // neither drop nor add a record, even a SpendBlocked, which changes nothing
+  // getLine reports.
+  const onChain = await lineEvents(connection, lineId, connection.deployBlock, BigInt(index.checkpoint.blockNumber));
+  const indexed = events.filter((entry) => entry.args.lineId === lineId);
+  if (!isDeepStrictEqual(indexed, onChain)) {
+    const keys = (list) => new Set(list.map((entry) => stableStringify(entry)));
+    const [indexedKeys, chainKeys] = [keys(indexed), keys(onChain)];
+    const at = (list) => list.map((entry) => `${entry.event} at block ${entry.blockNumber} log ${entry.logIndex}`).join(", ") || "none";
+    throw new Error(
+      `${indexPath} does not hold line ${lineId}'s events as the chain records them up to its checkpoint ${index.checkpoint.blockNumber}: ` +
+        `missing or altered ${at(onChain.filter((entry) => !indexedKeys.has(stableStringify(entry))))}; ` +
+        `not on the chain ${at(indexed.filter((entry) => !chainKeys.has(stableStringify(entry))))}`,
+    );
+  }
+  return { events, observedAt: index.checkpoint };
 }
 
 // getLine at observedAt must be what the indexed events imply; otherwise the
@@ -360,7 +378,7 @@ async function exportBundle(values) {
   const acceptances = receipts("acceptance", ACCEPTANCE_KIND);
   const deliveries = receipts("delivery", DELIVERY_KIND);
 
-  const { events, observedAt } = await observedEvents(connection, values.index);
+  const { events, observedAt } = await observedEvents(connection, values.index, lineId);
   const { bundle, expected } = assembleBundle({ deployment, observedAt, lineId, events, intents, acceptances, deliveries, requestIds, declared });
   await checkAgainstChain(connection, bundle, expected);
   // Pinned where the verifier checks them: an intent at the block before the
@@ -405,7 +423,7 @@ const COMMANDS = {
 const TOOL = "node app/scripts/float-mainnet-evidence.mjs";
 const USAGE = [
   `${TOOL} export --manifest <path> --line-id <bytes32> --out <bundle.json> [--intent <signed.json> ...] [--acceptance <file> ...] [--delivery <file> ...] [--request-id <digest>=<id> ...] [--declared <file.json>] [--index <index.json>]`,
-  "Writes the line's evidence bundle to --out and a Markdown summary to <out>.md. Without --index it scans every Float event from the manifest's deployment block to the latest block; with --index it uses that index file (from float-mainnet-indexer.mjs) pinned at its checkpoint, its events checked and put in block and log order.",
+  "Writes the line's evidence bundle to --out and a Markdown summary to <out>.md. Without --index it scans every Float event from the manifest's deployment block to the latest block; with --index it uses that index file (from float-mainnet-indexer.mjs) pinned at its checkpoint, its events checked and put in block and log order, and requires the line's events in it to be exactly those the chain returns up to the checkpoint.",
   `--declared is a JSON file with any of ${DECLARED_KEYS.join(", ")}, copied verbatim and labelled "${DECLARED_LABEL}".`,
   "A missing intent or receipt file is recorded as null and counted; a file for another deployment or line, or one that contradicts the line's records or does not verify, fails the export. So does a line with more than one SponsorClaimed: schema 1 records a single exit.",
 ];

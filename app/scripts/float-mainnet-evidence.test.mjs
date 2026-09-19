@@ -788,10 +788,24 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
     const index = readJson(seen.index);
     writeJson(path("late.json"), { ...index, fromBlock: (deployBlock + 1n).toString() });
     await fails("evidence", [...base, "--index", path("late.json")], {}, /late\.json starts at block \d+, after the deployment block \d+, so it can miss events/);
-    // A canonical checkpoint with the last payment dropped: the chain's line state gives it away.
+    // A canonical checkpoint with a line event dropped or edited: the chain's
+    // own logs for the line give it away, even for a refusal, which leaves
+    // everything getLine reports unchanged.
+    const incomplete = (name) =>
+      new RegExp(`${name}\\.json does not hold line ${seen.line.lineId}'s events as the chain records them up to its checkpoint ${index.checkpoint.blockNumber}: `);
     const lastPaid = index.events.findLastIndex((entry) => entry.event === "ProviderPaid" && entry.args.lineId === seen.line.lineId);
     writeJson(path("gap.json"), { ...index, events: index.events.filter((_, i) => i !== lastPaid) });
-    await fails("evidence", [...base, "--index", path("gap.json")], {}, /getLine at block \d+ disagrees with the indexed events \(cumulativePrincipalPaid 3000000, events 2000000\): the index is incomplete/);
+    const gap = await fails("evidence", [...base, "--index", path("gap.json")], {}, incomplete("gap"));
+    assert.match(gap.error.message, /: missing or altered ProviderPaid at block \d+ log \d+; not on the chain none$/);
+    const refusal = index.events.findIndex((entry) => entry.event === "SpendBlocked" && entry.args.lineId === seen.line.lineId);
+    assert.notEqual(refusal, -1);
+    writeJson(path("no-refusal.json"), { ...index, events: index.events.filter((_, i) => i !== refusal) });
+    const dropped = await fails("evidence", [...base, "--index", path("no-refusal.json")], {}, incomplete("no-refusal"));
+    assert.match(dropped.error.message, /: missing or altered SpendBlocked at block \d+ log \d+; not on the chain none$/);
+    const retimed = { ...index.events[refusal], timestamp: (BigInt(index.events[refusal].timestamp) + 1n).toString() };
+    writeJson(path("retimed.json"), { ...index, events: index.events.map((entry, i) => (i === refusal ? retimed : entry)) });
+    const edited = await fails("evidence", [...base, "--index", path("retimed.json")], {}, incomplete("retimed"));
+    assert.match(edited.error.message, /: missing or altered SpendBlocked at block (\d+) log (\d+); not on the chain SpendBlocked at block \1 log \2$/);
     // An event not in the indexer's shape is refused before any cycle is assembled.
     writeJson(path("malformed.json"), { ...index, events: index.events.map((entry, i) => (i === lastPaid ? { ...entry, args: { ...entry.args, principal: "-1" } } : entry)) });
     await fails("evidence", [...base, "--index", path("malformed.json")], {}, new RegExp(`malformed\\.json: events\\[${lastPaid}\\]\\.args\\.principal must be an unsigned decimal integer string$`));

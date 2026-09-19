@@ -586,7 +586,15 @@ async function deliver(values) {
     return { ok: true, ...stored, payment: null, crossCheck: null, deduplication, out: values.out ?? null };
   };
   const stored = file && (await storedReceipt(file, connection, DELIVERY_KIND, binding));
-  if (stored) return returned(stored);
+  if (stored) {
+    // deliverResult is skipped, so its acceptance checks run here: the stored
+    // delivery goes only to an acceptance this provider signed.
+    const provider = getAddress(account.address);
+    if (accepted.message.provider !== provider) throw new Error(`the acceptance is provider ${accepted.message.provider}'s, not ${provider}'s`);
+    const verdict = await signatureAt(connection, { signer: provider, hash: accepted.hash, signature: accepted.signature });
+    if (!verdict.valid) throw new Error(`the acceptance is not signed by provider ${provider}: ${verdict.detail}`);
+    return returned(stored);
+  }
   const { delivery, payment, crossCheck } = await deliverResult(connection, { acceptance, resultHash, resultRef: values["result-ref"], account, fromBlock });
   if (file && !storeOnce(file, delivery)) return returned(await storedReceipt(file, connection, DELIVERY_KIND, binding));
   if (values.out !== undefined) writeJsonFile(values.out, delivery);

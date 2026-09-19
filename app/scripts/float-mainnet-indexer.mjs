@@ -52,10 +52,9 @@ export async function checkpointStatus(connection, checkpoint) {
   return { canonical: block?.hash === checkpoint.blockHash, canonicalHash: block?.hash ?? null };
 }
 
-// Every Float log in [fromBlock, toBlock] (findLogs without an event returns
-// them all), decoded; an undecodable log fails the scan.
-async function scan(connection, fromBlock, toBlock) {
-  const logs = await findLogs(connection, undefined, undefined, fromBlock, toBlock);
+// Float logs decoded, with their block hash, timestamp and transaction
+// sender; an undecodable log fails the scan.
+async function enrich(connection, logs) {
   const blocks = new Map();
   const senders = new Map();
   const events = [];
@@ -80,6 +79,23 @@ async function scan(connection, fromBlock, toBlock) {
     });
   }
   return events;
+}
+
+// Every Float log in [fromBlock, toBlock] (findLogs without an event returns them all).
+async function scan(connection, fromBlock, toBlock) {
+  return enrich(connection, await findLogs(connection, undefined, undefined, fromBlock, toBlock));
+}
+
+// Every Float event that carries a line's id (indexed in each of them).
+const LINE_EVENTS = floatAbi.filter((item) => item.type === "event" && item.inputs.some((input) => input.name === "lineId")).map((item) => item.name);
+
+// The line's own events in [fromBlock, toBlock], as an index covering those
+// blocks holds them, in block and log order. Its lineId is an indexed topic,
+// so this reads only the line's logs.
+export async function lineEvents(connection, lineId, fromBlock, toBlock) {
+  const logs = [];
+  for (const name of LINE_EVENTS) logs.push(...(await findLogs(connection, name, { lineId }, fromBlock, toBlock)));
+  return plain(await enrich(connection, logs)).sort(byPosition);
 }
 
 // Indexes [fromBlock, head], or, given a previous index whose checkpoint is

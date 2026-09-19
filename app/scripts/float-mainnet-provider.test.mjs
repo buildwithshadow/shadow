@@ -695,6 +695,21 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
     const rerun = await ok("provider", deliver("acceptance-e.json", "another answer"), PROVIDER);
     assert.deepEqual([rerun.signature, rerun.typedData, rerun.payment, rerun.crossCheck], [delivered.signature, delivered.typedData, null, null]);
     assert.equal(rerun.deduplication, `returned the delivery stored at ${storedDelivery} for this digest; nothing re-signed`);
+    // The stored delivery goes only to an acceptance deliverResult would take:
+    // one the provider signed, naming the provider.
+    const acceptanceE = readJson(path("acceptance-e.json"));
+    const retimed = { ...acceptanceE.typedData.message, acceptedAt: (BigInt(acceptanceE.typedData.message.acceptedAt) + 1n).toString() };
+    writeJson(path("acceptance-e-retimed.json"), { ...acceptanceE, typedData: { ...acceptanceE.typedData, message: retimed } });
+    await fails("provider", deliver("acceptance-e-retimed.json", "answer e"), PROVIDER, new RegExp(`^the acceptance is not signed by provider ${provider.address}: `));
+    const strangers = await signReceipt(stranger, {
+      kind: ACCEPTANCE_KIND,
+      chainId: CHAIN_ID,
+      verifyingContract: float,
+      message: { ...storedFile.message, provider: stranger.address },
+      requestId: storedFile.requestId,
+    });
+    writeJson(path("acceptance-e-stranger.json"), strangers);
+    await fails("provider", deliver("acceptance-e-stranger.json", "answer e"), PROVIDER, new RegExp(`^the acceptance is provider ${stranger.address}'s, not ${provider.address}'s$`));
     // Nor is another key handed the provider's stored delivery, which would skip deliverResult's provider check.
     await fails("provider", deliver("acceptance-e.json", "answer e"), STRANGER, new RegExp(`holds provider ${provider.address}'s delivery, not ${stranger.address}'s; refusing to return it$`));
     // A second acceptance of the same paid digest is not served through the store.
