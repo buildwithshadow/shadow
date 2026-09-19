@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { http, keccak256, numberToHex, toBytes } from "viem";
+import { http, keccak256, numberToHex, stringToBytes, toBytes } from "viem";
 
 import {
   BLOCK_REASONS,
@@ -48,6 +48,11 @@ test("endpoint hashes are an exact bytes32 or keccak256 of the endpoint string",
   assert.throws(() => endpointHashFrom({}), /--endpoint/);
   assert.throws(() => endpointHashFrom({ endpointHash: "0x1234" }), /bytes32/);
   assert.throws(() => endpointHashFrom({ endpoint: "a", endpointHash: hash }), /not both/);
+});
+
+test("an endpoint string that looks like hex is hashed as UTF-8 text, not decoded", () => {
+  assert.equal(endpointHashFrom({ endpoint: "0x61" }), keccak256(stringToBytes("0x61")));
+  assert.notEqual(endpointHashFrom({ endpoint: "0x61" }), endpointHashFrom({ endpoint: "a" }));
 });
 
 test("the deployment must be named explicitly and consistently", () => {

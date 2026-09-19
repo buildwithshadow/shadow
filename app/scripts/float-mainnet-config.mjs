@@ -9,6 +9,7 @@ import {
   http,
   isAddress,
   keccak256,
+  stringToBytes,
   toBytes,
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
@@ -73,7 +74,8 @@ export function eip712Domain(chainId, verifyingContract) {
 }
 
 // The contract compares endpoint hashes for equality only. Candidate convention:
-// keccak256 of the exact UTF-8 endpoint string agreed with the provider.
+// keccak256 of the exact UTF-8 endpoint string agreed with the provider. A string
+// that looks like hex ("0x61") is still hashed as UTF-8 text, never decoded.
 export function endpointHashFrom({ endpoint, endpointHash }) {
   if (endpoint !== undefined && endpointHash !== undefined) {
     throw new Error("pass --endpoint or --endpoint-hash, not both");
@@ -83,7 +85,7 @@ export function endpointHashFrom({ endpoint, endpointHash }) {
     return endpointHash.toLowerCase();
   }
   if (endpoint === undefined || endpoint === "") throw new Error("pass --endpoint <string> or --endpoint-hash <bytes32>");
-  return keccak256(toBytes(endpoint));
+  return keccak256(stringToBytes(endpoint));
 }
 
 // Reads the deployment to talk to. The address comes from FLOAT_MAINNET_ADDRESS
