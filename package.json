@@ -37,6 +37,8 @@
     "float:v2-verify-live": "node app/scripts/float-v2-verify-live.mjs",
     "float:mainnet:preflight": "node app/scripts/float-mainnet-preflight.mjs",
     "float:mainnet:manifest": "node app/scripts/float-mainnet-manifest.mjs",
+    "float:mainnet:review-package": "node app/scripts/float-mainnet-review-package.mjs",
+    "float:mainnet:review-package:test": "node --test app/scripts/float-mainnet-review-package.test.mjs",
     "float:mainnet:tooling:test": "node --test app/scripts/float-mainnet-tooling.test.mjs",
     "float:mainnet:tools:test": "node --test --test-concurrency=1 app/scripts/float-mainnet-config.test.mjs app/scripts/float-mainnet-agent-tools.test.mjs app/scripts/float-mainnet-sponsor-tools.test.mjs app/scripts/float-mainnet-lifecycle.test.mjs",
     "float:autounderwrite": "node app/scripts/float-autounderwrite.mjs",
