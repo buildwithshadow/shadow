@@ -4,7 +4,20 @@ import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { createPublicClient, createWalletClient, defineChain, encodeAbiParameters, erc20Abi, getAddress, hashTypedData, http, keccak256, toBytes } from "viem";
+import {
+  createPublicClient,
+  createWalletClient,
+  defineChain,
+  encodeAbiParameters,
+  erc20Abi,
+  getAddress,
+  hashTypedData,
+  http,
+  keccak256,
+  stringToBytes,
+  toBytes,
+  zeroHash,
+} from "viem";
 import { sign } from "viem/accounts";
 
 import { connectCandidate, floatAbi } from "./float-mainnet-config.mjs";
@@ -18,6 +31,7 @@ import {
   checkPayment,
   deliverResult,
   requestIdHashOf,
+  resultRefHashOf,
   signReceipt,
   validateReceiptFile,
 } from "./float-mainnet-provider.mjs";
@@ -145,6 +159,59 @@ async function callProvider(method, route, body, headers = {}) {
   });
   return { status: response.status, json: await response.json() };
 }
+
+test("request ids and result locations are hashed as UTF-8 text, so a receipt whose plaintext id or location is rewritten, even to a hex-looking form, is rejected", async () => {
+  // viem's toBytes decodes "0x61" to the byte 0x61, which is also "a" in UTF-8.
+  assert.equal(keccak256(toBytes("0x61")), keccak256(toBytes("a")));
+  assert.notEqual(requestIdHashOf("0x61"), requestIdHashOf("a"));
+  assert.deepEqual([requestIdHashOf("0x61"), resultRefHashOf("0x61")], [keccak256(stringToBytes("0x61")), keccak256(stringToBytes("0x61"))]);
+  assert.deepEqual([resultRefHashOf(undefined), resultRefHashOf(null)], [zeroHash, zeroHash]);
+
+  // Account index 1 is not used; FLOAT only names the EIP-712 verifying contract.
+  const provider = account(5);
+  const FLOAT = account(20).address;
+  const deployment = { chainId: CHAIN_ID, address: FLOAT };
+  const digest = keccak256(stringToBytes("digest"));
+  const signed = (kind, message, extra) => signReceipt(provider, { kind, chainId: CHAIN_ID, verifyingContract: FLOAT, message, ...extra });
+  const validate = (file, kind) => validateReceiptFile(file, deployment, kind);
+
+  const acceptance = await signed(
+    ACCEPTANCE_KIND,
+    { digest, provider: provider.address, endpointHash: keccak256(stringToBytes(ENDPOINT)), principal: PRINCIPAL, requestIdHash: requestIdHashOf("a"), acceptedAt: 1n },
+    { requestId: "a" },
+  );
+  assert.equal(validate(acceptance, ACCEPTANCE_KIND).requestId, "a");
+  assert.throws(() => validate({ ...acceptance, requestId: "0x61" }, ACCEPTANCE_KIND), /^Error: requestId "0x61" does not hash to the message's requestIdHash 0x[0-9a-f]{64}$/);
+
+  const deliveryMessage = (resultRef) => ({
+    digest,
+    provider: provider.address,
+    requestIdHash: requestIdHashOf("a"),
+    resultHash: keccak256(stringToBytes("result")),
+    resultRefHash: resultRefHashOf(resultRef),
+    deliveredAt: 2n,
+  });
+  const delivery = await signed(DELIVERY_KIND, deliveryMessage("a"), { requestId: "a", resultRef: "a" });
+  assert.deepEqual([validate(delivery, DELIVERY_KIND).resultRef, delivery.typedData.message.resultRefHash], ["a", keccak256(stringToBytes("a"))]);
+  const { resultRef, ...withoutRef } = delivery;
+  for (const [file, pattern] of [
+    [{ ...delivery, requestId: "0x61" }, /^Error: requestId "0x61" does not hash to the message's requestIdHash/],
+    [{ ...delivery, resultRef: "0x61" }, /^Error: resultRef "0x61" does not hash to the message's resultRefHash 0x[0-9a-f]{64}$/],
+    [{ ...delivery, resultRef: "s3://bucket/elsewhere" }, /^Error: resultRef "s3:\/\/bucket\/elsewhere" does not hash to the message's resultRefHash/],
+    [withoutRef, /^Error: the receipt has no resultRef, but the message's resultRefHash is 0x[0-9a-f]{64}, not zero$/],
+    [{ ...delivery, resultRef: null }, /^Error: the receipt has no resultRef, but the message's resultRefHash is 0x[0-9a-f]{64}, not zero$/],
+    [{ ...delivery, resultRef: 7 }, /^Error: resultRef must be a string, or absent or null when the delivery names no result location$/],
+  ]) {
+    assert.throws(() => validate(file, DELIVERY_KIND), pattern);
+  }
+
+  // A delivery that names no result location signs the zero hash, and cannot be given one afterwards.
+  const bare = await signed(DELIVERY_KIND, deliveryMessage(undefined), { requestId: "a" });
+  assert.deepEqual([Object.hasOwn(bare, "resultRef"), bare.typedData.message.resultRefHash], [false, zeroHash]);
+  assert.equal(validate(bare, DELIVERY_KIND).resultRef, null);
+  assert.equal(validate({ ...bare, resultRef: null }, DELIVERY_KIND).hash, validate(bare, DELIVERY_KIND).hash);
+  assert.throws(() => validate({ ...bare, resultRef: "a" }, DELIVERY_KIND), /^Error: resultRef "a" does not hash to the message's resultRefHash 0x0{64}$/);
+});
 
 describe("provider verification kit", { skip: e2eSkip }, () => {
   // Account index 1 is not used.
@@ -361,10 +428,15 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
       PROVIDER,
     );
     assert.deepEqual(
-      [delivered.kind, delivered.requestId, delivered.resultRef, delivered.payment.paid, delivered.typedData.message.resultHash],
-      [DELIVERY_KIND, "req-a", "s3://bucket/a", true, keccak256(readFileSync(path("result-a.bin")))],
+      [delivered.kind, delivered.requestId, delivered.resultRef, delivered.payment.paid, delivered.typedData.message.resultHash, delivered.typedData.message.resultRefHash],
+      [DELIVERY_KIND, "req-a", "s3://bucket/a", true, keccak256(readFileSync(path("result-a.bin"))), keccak256(stringToBytes("s3://bucket/a"))],
     );
     assert.deepEqual(readJson(path("delivery-cli.json")).typedData, delivered.typedData);
+    // Without --result-ref the receipt names no location and signs the zero hash; it verifies.
+    await ok("provider", ["deliver", "--acceptance", path("acceptance-a.json"), "--result-file", path("result-a.bin"), "--out", path("delivery-no-ref.json")], PROVIDER);
+    const bare = readJson(path("delivery-no-ref.json"));
+    assert.deepEqual([Object.hasOwn(bare, "resultRef"), bare.typedData.message.resultRefHash], [false, zeroHash]);
+    assert.equal((await ok("provider", ["verify-receipt", "--file", path("delivery-no-ref.json")])).signatureValid, true);
     await fails("provider", ["deliver", "--acceptance", path("acceptance-a.json"), "--result-hash", keccak256(toBytes("x"))], STRANGER, /the acceptance is provider .*'s, not /);
   });
 
@@ -461,6 +533,9 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
         /not signed by provider/,
       ],
       "other-request.json": [{ ...delivery, requestId: "req-z" }, /requestId "req-z" does not hash to the message's requestIdHash/],
+      // The result location is signed: it cannot be redirected, or dropped.
+      "other-ref.json": [{ ...delivery, resultRef: "stub://results/elsewhere" }, /^resultRef "stub:\/\/results\/elsewhere" does not hash to the message's resultRefHash 0x[0-9a-f]{64}$/],
+      "dropped-ref.json": [{ ...delivery, resultRef: null }, /^the receipt has no resultRef, but the message's resultRefHash is 0x[0-9a-f]{64}, not zero$/],
       "other-float.json": [{ ...delivery, verifyingContract: usdc, typedData: { ...delivery.typedData, domain: { ...delivery.typedData.domain, verifyingContract: usdc } } }, /bound to contract/],
       "other-chain.json": [{ ...delivery, chainId: "1", typedData: { ...delivery.typedData, domain: { ...delivery.typedData.domain, chainId: "1" } } }, /bound to chain 1/],
       "wrong-kind.json": [{ ...delivery, kind: ACCEPTANCE_KIND }, /typedData.primaryType is "DeliveryReceipt", not "ServiceAcceptance"/],

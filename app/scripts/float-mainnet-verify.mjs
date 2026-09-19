@@ -3,7 +3,17 @@ import { readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
-import { encodeAbiParameters, erc20Abi, getAddress, isAddressEqual, keccak256, parseAbiParameters, parseEventLogs, zeroAddress } from "viem";
+import {
+  BlockNotFoundError,
+  encodeAbiParameters,
+  erc20Abi,
+  getAddress,
+  isAddressEqual,
+  keccak256,
+  parseAbiParameters,
+  parseEventLogs,
+  zeroAddress,
+} from "viem";
 import { BLOCK_REASONS, LINE_STATES, connectCandidate, floatAbi, printJson, readDeployment, revertName } from "./float-mainnet-config.mjs";
 import { MAX_LOOKBACK_BLOCKS, UsageError, findLogs, parseAddress, parseBytes32, parseUint, read, readPolicy, required, rpcErrorDetail } from "./float-mainnet-cli.mjs";
 import { validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
@@ -204,6 +214,8 @@ function parseBundle(raw) {
     cycles: arrayOf("cycles", raw.cycles).map((entry, i) => {
       const label = `cycles[${i}]`;
       objectOf(label, entry, KEYS.cycle);
+      // The exporter numbers the cycles 1, 2, ... in bundle order, as JSON numbers.
+      if (entry.index !== i + 1) throw new Error(`${label}.index is ${JSON.stringify(entry.index ?? null)}, not ${i + 1}: cycles are numbered from 1 in bundle order`);
       const spend = objectOf(`${label}.spend`, entry.spend, KEYS.spend);
       const provider = objectOf(`${label}.provider`, entry.provider, KEYS.provider);
       if (typeof entry.cleared !== "boolean") throw new Error(`${label}.cleared must be a boolean`);
@@ -379,6 +391,40 @@ export function matchRepayments(lineId, repayments, eventsByTx) {
     matched.add(`${log.transactionHash}:${log.logIndex}`);
     return log;
   });
+}
+
+// The refused transaction's USDC accounting, from its decoded Float events and
+// USDC Transfer logs: problems, or none. Another call in the same transaction
+// (a batch that also closes a line, say) may move USDC out of the Float, so each
+// transfer out must be another Float event's payment, and no ProviderPaid may
+// carry the refused digest. The contract transfers before it emits, so, in log
+// order, each ProviderPaid (principal to its provider), LineClosed or
+// SponsorClaimed (amount to its sponsor) explains one earlier transfer of
+// exactly that amount to that payee: the nearest one not already explained.
+export function refusalTransferProblems(float, refusedDigest, floatEvents, transfers) {
+  const byLog = (a, b) => a.logIndex - b.logIndex;
+  const problems = [];
+  if (floatEvents.some((log) => log.eventName === "ProviderPaid" && log.args.digest === refusedDigest)) {
+    problems.push(`the transaction also emits ProviderPaid for the refused digest ${refusedDigest}`);
+  }
+  const unexplained = transfers.filter((log) => isAddressEqual(log.args.from, float)).sort(byLog);
+  for (const event of [...floatEvents].sort(byLog)) {
+    const [payee, amount] =
+      event.eventName === "ProviderPaid"
+        ? [event.args.provider, event.args.principal]
+        : event.eventName === "LineClosed" || event.eventName === "SponsorClaimed"
+          ? [event.args.sponsor, event.args.amount]
+          : [];
+    if (payee === undefined) continue;
+    const k = unexplained.findLastIndex((log) => log.logIndex < event.logIndex && isAddressEqual(log.args.to, payee) && log.args.value === amount);
+    if (k >= 0) unexplained.splice(k, 1);
+  }
+  if (unexplained.length) {
+    problems.push(
+      `the transaction moves USDC out of the Float that no other Float event in it pays: ${unexplained.map((log) => `${log.args.value} to ${getAddress(log.args.to)}`).join(", ")}`,
+    );
+  }
+  return problems;
 }
 
 async function verifyCycle(ctx, { record }, cycle, i, windowOf, bundle) {
@@ -613,8 +659,15 @@ async function verifyRefusal(ctx, { record }, refusal, j) {
     return verdict(signature.valid ? [] : [`agent ${agent}: ${signature.detail}`], `agent ${agent} (${signature.signerKind}): ${signature.detail}`);
   });
   await record(id("noUsdcTransfer"), "chain", async () => {
-    const outgoing = ctx.transfers(await receipt).filter((log) => isAddressEqual(log.args.from, float));
-    return verdict(outgoing.length ? [`the transaction moves USDC out of the Float: ${outgoing.map((log) => `${log.args.value} to ${log.args.to}`).join(", ")}`] : [], "no USDC left the Float in the refused transaction");
+    const mined = await receipt;
+    const transfers = ctx.transfers(mined);
+    const outgoing = transfers.filter((log) => isAddressEqual(log.args.from, float)).length;
+    return verdict(
+      refusalTransferProblems(float, refusal.digest, ctx.floatEvents(mined), transfers),
+      outgoing
+        ? `no USDC left the Float for the refusal: each of the transaction's ${outgoing} USDC transfer(s) out of the Float is paid by another Float event in it`
+        : "no USDC left the Float in the refused transaction",
+    );
   });
   await record(id("receiptStatus"), "chain", async () => {
     const status = await read(connection, "receiptStatus", [refusal.digest], observed);
@@ -676,13 +729,20 @@ async function verifyBundle(raw, { rpcUrl, manifest }) {
       runtimeHash: deployment.runtimeKeccak256,
       deployBlock: deployment.deployBlock,
     });
-    usdc = getAddress(await read(connected, "usdc", [], observedAt.blockNumber));
     connection = connected;
     return PASS(
-      `chain ${connection.chainId}: the code at ${deployment.address} hashes to ${deployment.runtimeKeccak256} and reports the candidate's EIP-712 name, version and SpendIntent typehash; its usdc() is ${usdc}`,
+      `chain ${connection.chainId}: the code at ${deployment.address} hashes to ${deployment.runtimeKeccak256} and reports the candidate's EIP-712 name, version and SpendIntent typehash`,
     );
   });
   if (!connection) return list.report(extra);
+  // Before any state read pinned to observedAt, and again after the last one.
+  const observedHash = await record("observedAt.blockHash", "chain", async () => {
+    const block = await connection.client.getBlock({ blockNumber: observedAt.blockNumber });
+    const problems = block.hash === observedAt.blockHash ? [] : [`block ${observedAt.blockNumber} is ${block.hash} on this chain, not the bundle's ${observedAt.blockHash}`];
+    usdc = getAddress(await read(connection, "usdc", [], observedAt.blockNumber));
+    return verdict(problems, `block ${observedAt.blockNumber} is ${observedAt.blockHash} on this chain; every state read is pinned to it; usdc() there is ${usdc}`);
+  });
+  if (!usdc) return list.report(extra);
 
   await record("deployment.manifest", "chain", async () => {
     // The bundle's chain id stands in for FLOAT_MAINNET_EXPECTED_CHAIN_ID.
@@ -766,14 +826,6 @@ async function verifyBundle(raw, { rpcUrl, manifest }) {
       `the runtime code's immutables and ${config.map(([name]) => `${name}()`).join(", ")} equal the manifest's config; usdc() is its configured USDC ${Object.fromEntries(config).usdc}`,
     );
   });
-  await record("observedAt.blockHash", "chain", async () => {
-    const block = await connection.client.getBlock({ blockNumber: observedAt.blockNumber });
-    return verdict(
-      block.hash === observedAt.blockHash ? [] : [`block ${observedAt.blockNumber} is ${block.hash} on this chain, not the bundle's ${observedAt.blockHash}`],
-      `block ${observedAt.blockNumber} is ${observedAt.blockHash} on this chain; every state read is pinned to it`,
-    );
-  });
-
   const ctx = context(connection, bundle, usdc);
   let reserve = null;
   await record("line.opened", "chain", async () => {
@@ -810,7 +862,9 @@ async function verifyBundle(raw, { rpcUrl, manifest }) {
   let scanError = null;
   try {
     const names = ["ProviderPaid", "SpendBlocked", "Repaid", "LineClosed", "SponsorClaimed", "LineDefaulted"];
-    const found = await Promise.all(names.map((name) => findLogs(connection, name, { lineId: line.lineId }, deployment.deployBlock, observedAt.blockNumber)));
+    // One event's scan at a time, so a failed scan leaves none still running.
+    const found = [];
+    for (const name of names) found.push(await findLogs(connection, name, { lineId: line.lineId }, deployment.deployBlock, observedAt.blockNumber));
     logs = Object.fromEntries(names.map((name, k) => [name, sorted(found[k])]));
   } catch (error) {
     scanError = `scanning the line's events in blocks ${range} failed: ${rpcErrorDetail(error)}`;
@@ -935,6 +989,22 @@ async function verifyBundle(raw, { rpcUrl, manifest }) {
   for (const key of Object.keys(bundle.declared).sort()) declare(`declared.${key}`, bundle.declared.label, bundle.declared[key]);
   declare("bundle.verifierScope", bundle.declared.label, bundle.verifierScope);
   const afterObservedAt = await laterLineEvents(connection, line.lineId, observedAt.blockNumber);
+  // Every chain read is pinned by block number only, so, once they are all
+  // done, the block at observedAt must still be the bundle's: after a reorg
+  // during the run, the report would not be derived from the stated block.
+  if (observedHash.status === "PASS") {
+    let reread = null;
+    try {
+      const block = await connection.client.getBlock({ blockNumber: observedAt.blockNumber });
+      if (block.hash !== observedAt.blockHash) reread = `the observation block was reorganized during verification: block ${observedAt.blockNumber} is now ${block.hash}, not the bundle's ${observedAt.blockHash}`;
+    } catch (error) {
+      reread =
+        error instanceof BlockNotFoundError
+          ? `the observation block was reorganized during verification: block ${observedAt.blockNumber} no longer exists`
+          : `block ${observedAt.blockNumber} cannot be read again after the other checks, so they are not shown to have read the bundle's ${observedAt.blockHash}: ${rpcErrorDetail(error)}`;
+    }
+    if (reread) Object.assign(observedHash, { status: "FAIL", detail: reread });
+  }
   // Every check, readDeployment's read of the path included, must have seen the bytes read at the start.
   let changed = null;
   try {

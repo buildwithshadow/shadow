@@ -13,7 +13,8 @@ import {
   recoverAddress,
   size,
   slice,
-  toBytes,
+  stringToBytes,
+  zeroHash,
 } from "viem";
 import { ERC1271_MAGIC, RECEIPT_STATUSES, walletFromEnv } from "./float-mainnet-config.mjs";
 import {
@@ -76,6 +77,7 @@ export const DELIVERY_RECEIPT_TYPES = {
     { name: "provider", type: "address" },
     { name: "requestIdHash", type: "bytes32" },
     { name: "resultHash", type: "bytes32" },
+    { name: "resultRefHash", type: "bytes32" },
     { name: "deliveredAt", type: "uint256" },
   ],
 };
@@ -103,9 +105,20 @@ export function providerDomain(chainId, verifyingContract) {
   };
 }
 
+// keccak256 of the request id's UTF-8 bytes. A request id that looks like hex
+// ("0x61") is still hashed as text, never decoded, so it shares no hash with
+// the string those bytes spell ("a").
 export function requestIdHashOf(requestId) {
   if (typeof requestId !== "string" || requestId === "") throw new Error("requestId must be a non-empty string");
-  return keccak256(toBytes(requestId));
+  return keccak256(stringToBytes(requestId));
+}
+
+// A DeliveryReceipt's result location as signed: keccak256 of its UTF-8 bytes,
+// or zero when the delivery names none.
+export function resultRefHashOf(resultRef) {
+  if (resultRef === undefined || resultRef === null) return zeroHash;
+  if (typeof resultRef !== "string" || resultRef === "") throw new Error("resultRef must be a non-empty string when given");
+  return keccak256(stringToBytes(resultRef));
 }
 
 // The EIP-712 payload of a receipt, with bigint integers, for hashing or signing.
@@ -209,8 +222,16 @@ export function validateReceiptFile(file, { chainId, address }, expectedKind) {
   if (requestIdHashOf(file.requestId) !== message.requestIdHash) {
     throw new Error(`requestId ${JSON.stringify(file.requestId)} does not hash to the message's requestIdHash ${message.requestIdHash}`);
   }
-  if (file.resultRef !== undefined && (file.kind !== DELIVERY_KIND || typeof file.resultRef !== "string")) {
-    throw new Error("resultRef is only a string on a DeliveryReceipt");
+  if (file.kind !== DELIVERY_KIND) {
+    if (file.resultRef !== undefined) throw new Error("resultRef is only a string on a DeliveryReceipt");
+  } else if (file.resultRef !== undefined && file.resultRef !== null && typeof file.resultRef !== "string") {
+    throw new Error("resultRef must be a string, or absent or null when the delivery names no result location");
+  } else if (resultRefHashOf(file.resultRef) !== message.resultRefHash) {
+    throw new Error(
+      typeof file.resultRef === "string"
+        ? `resultRef ${JSON.stringify(file.resultRef)} does not hash to the message's resultRefHash ${message.resultRefHash}`
+        : `the receipt has no resultRef, but the message's resultRefHash is ${message.resultRefHash}, not zero`,
+    );
   }
   return {
     kind: file.kind,
@@ -391,7 +412,14 @@ export async function deliverResult(connection, { acceptance, resultHash, result
     kind: DELIVERY_KIND,
     chainId: connection.chainId,
     verifyingContract: connection.address,
-    message: { digest, provider, requestIdHash, resultHash: parseBytes32("resultHash", resultHash, Error), deliveredAt: payment.observedAt.timestamp },
+    message: {
+      digest,
+      provider,
+      requestIdHash,
+      resultHash: parseBytes32("resultHash", resultHash, Error),
+      resultRefHash: resultRefHashOf(resultRef),
+      deliveredAt: payment.observedAt.timestamp,
+    },
     requestId: accepted.requestId,
     resultRef,
   });
@@ -438,7 +466,12 @@ function storeFile(store, digest, slot) {
 async function storedReceipt(file, connection, kind, { account, digest, requestId }) {
   if (!existsSync(file)) return null;
   const stored = readJson(file, "stored receipt");
-  const receipt = validateReceiptFile(stored, connection, kind);
+  let receipt;
+  try {
+    receipt = validateReceiptFile(stored, connection, kind);
+  } catch (error) {
+    throw new Error(`${file}: ${errorMessage(error)} (a receipt stored before a format change is not reused; remove it only once nothing depends on it)`);
+  }
   const [done, second] = kind === ACCEPTANCE_KIND ? ["accepted", "acceptance"] : ["delivered", "delivery"];
   const provider = getAddress(account.address);
   if (receipt.message.provider !== provider) {
@@ -623,7 +656,7 @@ const USAGE = [
   `${TOOL} deliver --acceptance <path> (--result-file <path> | --result-hash <bytes32>) [--result-ref <s>] [--from-block <n>] [--store <dir>] [--out <path>] [--manifest <path>]   (${KEY})`,
   `${TOOL} verify-receipt --file <receipt.json> [--manifest <path>]`,
   "accept refuses an intent that does not pay this key's address at this endpoint at least --price, is unsigned or wrongly signed, or would not pay now; it signs a ServiceAcceptance binding --request-id to the intent digest.",
-  "deliver refuses unless the contract's receiptStatus for the accepted digest is paid and, when its ProviderPaid log is found, that payment went to the acceptance's provider and principal (crossCheck says which); it signs a DeliveryReceipt with keccak256 of the result.",
+  "deliver refuses unless the contract's receiptStatus for the accepted digest is paid and, when its ProviderPaid log is found, that payment went to the acceptance's provider and principal (crossCheck says which); it signs a DeliveryReceipt with keccak256 of the result and of --result-ref's UTF-8 bytes (zero without --result-ref), so the result location in the file cannot be changed without breaking the signature.",
   "Serve a digest once, whatever the request id. --store <dir> (on a filesystem with hard links) keeps one acceptance and one delivery per digest, each written in full before it is linked into place: accept returns the stored acceptance for the same --request-id and refuses another; deliver returns the stored delivery for the same request id and refuses another. Either refuses a stored receipt that names another provider or another digest, or whose signature does not verify. Two concurrent first runs for a digest may both sign, but only one receipt is stored, and that one is returned. Without --store, de-duplicate by digest in your server.",
   `Receipts are EIP-712 (${PROVIDER_DOMAIN_NAME} version ${PROVIDER_DOMAIN_VERSION}, bound to the chain and Float). ${KEY} is an EOA key (never printed); a provider address with code is checked with ERC-1271 and calls acceptIntent and deliverResult with its own signer.`,
 ];

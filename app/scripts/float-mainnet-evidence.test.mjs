@@ -15,7 +15,9 @@ import {
   http,
   keccak256,
   parseAbi,
+  stringToBytes,
   toBytes,
+  zeroHash,
 } from "viem";
 import { sign } from "viem/accounts";
 
@@ -42,11 +44,14 @@ const SPEC_RECEIPT_TYPES = {
     { name: "provider", type: "address" },
     { name: "requestIdHash", type: "bytes32" },
     { name: "resultHash", type: "bytes32" },
+    { name: "resultRefHash", type: "bytes32" },
     { name: "deliveredAt", type: "uint256" },
   ],
 };
 
 const hash = (label) => keccak256(toBytes(label));
+// Request ids and result locations are hashed as UTF-8 text, never decoded as hex.
+const textHash = (text) => keccak256(stringToBytes(text));
 const decimal = (message) => Object.fromEntries(Object.entries(message).map(([key, value]) => [key, typeof value === "bigint" ? value.toString() : value]));
 const readJson = (path) => JSON.parse(readFileSync(path, "utf8"));
 const writeJson = (path, value) => writeFileSync(path, JSON.stringify(value, null, 2));
@@ -81,14 +86,15 @@ const acceptanceMessage = ({ digest, provider, endpointHash, principal, requestI
   provider,
   endpointHash,
   principal,
-  requestIdHash: hash(requestId),
+  requestIdHash: textHash(requestId),
   acceptedAt,
 });
-const deliveryMessage = ({ digest, provider, requestId, result, deliveredAt }) => ({
+const deliveryMessage = ({ digest, provider, requestId, result, resultRef, deliveredAt }) => ({
   digest,
   provider,
-  requestIdHash: hash(requestId),
+  requestIdHash: textHash(requestId),
   resultHash: hash(result),
+  resultRefHash: resultRef === undefined ? zeroHash : textHash(resultRef),
   deliveredAt,
 });
 
@@ -323,7 +329,7 @@ describe("evidence assembly from indexed events and participant files", () => {
     const accept = (overrides = {}, signer = provider) =>
       receipt(signer, "ServiceAcceptance", acceptanceMessage({ digest: intent.digest, provider: signer.address, endpointHash: ENDPOINT_HASH, principal: 1_000_000n, requestId: "req-1", acceptedAt: 1n, ...overrides }), { requestId: overrides.requestId ?? "req-1" });
     const deliver = (overrides = {}) =>
-      receipt(provider, "DeliveryReceipt", deliveryMessage({ digest: intent.digest, provider: provider.address, requestId: "req-1", result: "answer", deliveredAt: 2n, ...overrides }), { requestId: overrides.requestId ?? "req-1", resultRef: "result-1" });
+      receipt(provider, "DeliveryReceipt", deliveryMessage({ digest: intent.digest, provider: provider.address, requestId: "req-1", result: "answer", resultRef: "result-1", deliveredAt: 2n, ...overrides }), { requestId: overrides.requestId ?? "req-1", resultRef: "result-1" });
     const acceptance = await accept();
     const delivery = await deliver();
     const requestId = parseRequestId(`${intent.digest}=req-1`);
@@ -396,6 +402,18 @@ describe("evidence assembly from indexed events and participant files", () => {
       [(entry) => ({ ...entry, args: { ...entry.args, principal: "1e6" } }), /^Error: events\[1\]\.args\.principal must be an unsigned decimal integer string$/],
       [(entry) => ({ ...entry, args: { ...entry.args, provider: entry.args.provider.toLowerCase() } }), /^Error: events\[1\]\.args\.provider 0x[0-9a-f]{40} is not in its stored form$/],
       [(entry) => ({ ...entry, from: undefined }), /^Error: events\[1\]\.from must be a 20-byte hex address/],
+      // The enrichment fields: block hash, timestamp and transaction index, each in its stored form.
+      [(entry) => ({ ...entry, blockHash: undefined }), /^Error: events\[1\]\.blockHash must be a 0x-prefixed bytes32$/],
+      [(entry) => ({ ...entry, blockHash: entry.blockHash.slice(0, 64) }), /^Error: events\[1\]\.blockHash must be a 0x-prefixed bytes32$/],
+      [(entry) => ({ ...entry, blockHash: `0x${entry.blockHash.slice(2).toUpperCase()}` }), /^Error: events\[1\]\.blockHash 0x[0-9A-F]{64} is not in its stored form$/],
+      [(entry) => ({ ...entry, timestamp: undefined }), /^Error: events\[1\]\.timestamp must be a decimal string without leading zeros$/],
+      [(entry) => ({ ...entry, timestamp: `0${entry.timestamp}` }), /^Error: events\[1\]\.timestamp must be a decimal string without leading zeros$/],
+      [(entry) => ({ ...entry, timestamp: Number(entry.timestamp) }), /^Error: events\[1\]\.timestamp must be a decimal string without leading zeros$/],
+      [(entry) => ({ ...entry, timestamp: "-1" }), /^Error: events\[1\]\.timestamp must be a decimal string without leading zeros$/],
+      [(entry) => ({ ...entry, transactionIndex: undefined }), /^Error: events\[1\] has no valid transactionIndex$/],
+      [(entry) => ({ ...entry, transactionIndex: "0" }), /^Error: events\[1\] has no valid transactionIndex$/],
+      [(entry) => ({ ...entry, transactionIndex: -1 }), /^Error: events\[1\] has no valid transactionIndex$/],
+      [(entry) => ({ ...entry, transactionIndex: 1.5 }), /^Error: events\[1\] has no valid transactionIndex$/],
     ]) {
       assert.throws(() => validateIndex(withEvent(1, edit), connection), pattern);
     }
@@ -573,7 +591,7 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
       await ok("intent", ["sign", "--intent", file("intent")], AGENT);
       const paid = await ok("submit", ["submit", "--intent", file("intent"), "--execute"], EXECUTOR);
       assert.deepEqual([paid.status, paid.digest], ["paid", built.digest]);
-      const delivery = deliveryMessage({ digest: built.digest, provider: provider.address, requestId, result: `answer ${day}`, deliveredAt: (await client.getBlock()).timestamp });
+      const delivery = deliveryMessage({ digest: built.digest, provider: provider.address, requestId, result: `answer ${day}`, resultRef: `results/${day}`, deliveredAt: (await client.getBlock()).timestamp });
       writeJson(file("delivery"), await receiptFile(provider, "DeliveryReceipt", delivery, { verifyingContract: float, requestId, resultRef: `results/${day}` }));
 
       const repayments = [];
@@ -756,6 +774,9 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
     const forged = { ...(await receiptFile(agent, "ServiceAcceptance", seen.cycles[0].acceptance, { verifyingContract: float, requestId: seen.cycles[0].requestId })), signer: provider.address };
     writeJson(path("forged.json"), forged);
     await fails("evidence", [...base, "--acceptance", path("forged.json")], {}, new RegExp(`forged\\.json: the provider signature does not verify for ${provider.address}: signature recovers to ${agent.address}`));
+    // A delivery whose result location was rewritten after the provider signed it.
+    writeJson(path("redirected.json"), { ...readJson(path("cycle1-delivery.json")), resultRef: "results/elsewhere" });
+    await fails("evidence", [...base, "--delivery", path("redirected.json")], {}, /redirected\.json: resultRef "results\/elsewhere" does not hash to the message's resultRefHash 0x[0-9a-f]{64}$/);
 
     await fails("evidence", [...base, "--index", path("orphaned.json")], {}, /orphaned\.json: checkpoint block \d+ is no longer 0x[0-9a-f]+ \(reorg\); run index --resume first/);
     const index = readJson(seen.index);
@@ -769,6 +790,20 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
     writeJson(path("malformed.json"), { ...index, events: index.events.map((entry, i) => (i === lastPaid ? { ...entry, args: { ...entry.args, principal: "-1" } } : entry)) });
     await fails("evidence", [...base, "--index", path("malformed.json")], {}, new RegExp(`malformed\\.json: events\\[${lastPaid}\\]\\.args\\.principal must be an unsigned decimal integer string$`));
     assert.equal(existsSync(out), false);
+    // index --resume keeps the existing events, so it refuses an index whose event lacks, or malforms, a block hash, timestamp or transaction index.
+    const paidEvent = index.events[lastPaid];
+    for (const [field, value, message] of [
+      ["blockHash", undefined, "\\.blockHash must be a 0x-prefixed bytes32"],
+      ["blockHash", paidEvent.blockHash.toUpperCase().replace("0X", "0x"), "\\.blockHash 0x[0-9A-F]{64} is not in its stored form"],
+      ["timestamp", undefined, "\\.timestamp must be a decimal string without leading zeros"],
+      ["timestamp", `0${paidEvent.timestamp}`, "\\.timestamp must be a decimal string without leading zeros"],
+      ["transactionIndex", undefined, " has no valid transactionIndex"],
+      ["transactionIndex", String(paidEvent.transactionIndex), " has no valid transactionIndex"],
+    ]) {
+      const name = `resume-${field}-${value === undefined ? "missing" : "malformed"}.json`;
+      writeJson(path(name), { ...index, events: index.events.map((entry, i) => (i === lastPaid ? { ...entry, [field]: value } : entry)) });
+      await fails("indexer", ["index", "--out", path(name), "--resume"], {}, new RegExp(`${name.replace(".", "\\.")}: events\\[${lastPaid}\\]${message}$`));
+    }
   });
 
   test("a smart-account agent that rotates its signer after the spend still exports: its signature is checked where the contract checked it", async () => {

@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, createTestClient, createWalletClient, defineChain, encodeAbiParameters, getAddress, http, keccak256, toBytes, toHex } from "viem";
+import { createPublicClient, createTestClient, createWalletClient, defineChain, encodeAbiParameters, getAddress, http, keccak256, toBytes, toHex, zeroHash } from "viem";
 import { sign } from "viem/accounts";
 
 import { BLOCK_REASONS } from "./float-mainnet-config.mjs";
@@ -15,7 +15,7 @@ import { DECLARED_LABEL } from "./float-mainnet-evidence.mjs";
 import { INDEX_KIND, validateIndex } from "./float-mainnet-indexer.mjs";
 import { PINNED_SOURCE_COMMIT, stableStringify } from "./float-mainnet-preflight.mjs";
 import { ACCEPTANCE_KIND, DELIVERY_KIND, signReceipt, validateReceiptFile } from "./float-mainnet-provider.mjs";
-import { manifestProvenance, matchRepayments } from "./float-mainnet-verify.mjs";
+import { manifestProvenance, matchRepayments, refusalTransferProblems } from "./float-mainnet-verify.mjs";
 
 // The independent verifier against a real local lifecycle driven through the
 // participant CLIs. The evidence bundles are assembled here from the CLIs'
@@ -25,6 +25,7 @@ import { manifestProvenance, matchRepayments } from "./float-mainnet-verify.mjs"
 const PORT = 18588;
 const PROXY_PORT = 18596;
 const CHANGE_PROXY_PORT = 18597;
+const REORG_PROXY_PORT = 18620;
 const RPC = `http://127.0.0.1:${PORT}`;
 const ENDPOINT = "https://provider.example/api/answer";
 const PRINCIPAL = 250_000n;
@@ -137,6 +138,42 @@ test("each listed repayment is matched to its own Repaid log: two identical Repa
   // Payer and amount must both match; the payer's case does not matter.
   assert.deepEqual(matchRepayments(lineId, [listed(tx, 499n), listed(tx, 500n, account(4).address)], events), [null, null]);
   assert.deepEqual(matchRepayments(lineId, [listed(tx, 500n, payer.toLowerCase())], events).map((log) => log.logIndex), [1]);
+});
+
+test("a refusal's transaction may move USDC out of the Float only as another Float event's payment, each transfer explained once, and never for the refused digest", () => {
+  const float = account(20).address;
+  const [sponsor, provider, stranger] = [2, 5, 6].map((i) => account(i).address);
+  const lineId = keccak256(toBytes("line"));
+  const otherLine = keccak256(toBytes("other line"));
+  const refused = keccak256(toBytes("refused digest"));
+  const blocked = { eventName: "SpendBlocked", args: { digest: refused, lineId, nonce: 1n, reason: 7 }, logIndex: 0 };
+  const transfer = (logIndex, to, value, from = float) => ({ eventName: "Transfer", args: { from, to, value }, logIndex });
+  const closed = (logIndex, amount) => ({ eventName: "LineClosed", args: { lineId: otherLine, sponsor, amount }, logIndex });
+  const claimed = (logIndex, amount) => ({ eventName: "SponsorClaimed", args: { lineId: otherLine, sponsor, amount }, logIndex });
+  const paid = (logIndex, digest, principal) => ({ eventName: "ProviderPaid", args: { digest, lineId: otherLine, provider, principal, dueAt: 1n }, logIndex });
+  const problems = (events, transfers) => refusalTransferProblems(float, refused, events, transfers);
+  const unexplained = (...moves) => [`the transaction moves USDC out of the Float that no other Float event in it pays: ${moves.join(", ")}`];
+
+  // The refusal alone; USDC moving into the Float (a repayment in the same batch) is not outgoing.
+  assert.deepEqual(problems([blocked], []), []);
+  assert.deepEqual(problems([blocked, { eventName: "Repaid", args: { lineId, payer: stranger, amount: 9n, principalRemaining: 0n }, logIndex: 2 }], [transfer(1, float, 9n, stranger)]), []);
+  // A batch that also closes a line, pays another digest and claims a defaulted line.
+  const batch = [blocked, closed(2, 1_000_000n), paid(4, keccak256(toBytes("other digest")), 250_000n), claimed(6, 300n)];
+  const batchTransfers = [transfer(1, sponsor, 1_000_000n), transfer(3, provider, 250_000n), transfer(5, sponsor, 300n)];
+  assert.deepEqual(problems(batch, batchTransfers), []);
+  // The payee's address case does not matter.
+  assert.deepEqual(problems([blocked, closed(2, 5n)], [transfer(1, sponsor.toLowerCase(), 5n)]), []);
+
+  // An outgoing transfer no event pays.
+  assert.deepEqual(problems([blocked], [transfer(1, stranger, 5n)]), unexplained(`5 to ${stranger}`));
+  assert.deepEqual(problems(batch, [...batchTransfers, transfer(7, stranger, 1n)]), unexplained(`1 to ${stranger}`));
+  // An event explains one transfer, of exactly its amount to its payee, made before it.
+  assert.deepEqual(problems([blocked, closed(3, 5n)], [transfer(1, sponsor, 5n), transfer(2, sponsor, 5n)]), unexplained(`5 to ${sponsor}`));
+  assert.deepEqual(problems([blocked, closed(2, 5n)], [transfer(1, sponsor, 6n)]), unexplained(`6 to ${sponsor}`));
+  assert.deepEqual(problems([blocked, closed(2, 5n)], [transfer(1, stranger, 5n)]), unexplained(`5 to ${stranger}`));
+  assert.deepEqual(problems([blocked, closed(1, 5n)], [transfer(2, sponsor, 5n)]), unexplained(`5 to ${sponsor}`));
+  // A ProviderPaid carrying the refused digest fails, even with its own transfer.
+  assert.deepEqual(problems([blocked, paid(2, refused, 7n)], [transfer(1, provider, 7n)]), [`the transaction also emits ProviderPaid for the refused digest ${refused}`]);
 });
 
 // The indexer feeds the exporter, not the verifier; its block numbers must be canonical decimal strings.
@@ -339,7 +376,7 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       deployment,
       observedAt,
       line,
-      cycles: cycles.map((cycle, index) => ({ ...cycle, index })),
+      cycles: cycles.map((cycle, i) => ({ ...cycle, index: i + 1 })),
       refusals,
       exit,
       declared: DECLARED,
@@ -785,7 +822,11 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
 
     const omitted = await failsAt(
       "t-omitted.json",
-      tamper((b) => b.cycles.splice(1, 1)),
+      // Renumbered, so only the omission itself is left to catch.
+      tamper((b) => {
+        b.cycles.splice(1, 1);
+        b.cycles[1].index = 2;
+      }),
       "completeness.providerPaid",
       new RegExp(`on chain but not in the bundle: ${bundleA.cycles[1].digest}@${bundleA.cycles[1].spend.txHash}`),
     );
@@ -795,7 +836,7 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     const fabricatedTx = keccak256(toBytes("no such transaction"));
     const fabricated = await failsAt(
       "t-fabricated.json",
-      tamper((b) => b.cycles.push({ ...structuredClone(b.cycles[2]), index: 3, digest: fabricatedDigest, spend: { ...b.cycles[2].spend, txHash: fabricatedTx }, repayments: [] })),
+      tamper((b) => b.cycles.push({ ...structuredClone(b.cycles[2]), index: 4, digest: fabricatedDigest, spend: { ...b.cycles[2].spend, txHash: fabricatedTx }, repayments: [] })),
       "completeness.providerPaid",
       new RegExp(`in the bundle but not on chain: ${fabricatedDigest}@${fabricatedTx}`),
     );
@@ -814,6 +855,22 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       new RegExp(`signature: signature recovers to ${stranger.address}, not ${provider.address}`),
     );
     assert.equal(forged.check("cycle[0].provider.acceptance").status, "PASS");
+    // The delivery signs its result location: a rewritten one fails, and a delivery that names none verifies.
+    await failsAt(
+      "t-result-ref.json",
+      tamper((b) => (b.cycles[0].provider.delivery.resultRef = "results/elsewhere")),
+      ["cycle[0].provider.delivery"],
+      /^resultRef "results\/elsewhere" does not hash to the message's resultRefHash 0x[0-9a-f]{64}$/,
+    );
+    const bareDelivery = await signReceipt(provider, {
+      kind: DELIVERY_KIND,
+      chainId: CHAIN_ID,
+      verifyingContract: float,
+      message: { ...original.message, resultRefHash: zeroHash },
+      requestId: original.requestId,
+    });
+    const noRef = await verifiesOk("t-delivery-no-ref.json", tamper((b) => (b.cycles[0].provider.delivery = bareDelivery)));
+    assert.deepEqual([Object.hasOwn(bareDelivery, "resultRef"), noRef.check("cycle[0].provider.delivery").status], [false, "PASS"]);
 
     await failsAt(
       "t-summary.json",
@@ -953,6 +1010,11 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       ["exit", (b) => (b.exit.recipient = sponsor.address), /^exit has unknown key recipient; /],
       ["summary", (b) => (b.exporterSummary.verified = "1"), /^exporterSummary has unknown key verified; /],
       ["declared", (b) => (b.declared.verifiedOnChain = "yes"), /^declared has unknown key verifiedOnChain; schema 1 allows label, independentControl, customerPurpose, assistance, commercial$/],
+      // Cycles are numbered 1, 2, ... in bundle order, as the exporter writes them.
+      ["index-changed", (b) => (b.cycles[1].index = 3), /^cycles\[1\]\.index is 3, not 2: cycles are numbered from 1 in bundle order$/],
+      ["index-duplicated", (b) => (b.cycles[1].index = 1), /^cycles\[1\]\.index is 1, not 2: /],
+      ["index-non-numeric", (b) => (b.cycles[0].index = "first"), /^cycles\[0\]\.index is "first", not 1: /],
+      ["index-string", (b) => (b.cycles[2].index = "3"), /^cycles\[2\]\.index is "3", not 3: /],
     ]) {
       await failsAt(`t-unknown-${name}.json`, tamper(edit), ["bundle.shape"], pattern);
     }
@@ -967,13 +1029,17 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
   });
 
   test("an RPC that fails mid-run fails the checks that needed it, and passes none of them", async () => {
-    // Relays every call to anvil except eth_getLogs, which it answers with an error.
+    // Relays every call to anvil except eth_getLogs, which it answers with an
+    // error. It counts the calls of the line's scan (up to observedAt), not
+    // those of the informational scan past it.
+    let lineScanCalls = 0;
     const proxy = createServer(async (request, response) => {
       let body = "";
       for await (const chunk of request) body += chunk;
       const call = JSON.parse(body);
       response.setHeader("content-type", "application/json");
       if (call.method === "eth_getLogs") {
+        if (BigInt(call.params[0].fromBlock) <= BigInt(bundleA.observedAt.blockNumber)) lineScanCalls += 1;
         return response.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, error: { code: -32000, message: "eth_getLogs is unavailable" } }));
       }
       const upstream = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body });
@@ -1001,10 +1067,47 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       proxy.close();
     }
     for (const id of down.ids("FAIL")) assert.match(down.check(id).detail, /RPC said: eth_getLogs is unavailable$/, id);
+    // The line's scan stops at its first failed call, with no other event's scan left running.
+    assert.equal(lineScanCalls, 1);
     // The informational scan past observedAt reports its failure without failing anything.
     const { head, scannedTo, truncated, laterLineEvents } = down.report.afterObservedAt;
     assert.deepEqual([head, scannedTo, truncated, laterLineEvents], [null, null, null, null]);
     assert.match(down.report.afterObservedAt.error, /^scanning the blocks after observedAt \d+ failed: .*eth_getLogs is unavailable$/s);
+  });
+
+  test("a reorg of the observation block during the run fails observedAt.blockHash, and nothing else", async () => {
+    // Relays every call to anvil. The first eth_getBlockByNumber for the
+    // observation block passes through; every later one reports another hash
+    // at that height, as if the block was reorganized after the first check.
+    const observed = toHex(BigInt(bundleA.observedAt.blockNumber));
+    let reads = 0;
+    const proxy = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const call = JSON.parse(body);
+      const answer = await (await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body })).json();
+      if (call.method === "eth_getBlockByNumber" && call.params[0] === observed && reads++ > 0) {
+        // The real hash with its last hex digit changed.
+        const { hash } = answer.result;
+        answer.result.hash = `${hash.slice(0, -1)}${hash.endsWith("0") ? "1" : "0"}`;
+      }
+      response.setHeader("content-type", "application/json");
+      response.end(JSON.stringify(answer));
+    });
+    await new Promise((resolve) => proxy.listen(REORG_PROXY_PORT, "127.0.0.1", resolve));
+    try {
+      await failsAt(
+        "reorged.json",
+        bundleA,
+        ["observedAt.blockHash"],
+        new RegExp(`^the observation block was reorganized during verification: block ${bundleA.observedAt.blockNumber} is now 0x[0-9a-f]{64}, not the bundle's ${bundleA.observedAt.blockHash}$`),
+        { rpc: `http://127.0.0.1:${REORG_PROXY_PORT}` },
+      );
+    } finally {
+      proxy.close();
+    }
+    // Read twice: by the check, and again once every other chain read is done.
+    assert.equal(reads, 2);
   });
 
   test("a manifest file that changes while the verifier runs fails deployment.manifestProvenance", async () => {

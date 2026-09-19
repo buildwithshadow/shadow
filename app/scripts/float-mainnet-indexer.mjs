@@ -139,7 +139,8 @@ export async function indexEvents(connection, { fromBlock, previous = null }) {
 
 // One event as the indexer writes it: a Float event whose ABI arguments are in
 // their stored form (addresses checksummed, bytes32 lowercase, integers as
-// decimal strings, or numbers for small ones), with its position and sender.
+// decimal strings, or numbers for small ones), with its position, block hash,
+// timestamp (a decimal string), transaction index (a number) and sender.
 function checkEvent(entry, label) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry) || !EVENT_INPUTS.has(entry.event)) throw new Error(`${label} is not a Float event`);
   if (!/^\d+$/.test(entry.blockNumber ?? "") || !Number.isSafeInteger(entry.logIndex) || entry.logIndex < 0) {
@@ -149,6 +150,11 @@ function checkEvent(entry, label) {
     if (parse(`${label}.${name}`, value, Error) !== value) throw new Error(`${label}.${name} ${value} is not in its stored form`);
   };
   stored("transactionHash", entry.transactionHash, parseBytes32);
+  stored("blockHash", entry.blockHash, parseBytes32);
+  if (typeof entry.timestamp !== "string" || !BLOCK_NUMBER.test(entry.timestamp)) {
+    throw new Error(`${label}.timestamp must be a decimal string without leading zeros`);
+  }
+  if (!Number.isSafeInteger(entry.transactionIndex) || entry.transactionIndex < 0) throw new Error(`${label} has no valid transactionIndex`);
   stored("from", entry.from, parseAddress);
   if (!entry.args || typeof entry.args !== "object" || Array.isArray(entry.args)) throw new Error(`${label}.args is not an object`);
   for (const { name, type } of EVENT_INPUTS.get(entry.event)) {

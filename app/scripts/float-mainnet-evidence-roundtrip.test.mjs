@@ -300,7 +300,11 @@ describe("evidence round trip: provider kit, indexer, exporter and independent v
     };
     await failsAt(
       "t-drop-cycle.json",
-      tamper((b) => b.cycles.splice(1, 1)),
+      // Renumbered, so only the omission itself is left to catch.
+      tamper((b) => {
+        b.cycles.splice(1, 1);
+        b.cycles[1].index = 2;
+      }),
       ["completeness.providerPaid", "completeness.repaid"],
       new RegExp(`on chain but not in the bundle: ${cycles[1].digest}@`),
     );
@@ -315,6 +319,13 @@ describe("evidence round trip: provider kit, indexer, exporter and independent v
       tamper((b) => ([b.cycles[0].provider.delivery, b.cycles[1].provider.delivery] = [b.cycles[1].provider.delivery, b.cycles[0].provider.delivery])),
       ["cycle[0].provider.delivery", "cycle[1].provider.delivery"],
       new RegExp(`it delivers digest ${cycles[1].digest}, not the cycle's ${cycles[0].digest}`),
+    );
+    // The delivery signs its result location, so it cannot be redirected.
+    await failsAt(
+      "t-result-ref.json",
+      tamper((b) => (b.cycles[0].provider.delivery.resultRef = "results/elsewhere")),
+      ["cycle[0].provider.delivery"],
+      /^resultRef "results\/elsewhere" does not hash to the message's resultRefHash 0x[0-9a-f]{64}$/,
     );
     // A 65-byte low-s signature by another key over the same digest.
     const cycleSignature = await sign({ hash: cycles[2].digest, privateKey: keyOf(6), to: "hex" });
