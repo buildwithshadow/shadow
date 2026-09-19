@@ -501,17 +501,17 @@ function syncDirectory(dir) {
   }
 }
 
-// False when another run stored the file first. The receipt's bytes are
-// flushed to disk before the link, and the directory after it. The temporary
-// file is removed whether the write or the link fails or succeeds; when it is
-// already gone, or Windows holds it (EBUSY, EPERM), the outcome stands: a
-// leftover is never read.
-function storeOnce(file, receipt) {
+// Writes value's JSON to file once: false when another run stored the file
+// first. The file's bytes are flushed to disk before the link, and the
+// directory after it. The temporary file is removed whether the write or the
+// link fails or succeeds; when it is already gone, or Windows holds it (EBUSY,
+// EPERM), the outcome stands: a leftover is never read.
+export function storeOnce(file, value) {
   const temporary = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
   try {
     const fd = openSync(temporary, "wx");
     try {
-      writeFileSync(fd, `${stableStringify(receipt)}\n`);
+      writeFileSync(fd, `${stableStringify(value)}\n`);
       fsyncSync(fd);
     } finally {
       closeSync(fd);

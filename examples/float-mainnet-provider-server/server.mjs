@@ -1,8 +1,7 @@
-import { randomBytes } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, linkSync, mkdirSync, openSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import { inspect, parseArgs } from "node:util";
 import { parseAddress, parseBytes32, parseUint, read } from "../../app/scripts/float-mainnet-cli.mjs";
 import { RECEIPT_STATUSES, connectCandidate, endpointHashFrom, readDeployment, walletFromEnv } from "../../app/scripts/float-mainnet-config.mjs";
@@ -12,9 +11,9 @@ import {
   ACCEPTANCE_KIND,
   DELIVERY_KIND,
   acceptIntent,
-  checkPayment,
   deliverResult,
   resultRefHashOf,
+  storeOnce,
   validateReceiptFile,
 } from "../../app/scripts/float-mainnet-provider.mjs";
 
@@ -38,51 +37,6 @@ class HttpError extends Error {
   constructor(message, status = 400) {
     super(message);
     this.status = status;
-  }
-}
-
-// Flushes a directory's entries to disk. Windows cannot open a directory to
-// flush it, so there a file linked just before a power loss may be missing
-// afterwards (never partial: its bytes were flushed before the link).
-function syncDirectory(dir) {
-  if (process.platform === "win32") return;
-  const fd = openSync(dir, "r");
-  try {
-    fsyncSync(fd);
-  } finally {
-    closeSync(fd);
-  }
-}
-
-// The kit's --store semantics (float-mainnet-provider.mjs keeps its helpers
-// private): each file is written in full to a temporary file in the same
-// directory and flushed to disk, then hard-linked to its name, which fails if
-// the name exists, and the directory is flushed. A stored file is never
-// partial and never replaced; false when another writer stored it first.
-function storeOnce(file, value) {
-  const temporary = `${file}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
-  try {
-    const fd = openSync(temporary, "wx");
-    try {
-      writeFileSync(fd, `${stableStringify(value)}\n`);
-      fsyncSync(fd);
-    } finally {
-      closeSync(fd);
-    }
-    try {
-      linkSync(temporary, file);
-    } catch (error) {
-      if (error.code === "EEXIST") return false;
-      throw error;
-    }
-    syncDirectory(dirname(file));
-    return true;
-  } finally {
-    try {
-      unlinkSync(temporary);
-    } catch (error) {
-      if (!["ENOENT", "EBUSY", "EPERM"].includes(error.code)) throw error;
-    }
   }
 }
 
@@ -229,9 +183,20 @@ export function createProviderServer({ connection, account, endpointHash, price,
       }
       return [200, { result: stored.result, delivery: delivered }];
     }
-    const payment = await checkPayment(connection, digest);
-    if (!payment.paid) return [402, { error: "the digest is not paid", receiptStatus: payment.receiptStatus }];
-    const produced = readStored(fileOf(digest, "result")) ?? (await produce(digest, acceptance));
+    // A result kept from an earlier run is signed over only if it is this
+    // digest's, for its accepted request; a store that holds another is the
+    // provider's to repair, so no chain read is made.
+    const earlier = readStored(fileOf(digest, "result"));
+    if (earlier && (earlier.digest !== digest || earlier.requestId !== acceptance.requestId || typeof earlier.result !== "string")) {
+      throw new HttpError(
+        `the provider's stored result for digest ${digest} is not this digest's result for its accepted request; the provider has to restore it before the digest can be served`,
+        500,
+      );
+    }
+    // receiptStatus alone decides; deliverResult makes the ProviderPaid cross-check.
+    const receiptStatus = RECEIPT_STATUSES[Number(await read(connection, "receiptStatus", [digest]))];
+    if (receiptStatus !== "paid") return [402, { error: "the digest is not paid", receiptStatus }];
+    const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
     const { delivery } = await deliverResult(connection, {
       acceptance,
@@ -245,7 +210,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
 
   // receiptStatus only: a status request never scans for the ProviderPaid log.
   async function status(digest) {
-    const acceptance = readStored(fileOf(digest, "acceptance"));
+    const acceptance = storedReceipt(digest, ACCEPTANCE_KIND);
     const receiptStatus = RECEIPT_STATUSES[Number(await read(connection, "receiptStatus", [digest]))];
     return [
       200,

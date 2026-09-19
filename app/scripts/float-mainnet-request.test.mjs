@@ -684,6 +684,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
     writeFileSync(join(store, `${over.digest}.acceptance.json`), stableStringify(overAcceptance));
     assert.equal((await ok("submit", ["submit", "--intent", over.file, "--execute", "--allow-block"], EXECUTOR)).status, "blocked");
     const unaccepted = keccak256(stringToBytes("a digest nobody sent to the provider"));
+    seen.f = f;
 
     const [signed, work] = [current.stats.signed, current.stats.work.length];
     assert.deepEqual(await post(current.port, "/serve", { digest: f.digest }), { status: 402, json: { error: "the digest is not paid", receiptStatus: "none" } });
@@ -773,6 +774,19 @@ describe("request client against the reference provider server", { skip: e2eSkip
       assert.deepEqual(await post(current.port, "/serve", { digest: seen.c.digest }), unmatched);
       writeFileSync(resultFile, JSON.stringify({ ...JSON.parse(storedResult), result: Buffer.from("another answer").toString("base64") }));
       assert.deepEqual(await post(current.port, "/serve", { digest: seen.c.digest }), unmatched);
+      // An accepted digest whose stored result is another request's: refused before any chain read, and nothing is signed.
+      const foreignResult = join(store, `${seen.f.digest}.result.json`);
+      writeFileSync(foreignResult, stableStringify({ ...JSON.parse(storedResult), digest: seen.f.digest }));
+      const [signed, work, reads] = [current.stats.signed, current.stats.work.length, current.stats.calls.length];
+      assert.deepEqual(await post(current.port, "/serve", { digest: seen.f.digest }), {
+        status: 500,
+        json: {
+          error: `the provider's stored result for digest ${seen.f.digest} is not this digest's result for its accepted request; the provider has to restore it before the digest can be served`,
+        },
+      });
+      assert.deepEqual([current.stats.signed, current.stats.work.length, current.stats.calls.slice(reads)], [signed, work, []]);
+      assert.equal(existsSync(join(store, `${seen.f.digest}.delivery.json`)), false);
+      unlinkSync(foreignResult);
     } finally {
       console.error = log;
       writeFileSync(resultFile, storedResult);
@@ -786,6 +800,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         ["POST /serve", stranded, 500],
         ["POST /serve", seen.c.digest, 500],
         ["POST /serve", seen.c.digest, 500],
+        ["POST /serve", seen.f.digest, 500],
       ],
     );
     // The log keeps the whole error, with the RPC URL's path redacted and the store's paths kept.
