@@ -17,6 +17,7 @@ import {
   parseAbi,
   stringToBytes,
   toBytes,
+  toHex,
   zeroHash,
 } from "viem";
 import { sign } from "viem/accounts";
@@ -25,7 +26,7 @@ import { SPEND_INTENT_TYPES, eip712Domain, floatAbi } from "./float-mainnet-conf
 import { CHAIN_ID, account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
 import { DECLARED_LABEL, assembleBundle, declaredFrom, evidenceMarkdown, parseRequestId } from "./float-mainnet-evidence.mjs";
 import { INDEX_KIND, validateIndex } from "./float-mainnet-indexer.mjs";
-import { intentFile, validateIntentFile } from "./float-mainnet-intent.mjs";
+import { SECP256K1_HALF_ORDER, intentFile, validateIntentFile } from "./float-mainnet-intent.mjs";
 import { validateReceiptFile } from "./float-mainnet-provider.mjs";
 
 // The provider receipt format the exporter takes from the provider kit, written
@@ -223,7 +224,11 @@ describe("evidence assembly from indexed events and participant files", () => {
     assert.deepEqual(expected, { state: "DEFAULTED", principalOutstanding: 700_000n, cumulativePrincipalPaid: 2_000_000n });
     assert.deepEqual(bundle.declared, { label: DECLARED_LABEL, independentControl: null, customerPurpose: null, assistance: null, commercial: null });
     assert.deepEqual([bundle.kind, bundle.schema, bundle.deployment, bundle.observedAt], ["ShadowFloatMainnet.EvidenceBundle", 1, DEPLOYMENT, OBSERVED]);
-    assert.match(bundle.verifierScope, /On-chain.*Against this bundle's signatures only.*Declared only/s);
+    // A provider receipt cannot be recovered from the chain; an intent sent directly to the Float can, from its calldata.
+    assert.match(
+      bundle.verifierScope,
+      /On-chain.*Against this bundle's signatures only.*a missing provider receipt cannot be recovered from the chain.*From the transaction calldata: .*a missing intent file can be recovered from them.*Declared only/s,
+    );
   });
 
   test("a closed line exits with close; a line with several defaulted claims is refused, since schema 1 records one exit", () => {
@@ -378,6 +383,10 @@ describe("evidence assembly from indexed events and participant files", () => {
     assert.match(markdown, new RegExp(`\\| 1 \\| ${intent.digest} \\| ${provider.address} \\| 1000000 \\|`));
     assert.match(markdown, /\| 1 \| 0x[0-9a-f]+ \| DAILY_SPEND_CAP \|/);
     assert.match(markdown, /\| 1 \| included \| a\\\|b \| missing \| missing \|/);
+    assert.match(
+      markdown,
+      /## Signed by participants \(bundle\)\n\nThe participants' own signed files, checked against the digests above\. A provider receipt is not recorded on-chain and cannot be recovered from the chain; an intent sent directly to the Float is also in its transaction's executeSpend calldata, from which a missing intent file can be recovered\.\n/,
+    );
     assert.match(markdown, new RegExp(`> ${DECLARED_LABEL}`));
     assert.match(markdown, /### Assistance\n\n````json\n"used ``` fences"\n````/);
     assert.match(markdown, /### Commercial evidence\n\nNot declared\./);
@@ -844,12 +853,12 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
     const rotated = await deploy(accountCode, [account(2).address]);
     await testClient.setCode({ address: smartAgent, bytecode: await client.getCode({ address: rotated.contractAddress }) });
     await testClient.mine({ blocks: 1 });
-    const isValidSignature = (blockNumber) =>
+    const isValidSignature = (blockNumber, signed = signature) =>
       client.readContract({
         address: smartAgent,
         abi: parseAbi(["function isValidSignature(bytes32 digest, bytes signature) view returns (bytes4)"]),
         functionName: "isValidSignature",
-        args: [built.digest, signature],
+        args: [built.digest, signed],
         blockNumber,
       });
     assert.equal(await isValidSignature(undefined), "0xffffffff", "the rotated account rejects the signature now");
@@ -858,5 +867,24 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
     await ok("evidence", ["export", "--line-id", lineId, "--intent", path("smart-signed.json"), "--out", path("smart-bundle.json")]);
     const bundle = readJson(path("smart-bundle.json"));
     assert.deepEqual([bundle.cycles.length, bundle.cycles[0].digest, bundle.cycles[0].intent], [1, built.digest, readJson(path("smart-signed.json"))]);
+
+    // The high-s twin of the account's signature, (r, n - s, the other v), is
+    // another signature the account accepted for the digest before the spend,
+    // so it passes the signature check. It is not the one the spend's
+    // executeSpend calldata carries, and the export refuses it in the
+    // verifier's words.
+    const twin = encodeAbiParameters(
+      [{ type: "bytes32" }, { type: "bytes32" }, { type: "uint8" }],
+      [r, toHex(2n * SECP256K1_HALF_ORDER + 1n - BigInt(s), { size: 32 }), Number(v) === 27 ? 28 : 27],
+    );
+    assert.equal(await isValidSignature(BigInt(paid.providerPaid.blockNumber) - 1n, twin), "0x1626ba7e", "the account accepted the twin before the spend");
+    writeJson(path("smart-twin.json"), { ...readJson(path("smart-signed.json")), signature: twin });
+    await fails(
+      "evidence",
+      ["export", "--line-id", lineId, "--intent", path("smart-twin.json"), "--out", path("smart-twin-bundle.json")],
+      {},
+      new RegExp(`smart-twin\\.json: the intent file's signature ${twin} is not the calldata's ${signature}$`),
+    );
+    assert.equal(existsSync(path("smart-twin-bundle.json")), false);
   });
 });

@@ -1,11 +1,13 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { BLOCK_REASONS } from "./float-mainnet-config.mjs";
+import { decodeFunctionData, isAddressEqual } from "viem";
+import { BLOCK_REASONS, floatAbi } from "./float-mainnet-config.mjs";
 import { UsageError, bytes32Flag, connect, parseBytes32, readLine, required, runCli, stateName } from "./float-mainnet-cli.mjs";
 import { validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
 import { byPosition, checkpointStatus, indexEvents, lineEvents, readIndexFile } from "./float-mainnet-indexer.mjs";
 import { errorMessage, isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
 import { ACCEPTANCE_KIND, DELIVERY_KIND, signatureAt, validateReceiptFile } from "./float-mainnet-provider.mjs";
+import { calldataMismatches } from "./float-mainnet-verify.mjs";
 
 // Per-line evidence export for the ShadowFloatMainnet candidate. The bundle
 // points at every on-chain record of one line up to a pinned block, attaches
@@ -17,7 +19,7 @@ export const BUNDLE_KIND = "ShadowFloatMainnet.EvidenceBundle";
 export const DECLARED_LABEL = "declared by the operator; not verifiable on-chain";
 export const DECLARED_KEYS = ["independentControl", "customerPurpose", "assistance", "commercial"];
 export const VERIFIER_SCOPE =
-  "On-chain, an independent verifier can re-derive from the deployment, observedAt and the transaction hashes in this bundle: the candidate's chain, address and runtime code hash; the line's opening, sponsor, agent and epoch; every ProviderPaid (digest, provider, principal, executor as the transaction sender) and every SpendBlocked (digest, reason) recorded for the line up to observedAt, so an omitted one is detectable; every repayment's payer, amount and remaining principal; and the close or defaulted-claim exit. Against this bundle's signatures only: that each intent file hashes to its recorded digest and carries a valid agent signature (ECDSA, or ERC-1271 for a deployed smart account), and that each provider acceptance and delivery receipt is an EIP-712 signature by the paid provider binding its request id to that digest; the chain records no signature, request id or service result, so a missing file cannot be recovered from the chain, and a delivery receipt is the provider's own statement that it served the request, not proof of the result's content or quality. Declared only: independent control, customer purpose, assistance and commercial terms are copied from the operator's declaration and are neither verified by the exporter nor verifiable on-chain. exporterSummary is the exporter's own count, to be recomputed rather than trusted.";
+  "On-chain, an independent verifier can re-derive from the deployment, observedAt and the transaction hashes in this bundle: the candidate's chain, address and runtime code hash; the line's opening, sponsor, agent and epoch; every ProviderPaid (digest, provider, principal, executor as the transaction sender) and every SpendBlocked (digest, reason) recorded for the line up to observedAt, so an omitted one is detectable; every repayment's payer, amount and remaining principal; and the close or defaulted-claim exit. Against this bundle's signatures only: that each intent file hashes to its recorded digest and carries a valid agent signature (ECDSA, or ERC-1271 for a deployed smart account), and that each provider acceptance and delivery receipt is an EIP-712 signature by the paid provider binding its request id to that digest; the chain records no request id or service result, so a missing provider receipt cannot be recovered from the chain, and a delivery receipt is the provider's own statement that it served the request, not proof of the result's content or quality. From the transaction calldata: a spend or refusal sent directly to the Float carries the intent it executed and the agent's signature in its executeSpend calldata, so an intent file must equal them exactly, and a missing intent file can be recovered from them; a transaction relayed through another contract is not decoded. Declared only: independent control, customer purpose, assistance and commercial terms are copied from the operator's declaration and are neither verified by the exporter nor verifiable on-chain. exporterSummary is the exporter's own count, to be recomputed rather than trusted.";
 
 function isObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value);
@@ -246,7 +248,7 @@ export function evidenceMarkdown(bundle, events) {
     "",
     "## Signed by participants (bundle)",
     "",
-    "Not recorded on-chain: these are the participants' own signed files, checked against the digests above.",
+    "The participants' own signed files, checked against the digests above. A provider receipt is not recorded on-chain and cannot be recovered from the chain; an intent sent directly to the Float is also in its transaction's executeSpend calldata, from which a missing intent file can be recovered.",
     "",
     "| Cycle | Agent-signed intent | Provider request id | Provider acceptance | Provider delivery |",
     "| --- | --- | --- | --- | --- |",
@@ -385,18 +387,35 @@ async function exportBundle(values) {
   // transaction that recorded it (the contract validated it there, called from
   // the Float), a receipt at observedAt. A smart account that rotates its
   // signer later cannot fail the export of a genuine bundle.
-  const recordedAt = new Map([
-    ...bundle.cycles.map((cycle) => [cycle.digest, cycle.spend.blockNumber]),
-    ...bundle.refusals.map((refusal) => [refusal.digest, refusal.blockNumber]),
+  const recordedIn = new Map([
+    ...bundle.cycles.map((cycle) => [cycle.digest, cycle.spend]),
+    ...bundle.refusals.map((refusal) => [refusal.digest, refusal]),
   ]);
   const observed = BigInt(observedAt.blockNumber);
   const signed = [
-    ...intents.map((intent) => [intent.path, "agent", intent.struct.agent, intent.digest, intent.signature, BigInt(recordedAt.get(intent.digest)) - 1n, connection.address]),
+    ...intents.map((intent) => [intent.path, "agent", intent.struct.agent, intent.digest, intent.signature, BigInt(recordedIn.get(intent.digest).blockNumber) - 1n, connection.address]),
     ...[...acceptances, ...deliveries].map((receipt) => [receipt.path, "provider", receipt.message.provider, receipt.hash, receipt.signature, observed, undefined]),
   ];
   for (const [path, role, signer, hash, signature, blockNumber, caller] of signed) {
     const verdict = await signatureAt(connection, { signer, hash, signature, blockNumber, caller });
     if (!verdict.valid) throw new Error(`${path}: the ${role} signature does not verify for ${signer}: ${verdict.detail}`);
+  }
+  // Each intent file must be exactly the intent and signature in the
+  // executeSpend calldata of the transaction that recorded it, as the
+  // verifier's intent.matchesCalldata requires, in its words. A transaction
+  // relayed through a contract (a Safe, a 4337 account, a relayer) is not sent
+  // to the Float, so its calldata is not decoded and its intent file is not
+  // compared: the verifier leaves that comparison MANUAL.
+  for (const intent of intents) {
+    const { txHash } = recordedIn.get(intent.digest);
+    const tx = await connection.client.getTransaction({ hash: txHash });
+    if (!tx.to || !isAddressEqual(tx.to, connection.address)) continue;
+    // Lowercased, as the verifier decodes it, so its bytes32 fields and signature compare with the file's.
+    const { functionName, args } = decodeFunctionData({ abi: floatAbi, data: tx.input.toLowerCase() });
+    if (functionName !== "executeSpend") throw new Error(`${intent.path}: transaction ${txHash} calls ${functionName} on the Float, not executeSpend`);
+    const [struct, signature] = args;
+    const problems = calldataMismatches(intent, { struct, signature });
+    if (problems.length) throw new Error(`${intent.path}: ${problems.join("; ")}`);
   }
 
   writeJsonFile(out, bundle);

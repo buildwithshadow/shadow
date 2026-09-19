@@ -252,9 +252,10 @@ describe("evidence round trip: provider kit, indexer, exporter and independent v
     const index = path("index.json");
     await ok("indexer", ["index", "--out", index]);
     writeJson(path("declared.json"), DECLARED);
+    // `skip` names the intent files to leave out: cycle days, and "refusal".
     const files = (skip = []) => [
       ...[1, 2, 3].filter((day) => !skip.includes(day)).flatMap((day) => ["--intent", path(`c${day}-signed.json`)]),
-      "--intent", path("refusal-signed.json"),
+      ...(skip.includes("refusal") ? [] : ["--intent", path("refusal-signed.json")]),
       ...[1, 2, 3].flatMap((day) => ["--acceptance", path(`c${day}-acceptance.json`), "--delivery", path(`c${day}-delivery.json`)]),
       ...cycles.flatMap(({ digest, requestId }) => ["--request-id", `${digest}=${requestId}`]),
       "--declared", path("declared.json"),
@@ -290,6 +291,11 @@ describe("evidence round trip: provider kit, indexer, exporter and independent v
       }
     }
     assert.ok(report.scope.verifiedAgainstBundleSignatures.includes("refusal[0].intent.signature"));
+    // Each intent file is exactly the intent and signature its transaction's executeSpend calldata carries.
+    for (const id of [0, 1, 2].map((i) => `cycle[${i}].intent.matchesCalldata`).concat("refusal[0].intent.matchesCalldata")) {
+      assert.ok(report.scope.verifiedOnChain.includes(id), id);
+    }
+    assert.deepEqual(report.scope.intentFromCalldata, []);
     assert.match(check("cycle[1].repayments").detail, /^2 repayment\(s\)/);
 
     // 5. Tampers on the exported bundle, each caught by the check that owns it.
@@ -329,20 +335,35 @@ describe("evidence round trip: provider kit, indexer, exporter and independent v
     );
     // A 65-byte low-s signature by another key over the same digest.
     const cycleSignature = await sign({ hash: cycles[2].digest, privateKey: keyOf(6), to: "hex" });
+    // It is also not the signature the spend's calldata carries.
     const replaced = await failsAt(
       "t-intent-signature.json",
       tamper((b) => (b.cycles[2].intent.signature = cycleSignature)),
-      ["cycle[2].intent.signature"],
+      ["cycle[2].intent.signature", "cycle[2].intent.matchesCalldata"],
       new RegExp(`recovers to ${stranger.address}, not ${agent.address}`),
     );
     assert.equal(replaced.check("cycle[2].intent.digest").status, "PASS");
+    assert.match(replaced.check("cycle[2].intent.matchesCalldata").detail, /^the intent file's signature 0x[0-9a-f]+ is not the calldata's 0x[0-9a-f]+$/);
     const refusalSignature = await sign({ hash: bundle.refusals[0].digest, privateKey: keyOf(6), to: "hex" });
-    await failsAt(
+    const refusalReplaced = await failsAt(
       "t-refusal-signature.json",
       tamper((b) => (b.refusals[0].intent.signature = refusalSignature)),
-      ["refusal[0].intent.signature"],
+      ["refusal[0].intent.signature", "refusal[0].intent.matchesCalldata"],
       new RegExp(`recovers to ${stranger.address}, not ${agent.address}`),
     );
+    assert.match(refusalReplaced.check("refusal[0].intent.matchesCalldata").detail, /^the intent file's signature 0x[0-9a-f]+ is not the calldata's 0x[0-9a-f]+$/);
+    // A refusal's intent file with one field changed (and its own digest dropped) fails the comparison too.
+    const refusalField = await failsAt(
+      "t-refusal-field.json",
+      tamper((b) => {
+        b.refusals[0].intent.typedData.message.principal = "2";
+        delete b.refusals[0].intent.digest;
+        delete b.refusals[0].intent.externalSignerTypedData;
+      }),
+      ["refusal[0].intent.digest", "refusal[0].intent.signature", "refusal[0].intent.matchesCalldata"],
+      /^the intent's message recomputes to digest 0x[0-9a-f]{64}, not 0x[0-9a-f]{64}$/,
+    );
+    assert.equal(refusalField.check("refusal[0].intent.matchesCalldata").detail, "message.principal is 2 in the intent file, 1 in the calldata");
     await failsAt(
       "t-summary.json",
       tamper((b) => (b.exporterSummary.principalRepaid = "2999999")),
@@ -355,30 +376,41 @@ describe("evidence round trip: provider kit, indexer, exporter and independent v
     );
     assert.deepEqual([redeclared.check("declared.customerPurpose").value, redeclared.ids("MANUAL")], ["an edited declaration", [PROVENANCE]]);
 
-    // 6. A cycle exported without its intent file: the export succeeds, and the
-    // verifier leaves that cycle's intent-derived checks MANUAL, never PASS, so
-    // the report is ok but not qualifying.
-    const partial = await ok("evidence", ["export", "--line-id", lineId, ...files([2]), "--out", path("bundle-no-intent.json")]);
-    assert.equal(partial.exporterSummary.missingIntentFiles, 1);
-    const withoutIntent = await verifiesOk("verified-no-intent.json", readJson(path("bundle-no-intent.json")));
-    assert.equal(withoutIntent.report.qualifying, false);
-    const manual = [PROVENANCE, ...["intent.digest", "intent.fields", "spend.executor", "intent.signature", "state.termsHash"].map((name) => `cycle[1].${name}`)];
-    assert.deepEqual(withoutIntent.ids("MANUAL"), manual);
-    assert.deepEqual(withoutIntent.ids("FAIL"), []);
-    for (const id of manual.slice(1)) assert.equal(withoutIntent.check(id).detail, "intent file not supplied", id);
-    // The acceptance's endpoint is compared with the one the provider's policy approved before the spend.
-    assert.match(withoutIntent.check("cycle[1].provider.acceptance").detail, /, at the endpoint provider 0x[0-9a-fA-F]{40}'s policy approved at block \d+; /);
-    for (const name of ["spend.receipt", "spend.providerPaid", "spend.usdcTransfer", "state.before", "repayments", "cleared", "receiptStatus", "provider.acceptance", "provider.delivery"]) {
+    // 6. A cycle and the refusal exported without their intent files: the export
+    // succeeds and counts both as missing. Each was sent directly to the Float,
+    // so the verifier reads its intent and the agent's signature from its
+    // executeSpend calldata, and their intent checks pass, verified on chain.
+    // Only the rehearsal manifest's provenance keeps the report from qualifying.
+    const partial = await ok("evidence", ["export", "--line-id", lineId, ...files([2, "refusal"]), "--out", path("bundle-no-intent.json")]);
+    assert.equal(partial.exporterSummary.missingIntentFiles, 2);
+    const exportedWithout = readJson(path("bundle-no-intent.json"));
+    assert.deepEqual([exportedWithout.cycles[1].intent, exportedWithout.refusals[0].intent], [null, null]);
+    const withoutIntent = await verifiesOk("verified-no-intent.json", exportedWithout);
+    assert.deepEqual([withoutIntent.report.qualifying, withoutIntent.ids("MANUAL"), withoutIntent.ids("FAIL")], [false, [PROVENANCE], []]);
+    const recovered = [
+      ...["intent.digest", "intent.fields", "spend.executor", "intent.signature", "state.termsHash"].map((name) => `cycle[1].${name}`),
+      ...["intent.digest", "intent.signature"].map((name) => `refusal[0].${name}`),
+    ];
+    for (const id of recovered) {
+      assert.equal(withoutIntent.check(id).status, "PASS", id);
+      assert.match(withoutIntent.check(id).detail, /\(intent from the transaction calldata: the bundle has no intent file\)$/, id);
+      assert.ok(withoutIntent.report.scope.verifiedOnChain.includes(id), id);
+    }
+    assert.deepEqual(withoutIntent.report.scope.intentFromCalldata, recovered);
+    assert.match(withoutIntent.check("cycle[1].spend.executor").detail, new RegExp(`^sent by the intent's named executor ${executor.address}`));
+    // The acceptance's endpoint is the one in the spend's calldata.
+    assert.match(withoutIntent.check("cycle[1].provider.acceptance").detail, /, at the intent's endpoint in the transaction calldata; /);
+    for (const name of ["spend.receipt", "spend.providerPaid", "spend.usdcTransfer", "spend.calldata", "state.before", "repayments", "cleared", "receiptStatus", "provider.acceptance", "provider.delivery"]) {
       assert.equal(withoutIntent.check(`cycle[1].${name}`).status, "PASS", name);
     }
-    // MANUAL checks never mask a FAIL.
+    // The summary still counts the files missing from the bundle: a summary that claims none fails.
     const masked = await failsAt(
       "t-no-intent-summary.json",
-      { ...readJson(path("bundle-no-intent.json")), exporterSummary: { ...partial.exporterSummary, missingIntentFiles: 0 } },
+      { ...exportedWithout, exporterSummary: { ...partial.exporterSummary, missingIntentFiles: 0 } },
       ["exporterSummary"],
-      /^missingIntentFiles is 0; this verifier derives 1$/,
+      /^missingIntentFiles is 0; this verifier derives 2$/,
     );
-    assert.deepEqual(masked.ids("MANUAL"), manual);
+    assert.deepEqual(masked.ids("MANUAL"), [PROVENANCE]);
 
     // 7. A provider receipt in eth_signTypedData_v4 form (with the EIP712Domain
     // type), which the exporter accepts, verifies as well.
