@@ -552,8 +552,8 @@ async function checkPaymentCommand(values) {
     signature: accepted.signature,
     blockNumber: payment.observedAt.blockNumber,
   });
-  return {
-    ok: true,
+  const result = {
+    ok: verdict.valid,
     ...payment,
     acceptance: {
       requestId: accepted.requestId,
@@ -564,6 +564,8 @@ async function checkPaymentCommand(values) {
       signatureDetail: verdict.detail,
     },
   };
+  if (!verdict.valid) result.error = { message: `the acceptance is not signed by provider ${accepted.message.provider}: ${verdict.detail}`, revert: null };
+  return result;
 }
 
 async function deliver(values) {

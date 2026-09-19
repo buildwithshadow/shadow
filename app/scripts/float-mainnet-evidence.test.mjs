@@ -686,6 +686,12 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
     assert.deepEqual([shorter.mode, shorter.reorg.checkpoint, shorter.reorg.canonicalHash], ["rebuilt", orphaned.checkpoint, null]);
     assert.match(shorter.reorg.detail, /no longer exists/);
 
+    // A rollback below the index's own start block leaves nothing to rebuild from: refused, the file untouched.
+    const late = { ...readJson(path("orphaned.json")), fromBlock: orphaned.checkpoint.blockNumber, events: [] };
+    writeJson(path("late.json"), late);
+    await fails("indexer", ["index", "--out", path("late.json"), "--resume"], {}, /is before the index's start block/);
+    assert.deepEqual(readJson(path("late.json")), late);
+
     // Remined past the checkpoint height, that height holds a different block.
     await testClient.increaseTime({ seconds: 7_200 });
     await testClient.mine({ blocks: 5 });

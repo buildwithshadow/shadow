@@ -99,6 +99,11 @@ export async function indexEvents(connection, { fromBlock, previous = null }) {
       }
       [mode, kept, start] = ["resumed", previous.events, BigInt(previous.checkpoint.blockNumber) + 1n];
     } else {
+      if (BigInt(previous.fromBlock) > head.number) {
+        throw new Error(
+          `the index checkpoint ${previous.checkpoint.blockNumber} was reorganized away and the RPC head ${head.number} is before the index's start block ${previous.fromBlock}; retry once it has caught up`,
+        );
+      }
       mode = "rebuilt";
       reorg = {
         checkpoint: previous.checkpoint,

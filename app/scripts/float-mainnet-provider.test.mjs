@@ -396,6 +396,11 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
       [payment.paid, payment.receiptStatus, payment.providerPaid.transactionHash, payment.providerPaid.principal, payment.acceptance.requestId, payment.acceptance.signatureValid],
       [true, "paid", paid.txHash, PRINCIPAL.toString(), "req-a", true],
     );
+    // A paid digest does not make a forged acceptance pass.
+    const altered = { ...acceptance.typedData.message, acceptedAt: (BigInt(acceptance.typedData.message.acceptedAt) + 1n).toString() };
+    writeJson(path("acceptance-altered.json"), { ...acceptance, typedData: { ...acceptance.typedData, message: altered } });
+    const forged = await fails("provider", ["check-payment", "--intent", a.file, "--acceptance", path("acceptance-altered.json")], {}, /the acceptance is not signed by provider/);
+    assert.deepEqual([forged.paid, forged.receiptStatus, forged.acceptance.signatureValid], [true, "paid", false]);
 
     // Retries: the identical stored result and receipt, no new work, no new payment.
     const sentBefore = await client.getTransactionCount({ address: executor.address });

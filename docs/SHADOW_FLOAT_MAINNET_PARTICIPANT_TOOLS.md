@@ -144,7 +144,7 @@ The acceptance binds the request id (as `requestIdHash`) to the intent's digest,
 node app/scripts/float-mainnet-provider.mjs check-payment --intent intent.json --acceptance acceptance.json --manifest $M
 ```
 
-`receiptStatus[digest]` is read from the contract and is authoritative. The provider serves the request only when it is `2` (paid). `blocked` means the contract recorded a refusal and paid nothing; `none` means nothing is paid yet. The `ProviderPaid` event is looked up for reference only: if the lookup fails, for example because an RPC rejects the log range, the command still reports the status, with a hint. `float-mainnet-line.mjs receipt --digest <digest>` reads the same status.
+`receiptStatus[digest]` is read from the contract and is authoritative. The provider serves the request only when it is `2` (paid). `blocked` means the contract recorded a refusal and paid nothing; `none` means nothing is paid yet. The `ProviderPaid` event is looked up for reference only: if the lookup fails, for example because an RPC rejects the log range, the command still reports the status, with a hint. `float-mainnet-line.mjs receipt --digest <digest>` reads the same status. With `--acceptance`, the command also checks the acceptance's signature at the block the status was read at, and fails when it does not verify.
 
 **3. Sign the delivery.**
 
