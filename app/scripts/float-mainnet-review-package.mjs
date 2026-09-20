@@ -35,8 +35,9 @@ const REVIEW_DOCS = [
   "docs/MAINNET_PATH.md",
 ];
 // Everything the package reads from the working tree: the reviewed docs, the
-// contracts and foundry.toml, this builder, the modules it loads and the
-// scripts that name it.
+// contracts and foundry.toml, this builder, the modules it loads, the app's
+// dependency manifests (they fix the viem those modules load) and the scripts
+// that name it.
 const PACKAGED_INPUTS = [
   "docs/",
   "contracts/",
@@ -44,6 +45,8 @@ const PACKAGED_INPUTS = [
   "app/scripts/float-mainnet-preflight.mjs",
   "app/scripts/float-mainnet-manifest.mjs",
   "app/scripts/rpc-read-queue.mjs",
+  "app/package.json",
+  "app/pnpm-lock.yaml",
   "package.json",
 ];
 const FORGE_TEST_ARGS = ["test", "--root", "contracts", "--match-path", "test/ShadowFloatMainnet*.t.sol", "--json"];
@@ -53,6 +56,11 @@ const SCOPE_GATE_COMMAND = "node contracts/test/mainnet-scope.test.mjs";
 // As in float-mainnet-preflight.mjs: git gets no GIT_* variable that could point
 // it at another repository or index. Windows variable names are case-insensitive.
 const gitEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^GIT_/i.test(name)));
+
+// forge gets no FOUNDRY_* or legacy DAPP_* variable, so foundry.toml alone
+// sets what it builds and tests: an override such as FOUNDRY_FUZZ_RUNS=1 or
+// another FOUNDRY_PROFILE cannot weaken the packaged test results.
+const forgeEnv = Object.fromEntries(Object.entries(process.env).filter(([name]) => !/^(FOUNDRY|DAPP)_/i.test(name)));
 
 // Build-info sources are keyed relative to contracts/, the pins relative to the repo.
 const buildInfoPath = (pinnedPath) => pinnedPath.slice("contracts/".length);
@@ -257,6 +265,7 @@ function loadBuild() {
   console.error("no build-info matches the artifact; running forge build --root contracts --build-info");
   const run = spawnSync(findForge(), ["build", "--root", "contracts", "--build-info"], {
     cwd: repoRoot,
+    env: forgeEnv,
     stdio: ["ignore", 2, 2],
     windowsHide: true,
   });
@@ -294,6 +303,7 @@ function reviewBuildInfo(buildInfo) {
 function runForgeTests() {
   const run = spawnSync(findForge(), FORGE_TEST_ARGS, {
     cwd: repoRoot,
+    env: forgeEnv,
     encoding: "utf8",
     maxBuffer: 256 * 1024 * 1024,
     windowsHide: true,

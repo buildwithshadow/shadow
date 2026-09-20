@@ -53,8 +53,8 @@ after(() => rmSync(root, { recursive: true, force: true }));
 
 // The working tree holds uncommitted work while this suite is developed, so
 // every build is a rehearsal unless a test says otherwise.
-function build(out, args = ["--skip-tests", "--allow-dirty"]) {
-  return spawnSync(process.execPath, [SCRIPT, "build", "--out", out, ...args], { encoding: "utf8", windowsHide: true });
+function build(out, args = ["--skip-tests", "--allow-dirty"], env = process.env) {
+  return spawnSync(process.execPath, [SCRIPT, "build", "--out", out, ...args], { encoding: "utf8", env, windowsHide: true });
 }
 
 // Independent of the package builder: git's blob id over the raw file bytes.
@@ -266,6 +266,7 @@ test("treeState reports uncommitted packaged inputs and remote-tracking branches
   const scripts = ["float-mainnet-manifest.mjs", "float-mainnet-preflight.mjs", "rpc-read-queue.mjs", "other.mjs"];
   mkdirSync(join(repo, "app/scripts"), { recursive: true });
   for (const name of scripts) writeFileSync(join(repo, "app/scripts", name), "// v1\n");
+  for (const name of ["package.json", "pnpm-lock.yaml"]) writeFileSync(join(repo, "app", name), "v1\n");
   git("add", ".");
   git("commit", "-q", "-m", "init");
   assert.deepEqual(treeState(repo), { dirty: [], remoteBranches: [] });
@@ -276,7 +277,10 @@ test("treeState reports uncommitted packaged inputs and remote-tracking branches
   writeFileSync(join(repo, "contracts/New.sol"), "");
   writeFileSync(join(repo, "package.json"), "{}\n");
   for (const name of scripts) writeFileSync(join(repo, "app/scripts", name), "// v2\n");
+  for (const name of ["package.json", "pnpm-lock.yaml"]) writeFileSync(join(repo, "app", name), "v2\n");
   assert.deepEqual(treeState(repo).dirty, [
+    " M app/package.json",
+    " M app/pnpm-lock.yaml",
     " M app/scripts/float-mainnet-manifest.mjs",
     " M app/scripts/float-mainnet-preflight.mjs",
     " M app/scripts/rpc-read-queue.mjs",
@@ -301,7 +305,8 @@ test("two builds produce a byte-identical manifest with no wall-clock data", () 
 
 test("the default mode runs the tests and packages their results", () => {
   const out = join(root, "with-tests");
-  const run = build(out, ["--allow-dirty"]);
+  // Foundry overrides in the caller's environment do not reach forge: foundry.toml's defaults apply.
+  const run = build(out, ["--allow-dirty"], { ...process.env, FOUNDRY_FUZZ_RUNS: "1" });
   assert.equal(run.status, 0, run.stderr);
   const files = assertManifestListsEveryFile(out);
   assert.deepEqual(
@@ -322,6 +327,9 @@ test("the default mode runs the tests and packages their results", () => {
   };
   assert.ok(forge.passed > 0);
   assert.equal(count("Failure"), 0);
+  const fuzzRuns = results.filter((result) => result.kind?.Fuzz).map((result) => result.kind.Fuzz.runs);
+  assert.ok(fuzzRuns.length > 0, "the suite has fuzz tests");
+  assert.deepEqual(new Set(fuzzRuns), new Set([256]), "Foundry's default fuzz runs, not the override");
   const gateLine = readPackaged(out, "results/scope-gate.txt").toString("utf8");
   assert.match(gateLine, /^ShadowFloatMainnet scope gate PASS: \d+ runtime bytes/);
 
