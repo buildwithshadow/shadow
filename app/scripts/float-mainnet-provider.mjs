@@ -519,7 +519,8 @@ async function accept(values) {
   const connection = await connect(values);
   const account = await providerAccount(connection);
   const intent = readJson(path, "intent");
-  const binding = { account, digest: validateIntentFile(intent, connection).digest, requestId };
+  const checked = validateIntentFile(intent, connection);
+  const binding = { account, digest: checked.digest, requestId };
   const file = values.store === undefined ? null : storeFile(values.store, binding.digest, "acceptance");
   const returned = (stored) => {
     if (values.out !== undefined) writeJsonFile(values.out, stored);
@@ -527,7 +528,14 @@ async function accept(values) {
     return { ok: true, ...stored, digest: stored.typedData.message.digest, predictedOutcome: null, deduplication, out: values.out ?? null };
   };
   const stored = file && (await storedReceipt(file, connection, ACCEPTANCE_KIND, binding));
-  if (stored) return returned(stored);
+  if (stored) {
+    // acceptIntent is skipped, so its signature check runs here: the stored
+    // acceptance goes only to an intent its agent signed.
+    if (checked.signature === null) throw new Error("the intent file carries no signature; the agent signs it before sending it to the provider");
+    const verdict = await checkSignature(connection, checked.struct.agent, checked.digest, checked.signature);
+    if (!verdict.valid) throw new Error(`the agent's signature does not verify: ${verdict.detail}`);
+    return returned(stored);
+  }
   const { acceptance, digest, predicted } = await acceptIntent(connection, { intent, endpointHash, price, requestId, account });
   if (file && !storeOnce(file, acceptance)) return returned(await storedReceipt(file, connection, ACCEPTANCE_KIND, binding));
   if (values.out !== undefined) writeJsonFile(values.out, acceptance);

@@ -647,6 +647,19 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
     const again = await ok("provider", accept("req-e"), PROVIDER);
     assert.deepEqual([again.signature, again.typedData, again.predictedOutcome], [first.signature, first.typedData, null]);
     assert.equal(again.deduplication, `returned the acceptance stored at ${storedAcceptance} for this digest; nothing re-signed`);
+    // Nor does the stored acceptance go to an intent its agent did not sign.
+    const unsignedE = readJson(e.file);
+    delete unsignedE.signature;
+    delete unsignedE.signerKind;
+    writeJson(path("e-unsigned.json"), unsignedE);
+    await fails("provider", acceptArgs(path("e-unsigned.json"), "req-e", ["--endpoint", ENDPOINT, "--store", store]), PROVIDER, /^the intent file carries no signature; /);
+    writeJson(path("e-stranger.json"), { ...readJson(e.file), signature: await sign({ hash: e.digest, privateKey: keyOf(6), to: "hex" }) });
+    await fails(
+      "provider",
+      acceptArgs(path("e-stranger.json"), "req-e", ["--endpoint", ENDPOINT, "--store", store]),
+      PROVIDER,
+      new RegExp(`^the agent's signature does not verify: signature recovers to ${stranger.address}`),
+    );
     await fails(
       "provider",
       accept("req-e2"),

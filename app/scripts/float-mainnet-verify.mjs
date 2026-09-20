@@ -687,7 +687,9 @@ function unmatched(keys, others) {
 }
 
 // Each on-chain event must be in the bundle and each bundle entry on chain.
-function compareSets(eventName, logs, entries, keyOfLog, keyOfEntry, range) {
+// logs are in chain order. With ordered, the bundle must list the entries in
+// that order too, so its numbering follows the chain.
+function compareSets(eventName, logs, entries, keyOfLog, keyOfEntry, range, { ordered = false } = {}) {
   const onChain = logs.map(keyOfLog);
   const listed = entries.map(keyOfEntry);
   const missing = unmatched(onChain, listed);
@@ -695,7 +697,11 @@ function compareSets(eventName, logs, entries, keyOfLog, keyOfEntry, range) {
   const problems = [];
   if (missing.length) problems.push(`on chain but not in the bundle: ${missing.join(", ")}`);
   if (extra.length) problems.push(`in the bundle but not on chain: ${extra.join(", ")}`);
-  return verdict(problems, `${logs.length} ${eventName} event(s) for the line in blocks ${range}, each in the bundle, and no other`);
+  if (ordered && !problems.length && listed.some((key, k) => key !== onChain[k])) {
+    problems.push(`the bundle lists them as ${listed.join(", ")}, not in the chain's order ${onChain.join(", ")}`);
+  }
+  const order = ordered ? " in the chain's order" : "";
+  return verdict(problems, `${logs.length} ${eventName} event(s) for the line in blocks ${range}, each in the bundle${order}, and no other`);
 }
 
 async function verifyBundle(raw, { rpcUrl, manifest }) {
@@ -885,6 +891,7 @@ async function verifyBundle(raw, { rpcUrl, manifest }) {
       (log) => `${log.args.digest}@${log.transactionHash}`,
       (cycle) => `${cycle.digest}@${cycle.spend.txHash}`,
       range,
+      { ordered: true },
     ),
   );
   await record("completeness.spendBlocked", "chain", async () =>

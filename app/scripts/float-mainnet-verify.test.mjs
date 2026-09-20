@@ -832,6 +832,20 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     );
     assert.equal(omitted.check("completeness.repaid").status, "FAIL");
 
+    // Two whole cycles swapped and renumbered: every set still matches, but
+    // the chain paid them the other way round.
+    await failsAt(
+      "t-reordered.json",
+      tamper((b) => {
+        [b.cycles[0], b.cycles[1]] = [b.cycles[1], b.cycles[0]];
+        [b.cycles[0].index, b.cycles[1].index] = [1, 2];
+      }),
+      ["completeness.providerPaid"],
+      new RegExp(
+        `^the bundle lists them as ${bundleA.cycles[1].digest}@${bundleA.cycles[1].spend.txHash}, ${bundleA.cycles[0].digest}@${bundleA.cycles[0].spend.txHash}, .+, not in the chain's order ${bundleA.cycles[0].digest}@${bundleA.cycles[0].spend.txHash}, `,
+      ),
+    );
+
     const fabricatedDigest = keccak256(toBytes("fabricated cycle"));
     const fabricatedTx = keccak256(toBytes("no such transaction"));
     const fabricated = await failsAt(
