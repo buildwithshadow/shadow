@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { inspect, parseArgs } from "node:util";
 import { parseAddress, parseBytes32, parseUint, read } from "../../app/scripts/float-mainnet-cli.mjs";
 import { RECEIPT_STATUSES, connectCandidate, endpointHashFrom, readDeployment, walletFromEnv } from "../../app/scripts/float-mainnet-config.mjs";
-import { validateIntentFile } from "../../app/scripts/float-mainnet-intent.mjs";
+import { checkSignature, validateIntentFile } from "../../app/scripts/float-mainnet-intent.mjs";
 import { errorMessage, isEntrypoint, scrubUrls, stableStringify } from "../../app/scripts/float-mainnet-preflight.mjs";
 import {
   ACCEPTANCE_KIND,
@@ -99,9 +99,11 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return stored;
   }
 
+  // Returns the acceptance and the intent file acceptIntent checked for it
+  // (null for a stored one).
   async function acceptOnce({ digest, struct, signature }, intent, requestId) {
     const stored = storedReceipt(digest, ACCEPTANCE_KIND);
-    if (stored) return stored;
+    if (stored) return { acceptance: stored, checkedIntent: null };
     // acceptIntent's checks that need no chain read, made first, so that an
     // intent refused on its face costs no RPC call.
     const problems = [];
@@ -130,7 +132,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
       if (!signing && Object.getPrototypeOf(error) === Error.prototype) throw new HttpError(errorMessage(error), 422);
       throw error;
     }
-    return storeOnce(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
+    const kept = storeOnce(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
+    return { acceptance: kept, checkedIntent: intent };
   }
 
   // One acceptance per digest, whatever the request id: the first request id
@@ -145,7 +148,15 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     const { digest } = checked;
     context.digest = digest;
-    const acceptance = await once(accepting, digest, () => acceptOnce(checked, input.intent, input.requestId));
+    const { acceptance, checkedIntent } = await once(accepting, digest, () => acceptOnce(checked, input.intent, input.requestId));
+    // A stored acceptance, or one a concurrent request's intent file produced,
+    // skipped acceptIntent for this request's file: it goes only to an intent
+    // the agent signed.
+    if (checkedIntent !== input.intent) {
+      if (checked.signature === null) throw new HttpError("the intent file carries no signature; the agent signs it before sending it to the provider", 422);
+      const verdict = await checkSignature(connection, checked.struct.agent, digest, checked.signature);
+      if (!verdict.valid) throw new HttpError(`the agent's signature does not verify: ${verdict.detail}`, 422);
+    }
     if (acceptance.requestId !== input.requestId) {
       throw new HttpError(
         `digest ${digest} is already accepted for request ${JSON.stringify(acceptance.requestId)}; refusing a second acceptance for request ${JSON.stringify(input.requestId)}`,

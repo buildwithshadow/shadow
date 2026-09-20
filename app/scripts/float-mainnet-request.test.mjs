@@ -664,6 +664,15 @@ describe("request client against the reference provider server", { skip: e2eSkip
   test("POST /serve straight to the server: an unpaid or a blocked digest gets 402 and a digest with no acceptance 404, with no service run and nothing signed", async () => {
     const f = await signedIntent("f");
     assert.equal((await post(current.port, "/accept", { intent: readJson(f.file), requestId: "req-f" })).status, 200);
+    // A retry is answered from the store only for an intent file the agent signed.
+    assert.deepEqual(await post(current.port, "/accept", { intent: readJson(f.unsigned), requestId: "req-f" }), {
+      status: 422,
+      json: { error: "the intent file carries no signature; the agent signs it before sending it to the provider" },
+    });
+    const otherSigner = { ...readJson(f.file), signature: await sign({ hash: f.digest, privateKey: keyOf(6), to: "hex" }) };
+    const wronglySigned = await post(current.port, "/accept", { intent: otherSigner, requestId: "req-f" });
+    assert.equal(wronglySigned.status, 422);
+    assert.match(wronglySigned.json.error, new RegExp(`^the agent's signature does not verify: signature recovers to 0x[0-9a-fA-F]{40}, not the agent ${agent.address}$`));
     // Over the line's next-spend capacity, so the provider refuses to accept it
     // (a refusal found by acceptIntent's chain reads: 422). Its acceptance is
     // put in the store directly: an intent that was blocked after acceptance.
@@ -811,7 +820,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   });
 
   test("each stored file is flushed to disk before it is linked into place, and its directory after", async () => {
-    // A spy on the node:fs functions the server imports: syncBuiltinESMExports
+    // A spy on the node:fs functions the kit's storeOnce imports: syncBuiltinESMExports
     // updates the named exports other modules hold.
     const events = [];
     const opened = new Map();
