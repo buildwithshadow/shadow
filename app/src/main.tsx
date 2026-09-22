@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
+import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -9802,6 +9803,6 @@ function ModularWalletCard() {
 
 createRoot(document.getElementById("root")!).render(
   <BrowserRouter>
-    <App />
+    {window.location.pathname === "/wallet-check" ? <CircleWalletDiagnostic /> : <App />}
   </BrowserRouter>
 );
