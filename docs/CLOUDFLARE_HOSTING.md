@@ -1,6 +1,11 @@
 # Cloudflare Pages migration
 
-Target hostname: `shadow.dolepee.com`. Pages serves the Vite build and runs the
+Current live URL: `https://shadow-arc.vercel.app/`. The production hostname for
+the migration is undecided. `shadow.dolepee.com` was an earlier proposal; a
+dedicated Shadow domain is also being considered. Confirm the destination before
+configuring origins, canonical URLs or DNS.
+
+Pages serves the Vite build and runs the
 existing APIs through `app/functions/api/[[path]].ts`. The adapter preserves
 query arrays, JSON/raw bodies, response status, payment headers, and the `/api/desk`
 rewrite. Unknown APIs return JSON 404. It reuses the existing API implementations.
@@ -35,7 +40,8 @@ wallet, payment, or storage parity.
 
 ## Configuration and release gates
 
-1. Confirm the exact reviewed source commit and a successful production build.
+1. Confirm the destination hostname, exact reviewed source commit and a successful
+   production build.
 2. Inventory deployed variable **names**, Circle origin restrictions and required
    backend capabilities. Never print environment values. Frontend `VITE_*` settings
    are build-time inputs, not automatically supplied by Pages runtime bindings.
@@ -53,8 +59,9 @@ wallet, payment, or storage parity.
    WebAuthn document intentionally remains unchanged until that step is validated.
 6. Update canonical, Open Graph, Twitter and JSON-LD URLs to the stable hostname
    as part of the verified cutover build, not as evidence that cutover has occurred.
-7. Associate the custom domain in Pages **before** adding its CNAME at the existing
-   DNS provider. Do not migrate zone nameservers or modify unrelated records.
+7. Associate the confirmed custom domain in Pages **before** adding its required
+   DNS record at the authoritative provider. Do not infer permission to migrate
+   zone nameservers or modify unrelated records.
 8. Confirm HTTPS, APIs, assets and the primary user workflow on desktop/mobile.
    Preserve the old deployment until retirement is separately authorized.
 
@@ -63,9 +70,11 @@ wallet, payment, or storage parity.
 The existing `shadow-arc.vercel.app` deployment responds, including configured
 storage/payment APIs. `shadow.dolepee.com` returns Vercel `DEPLOYMENT_NOT_FOUND`.
 The Vercel DNS zone has no explicit `shadow` record; its default wildcard supplies
-the failed destination. A future dedicated CNAME must affect only `shadow`, not
-the apex or wildcard. Restoring the prior DNS state means removing only the newly
-created Shadow record. Retain its creation ID in the private release record.
+the failed destination. If that subdomain is selected, a dedicated CNAME must
+affect only `shadow`, not the apex or wildcard. Restoring its prior DNS state would
+mean removing only the newly created Shadow record. Retain its creation ID in the
+private release record. A different domain needs its own ownership, DNS and
+rollback checks before cutover.
 
 No secrets, contract addresses, or paid capabilities are inferred from this
 configuration. The committed Wrangler variables are public testnet defaults only.
