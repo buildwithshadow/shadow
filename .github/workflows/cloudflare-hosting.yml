@@ -1,0 +1,50 @@
+name: cloudflare-hosting
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/cloudflare-hosting.yml"
+      - "app/api/**"
+      - "app/cloudflare/**"
+      - "app/functions/**"
+      - "app/public/_headers"
+      - "app/scripts/cloudflare-*"
+      - "app/wrangler.jsonc"
+      - "app/package.json"
+      - "app/pnpm-lock.yaml"
+      - "app/tsconfig.json"
+      - "app/historicalReads*"
+      - "app/floatV2*"
+      - "app/leptonM1*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  pages-compatibility:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - name: Install app dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile --ignore-workspace
+      - name: Test HTTP adapter and route coverage
+        run: node --test app/scripts/cloudflare-adapter.test.ts
+      - name: Typecheck app and API
+        run: npm run app:typecheck
+      - name: Build frontend
+        run: npm run app:build
+      - name: Compile Pages Functions
+        working-directory: app
+        run: npx --yes wrangler@4.136.1 pages functions build --outdir .wrangler/pages-build
+      - name: Test the Cloudflare runtime without credentials
+        working-directory: app
+        run: node scripts/cloudflare-runtime.test.mjs
