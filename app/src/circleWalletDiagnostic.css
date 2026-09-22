@@ -1,0 +1,17 @@
+.walletDiagnostic { max-width: 850px; margin: 0 auto; padding: 32px 20px 64px; line-height: 1.6; }
+.walletDiagnostic a { display: inline-flex; align-items: center; min-height: 44px; color: var(--accent); text-decoration: underline; }
+.walletDiagnostic h1 { margin: 8px 0 16px; font-size: clamp(1.9rem, 6vw, 2.8rem); line-height: 1.15; }
+.walletDiagnostic h2 { margin: 32px 0 12px; font-size: 1.3rem; }
+.walletDiagnosticEyebrow { margin-top: 24px; color: var(--ink-soft); }
+.walletDiagnostic dl { padding: 16px; background: var(--surface); border: 1px solid var(--border-strong); border-radius: 12px; }
+.walletDiagnostic dt { color: var(--ink-soft); font-size: .875rem; }
+.walletDiagnostic dd { margin: 0 0 14px; font-family: var(--mono); overflow-wrap: anywhere; }
+.walletDiagnostic dd:last-child { margin-bottom: 0; }
+.walletDiagnosticActions { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0 12px; }
+.walletDiagnostic button { min-height: 44px; padding: 12px 16px; border: 1px solid var(--accent); border-radius: 8px; background: var(--accent); color: var(--cta-fg); font: inherit; font-weight: 600; cursor: pointer; }
+.walletDiagnostic button:disabled { cursor: not-allowed; background: var(--surface); border-color: var(--border-strong); color: var(--ink-soft); }
+.walletDiagnostic :focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
+.walletDiagnostic pre, .walletDiagnostic textarea { width: 100%; padding: 16px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font: .85rem/1.65 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
+.walletDiagnostic textarea { display: block; resize: vertical; margin-top: 8px; }
+.walletDiagnosticError { border-left: 3px solid var(--block); padding: 12px 16px; background: var(--block-soft); }
+@media (max-width: 480px) { .walletDiagnosticActions { flex-direction: column; } .walletDiagnostic button { width: 100%; } }
