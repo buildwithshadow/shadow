@@ -1,3 +1,5 @@
+import { readBeforeDeadline } from "./historicalReads.js";
+
 export const LEPTON_M1_DEPLOYMENTS = Object.freeze({
   currentRead: Object.freeze({
     generation: "m1-caller-hardened-2026-06-25",
@@ -127,7 +129,7 @@ export async function readWithCanonicalFallback(primaryRead, canonicalRead) {
   }
 }
 
-export async function readHistoricalProofInput(readers) {
+export async function readHistoricalProofInput(readers, { deadlineAt = Date.now() + 8_000 } = {}) {
   const attempts = [
     ["RPC", readers.byHash],
     ["canonical RPC", readers.byCanonicalHash],
@@ -138,8 +140,12 @@ export async function readHistoricalProofInput(readers) {
   const failures = [];
   for (const [source, read] of attempts) {
     if (typeof read !== "function") continue;
+    if (Date.now() >= deadlineAt) {
+      failures.push("historical proof deadline exceeded");
+      break;
+    }
     try {
-      const input = await read();
+      const input = await readBeforeDeadline(read, deadlineAt, "historical proof deadline exceeded");
       if (input) return { input, source };
       failures.push(`${source}: no calldata`);
     } catch (error) {

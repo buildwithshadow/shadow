@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   LEPTON_M1_DEPLOYMENTS,
   LEPTON_WRITE_REASON,
@@ -248,6 +249,40 @@ test("a canonical block without the transaction does not suppress the explorer f
     byExplorer: async () => "0x765e827f",
   });
   assert.deepEqual(result, { input: "0x765e827f", source: "Arcscan index" });
+});
+
+test("slow unavailable proof sources share one deadline and cannot start later fallbacks", async () => {
+  const touched = [];
+  const started = Date.now();
+  const result = await readHistoricalProofInput({
+    byHash: async () => {
+      touched.push("configured hash");
+      await delay(20);
+      throw new Error("configured RPC unavailable");
+    },
+    byCanonicalHash: async () => {
+      touched.push("canonical hash");
+      return new Promise(() => {});
+    },
+    byBlock: async () => { touched.push("configured block"); return "0xbeef"; },
+    byCanonicalBlock: async () => { touched.push("canonical block"); return "0xbeef"; },
+    byExplorer: async () => { touched.push("explorer"); return "0xbeef"; },
+  }, { deadlineAt: started + 80 });
+  assert.equal(result.input, null);
+  assert.match(result.source, /historical proof deadline exceeded/);
+  assert.deepEqual(touched, ["configured hash", "canonical hash"]);
+  assert.ok(Date.now() - started < 500);
+});
+
+test("a proof scan with an exhausted parent budget never starts a source", async () => {
+  let calls = 0;
+  const result = await readHistoricalProofInput({
+    byHash: async () => { calls += 1; return "0xbeef"; },
+    byExplorer: async () => { calls += 1; return "0xbeef"; },
+  }, { deadlineAt: Date.now() - 1 });
+  assert.equal(calls, 0);
+  assert.equal(result.input, null);
+  assert.match(result.source, /deadline exceeded/);
 });
 
 test("historical proof input degrades to unusable calldata instead of throwing when every source fails", async () => {

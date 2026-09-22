@@ -15,9 +15,12 @@ import {
   readHistoricalProofInput,
   transactionInputContainsAddress,
 } from "../leptonM1Config.js";
-import { cachedHistoricalRead } from "../historicalReads.js";
+import { cachedHistoricalRead, readBeforeDeadline } from "../historicalReads.js";
 
 export const config = { maxDuration: 20 };
+const TREASURY_READ_BUDGET_MS = 18_000;
+const HISTORICAL_PROOF_BUDGET_MS = 8_000;
+type ReadBudget = { deadlineAt: number; signal: AbortSignal };
 
 const CHAIN_ID = 5_042_002;
 const DEFAULT_RPC = "https://rpc.testnet.arc.network";
@@ -109,6 +112,7 @@ const floatAbi = parseAbi([
 ]);
 
 export default async function handler(req: VercelLikeRequest, res: VercelLikeResponse) {
+  const deadlineAt = Date.now() + TREASURY_READ_BUDGET_MS;
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Cache-Control", "public, s-maxage=15, stale-while-revalidate=60");
 
@@ -119,11 +123,17 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
   }
 
   try {
-    const result = await runTreasuryChecks();
+    const result = await readBeforeDeadline(
+      (signal) => runTreasuryChecks({ deadlineAt, signal }),
+      deadlineAt,
+      "Treasury verification deadline exceeded",
+    );
     res.status(result.ok ? 200 : 500).json(result);
   } catch (error) {
+    res.setHeader("Cache-Control", "no-store");
     res.status(500).json({
       ok: false,
+      degraded: true,
       checkedAt: new Date().toISOString(),
       mode: "shadow-treasury-live-verifier",
       error: sanitize(error),
@@ -131,7 +141,7 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
   }
 }
 
-async function runTreasuryChecks() {
+async function runTreasuryChecks(budget: ReadBudget) {
   const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
   const canonicalRpcUrl = clean(process.env.ARC_PUBLIC_RPC_URL) || DEFAULT_RPC;
   const apiUrl = clean(process.env.TREASURY_VERIFY_FLOAT_API_URL || process.env.FLOAT_API_URL) || DEFAULT_API;
@@ -164,25 +174,34 @@ async function runTreasuryChecks() {
     nativeCurrency: { decimals: 18, name: "USDC", symbol: "USDC" },
     rpcUrls: { default: { http: [rpcUrl] } },
   });
-  const publicClient = createPublicClient({ chain, transport: http(rpcUrl, { timeout: 5_000, retryCount: 0 }) });
+  // Combine cancellation with viem's per-call signal rather than replacing it,
+  // so an unavailable RPC still falls through after its normal five seconds.
+  const boundedFetch: typeof fetch = (input, init) => fetch(input, {
+    ...init,
+    signal: AbortSignal.any([budget.signal, ...(init?.signal ? [init.signal] : [])]),
+  });
+  const transportOptions = { timeout: 5_000, retryCount: 0, fetchFn: boundedFetch };
+  const publicClient = boundTreasuryReads(createPublicClient({ chain, transport: http(rpcUrl, transportOptions) }), budget);
   const canonicalPublicClient =
     canonicalRpcUrl === rpcUrl
       ? publicClient
-      : createPublicClient({ chain, transport: http(canonicalRpcUrl, { timeout: 5_000, retryCount: 0 }) });
+      : boundTreasuryReads(createPublicClient({ chain, transport: http(canonicalRpcUrl, transportOptions) }), budget);
   const historicalPasskeyProof = LEPTON_M1_DEPLOYMENTS.historicalProofs.circlePasskey;
 
   const check = (name: string, ok: boolean, detail = "") => {
+    budget.signal.throwIfAborted();
+    if (Date.now() >= budget.deadlineAt) throw new Error("Treasury verification deadline exceeded");
     checks.push({ check: name, status: ok ? "PASS" : "FAIL", ok, detail: String(detail) });
   };
 
   const [floatState, createTx, allowedTx, blockedTx, x402Tx, bindTx, historicalPasskeyTx, currentV4Readiness] = await Promise.all([
-    fetchJson(apiUrl),
-    txReceipt(publicClient, proof.createMandateTx),
-    txReceipt(publicClient, proof.allowedAllocationTx),
-    txReceipt(publicClient, proof.blockedAllocationTx),
-    txReceipt(publicClient, proof.x402SettlementTx),
-    txReceipt(publicClient, proof.floatBindTx),
-    historicalProofInput(publicClient, canonicalPublicClient, historicalPasskeyProof),
+    fetchJson(apiUrl, budget),
+    txReceipt(publicClient, proof.createMandateTx, budget),
+    txReceipt(publicClient, proof.allowedAllocationTx, budget),
+    txReceipt(publicClient, proof.blockedAllocationTx, budget),
+    txReceipt(publicClient, proof.x402SettlementTx, budget),
+    txReceipt(publicClient, proof.floatBindTx, budget),
+    historicalProofInput(publicClient, canonicalPublicClient, historicalPasskeyProof, budget),
     readCurrentV4Readiness(publicClient),
   ]);
 
@@ -246,33 +265,33 @@ async function runTreasuryChecks() {
   const allowedTransfer = await verifyTransfer(publicClient, proof.allowedAllocationTx, {
     expected: { from: OPERATOR, to: MORPHO_SINK, amount: proof.allowedAmountUSDC },
     usdc: USDC,
-  });
+  }, budget);
   check("allowed allocation moved Arc USDC into vault sink", allowedTransfer.ok, allowedTransfer.detail);
 
   const blockedTransfer = await verifyNoTransfer(publicClient, proof.blockedAllocationTx, {
     from: OPERATOR,
     to: MORPHO_SINK,
     usdc: USDC,
-  });
+  }, budget);
   check("blocked allocation moved no vault USDC", blockedTransfer.ok, blockedTransfer.detail);
 
   const settlementTransfer = await verifyTransfer(publicClient, proof.x402SettlementTx, {
     expected: { from: OPERATOR, to: PROVIDER, amount: proof.x402AmountUSDC },
     usdc: USDC,
     txTo: USDC,
-  });
+  }, budget);
   check("x402 settlement transferred Arc USDC operator -> provider", settlementTransfer.ok, settlementTransfer.detail);
 
   const bindEvent = await verifyX402Bound(publicClient, proof, {
     float: FLOAT,
     provider: PROVIDER,
     facilitator: OPERATOR,
-  });
+  }, budget);
   check("Float bind emitted matching X402PaymentBound", bindEvent.ok, bindEvent.detail);
 
   const apiReceipts = Array.isArray(floatState?.receipts) ? floatState.receipts : [];
   const indexedRequestReceipts = apiReceipts.filter((receipt: any) => sameHash(receipt.requestHash, proof.floatRequestHash));
-  const historicalRequestReceipts = await explorerFloatReceipts(proof.floatBindTx, proof.floatRequestHash);
+  const historicalRequestReceipts = await explorerFloatReceipts(proof.floatBindTx, proof.floatRequestHash, budget);
   const requestReceipts = indexedRequestReceipts.length > 0 ? indexedRequestReceipts : historicalRequestReceipts;
   const receiptSource = indexedRequestReceipts.length > 0 ? "live-float-api" : "arcscan-historical-index";
   const receiptSourceLabel = indexedRequestReceipts.length > 0 ? "Float API" : "Arcscan index";
@@ -323,7 +342,7 @@ async function runTreasuryChecks() {
     },
     currentV4: currentV4Readiness,
     historicalProofs: {
-      circlePasskey: historicalPasskeyProof,
+      circlePasskey: { ...historicalPasskeyProof, blockNumber: historicalPasskeyProof.blockNumber.toString() },
       morphoStyle: LEPTON_M1_DEPLOYMENTS.historicalProofs.morphoStyle,
     },
     txs: {
@@ -396,7 +415,23 @@ async function readCurrentV4Readiness(publicClient: any) {
   }
 }
 
-async function txReceipt(publicClient: any, txHash: `0x${string}`) {
+// Every RPC starts inside the same request budget; later verification stages
+// cannot keep issuing calls after the response has timed out.
+function boundTreasuryReads(client: any, budget: ReadBudget) {
+  const read = (method: string) => (args: any) => readBeforeDeadline(() => {
+    budget.signal.throwIfAborted();
+    return client[method](args);
+  }, budget.deadlineAt, "Treasury verification deadline exceeded");
+  return {
+    getBytecode: read("getBytecode"),
+    readContract: read("readContract"),
+    getTransactionReceipt: read("getTransactionReceipt"),
+    getTransaction: read("getTransaction"),
+    getBlock: read("getBlock"),
+  };
+}
+
+async function txReceipt(publicClient: any, txHash: `0x${string}`, budget: ReadBudget) {
   try {
     const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
     return receipt.status === "success"
@@ -404,7 +439,7 @@ async function txReceipt(publicClient: any, txHash: `0x${string}`) {
       : { ok: false, detail: `status ${receipt.status}` };
   } catch (error) {
     try {
-      const tx = await explorerTransaction(txHash);
+      const tx = await explorerTransaction(txHash, budget);
       return tx.status === "ok"
         ? { ok: true, detail: `block ${tx.block_number} via Arcscan index` }
         : { ok: false, detail: `Arcscan status ${tx.status || "unknown"}` };
@@ -418,7 +453,9 @@ async function historicalProofInput(
   publicClient: any,
   canonicalPublicClient: any,
   proof: { txHash: `0x${string}`; blockNumber: bigint },
+  budget: ReadBudget,
 ) {
+  const proofBudget = { ...budget, deadlineAt: Math.min(budget.deadlineAt, Date.now() + HISTORICAL_PROOF_BUDGET_MS) };
   const byHash = async (client: any) => (await client.getTransaction({ hash: proof.txHash })).input;
   const fromBlock = async (client: any) => {
     const block = await client.getBlock({ blockNumber: proof.blockNumber, includeTransactions: true });
@@ -432,8 +469,8 @@ async function historicalProofInput(
     byCanonicalHash: canonicalPublicClient === publicClient ? undefined : () => byHash(canonicalPublicClient),
     byBlock: () => fromBlock(publicClient),
     byCanonicalBlock: canonicalPublicClient === publicClient ? undefined : () => fromBlock(canonicalPublicClient),
-    byExplorer: async () => (await explorerTransaction(proof.txHash))?.raw_input,
-  });
+    byExplorer: async () => (await explorerTransaction(proof.txHash, proofBudget))?.raw_input,
+  }, { deadlineAt: proofBudget.deadlineAt });
 }
 
 async function verifyTransfer(
@@ -448,6 +485,7 @@ async function verifyTransfer(
     usdc: Address;
     txTo?: Address;
   },
+  budget: ReadBudget,
 ) {
   try {
     const [tx, receipt] = await Promise.all([
@@ -473,7 +511,7 @@ async function verifyTransfer(
       : { ok: false, detail: "missing matching Arc USDC Transfer" };
   } catch (error) {
     try {
-      const tx = await explorerTransaction(txHash);
+      const tx = await explorerTransaction(txHash, budget);
       const matched = explorerTransfers(tx).some(
         (transfer) =>
           sameAddress(transfer.token?.address_hash, usdc) &&
@@ -494,6 +532,7 @@ async function verifyNoTransfer(
   publicClient: any,
   txHash: `0x${string}`,
   expected: { from: Address; to: Address; usdc: Address },
+  budget: ReadBudget,
 ) {
   try {
     const receipt = await publicClient.getTransactionReceipt({ hash: txHash });
@@ -511,7 +550,7 @@ async function verifyNoTransfer(
     return leaked ? { ok: false, detail: "found unexpected Arc USDC Transfer" } : { ok: true, detail: "no vault Transfer" };
   } catch (error) {
     try {
-      const tx = await explorerTransaction(txHash);
+      const tx = await explorerTransaction(txHash, budget);
       const leaked = explorerTransfers(tx).some(
         (transfer) =>
           sameAddress(transfer.token?.address_hash, expected.usdc) &&
@@ -537,6 +576,7 @@ async function verifyX402Bound(
     x402AmountUSDC: bigint;
   },
   refs: { float: Address; provider: Address; facilitator: Address },
+  budget: ReadBudget,
 ) {
   try {
     const receipt = await publicClient.getTransactionReceipt({ hash: proof.floatBindTx });
@@ -556,7 +596,7 @@ async function verifyX402Bound(
     return matched ? { ok: true, detail: proof.floatBindTx } : { ok: false, detail: "missing matching X402PaymentBound" };
   } catch (error) {
     try {
-      const logs = await explorerLogs(proof.floatBindTx);
+      const logs = await explorerLogs(proof.floatBindTx, budget);
       const matched = logs.some((log) => {
         if (!sameAddress(log.address?.hash, refs.float)) return false;
         const decoded = decodeLog(x402PaymentBoundEvent, log);
@@ -576,9 +616,9 @@ async function verifyX402Bound(
   }
 }
 
-async function explorerFloatReceipts(txHash: `0x${string}`, requestHash: `0x${string}`) {
+async function explorerFloatReceipts(txHash: `0x${string}`, requestHash: `0x${string}`, budget: ReadBudget) {
   try {
-    const logs = await explorerLogs(txHash);
+    const logs = await explorerLogs(txHash, budget);
     return logs.flatMap((log) => {
       const decoded = decodeLog(floatReceiptEvent, log);
       if (!decoded || !sameHash(decoded.args.requestHash, requestHash)) return [];
@@ -601,31 +641,34 @@ async function explorerFloatReceipts(txHash: `0x${string}`, requestHash: `0x${st
   }
 }
 
-function explorerTransaction(txHash: `0x${string}`) {
+function explorerTransaction(txHash: `0x${string}`, budget: ReadBudget) {
   const key = txHash.toLowerCase();
-  return cachedHistoricalRead(explorerTransactionCache, key, () =>
-    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}`),
-  );
+  return readBeforeDeadline(() => cachedHistoricalRead(explorerTransactionCache, key, () =>
+    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}`, budget),
+  ), budget.deadlineAt, "Treasury explorer deadline exceeded");
 }
 
-function explorerLogs(txHash: `0x${string}`) {
+function explorerLogs(txHash: `0x${string}`, budget: ReadBudget) {
   const key = txHash.toLowerCase();
-  return cachedHistoricalRead<any[]>(explorerLogsCache, key, () =>
-    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`).then((body) =>
+  return readBeforeDeadline(() => cachedHistoricalRead<any[]>(explorerLogsCache, key, () =>
+    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`, budget).then((body) =>
       Array.isArray(body?.items) ? body.items : [],
     ),
-  );
+  ), budget.deadlineAt, "Treasury explorer deadline exceeded");
 }
 
 function explorerTransfers(tx: any): any[] {
   return Array.isArray(tx?.token_transfers) ? tx.token_transfers : [];
 }
 
-async function fetchJson(url: string) {
-  const response = await fetch(url, { signal: AbortSignal.timeout(8_000) });
-  const text = await response.text();
-  if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
-  return JSON.parse(text);
+async function fetchJson(url: string, budget: ReadBudget) {
+  return readBeforeDeadline(async (signal) => {
+    budget.signal.throwIfAborted();
+    const response = await fetch(url, { signal: AbortSignal.any([signal, budget.signal]) });
+    const text = await response.text();
+    if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
+    return JSON.parse(text);
+  }, Math.min(budget.deadlineAt, Date.now() + 8_000), "Treasury HTTP read deadline exceeded");
 }
 
 function decodeLog(event: any, log: any) {

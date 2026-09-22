@@ -88,5 +88,5 @@ export function readHistoricalProofInput(readers: {
   byBlock?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
   byCanonicalBlock?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
   byExplorer?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
-}): Promise<{ input: Hex | null; source: string }>;
+}, options?: { deadlineAt?: number }): Promise<{ input: Hex | null; source: string }>;
 export function transactionInputContainsAddress(input: Hex | string | null | undefined, address: Address | string): boolean;

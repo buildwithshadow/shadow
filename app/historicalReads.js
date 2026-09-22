@@ -28,6 +28,8 @@ export async function readBeforeDeadline(read, deadlineAt, message) {
     return await Promise.race([Promise.resolve().then(() => read(controller.signal)), timeout]);
   } finally {
     clearTimeout(timer);
+    // Closing a parent read also cancels any still-pending child requests.
+    controller.abort(new Error("Read scope closed"));
   }
 }
 
