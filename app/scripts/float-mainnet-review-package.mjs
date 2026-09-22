@@ -173,12 +173,7 @@ export function findSolc(directories = solcDirectories()) {
   throw new Error(`solc ${EXPECTED_COMPILER.version} not found in ${directories.join(", ")}; forge build --root contracts installs it`);
 }
 
-// Compiles the package's reduced standard-JSON input (the two pinned sources
-// only) and compares the result with the package's artifact. Empty means the
-// shipped input alone reproduces the shipped bytecode and ABI.
-export function reproductionProblems(packageDir, solc) {
-  const input = JSON.parse(readFileSync(join(packageDir, "build/build-info.json"), "utf8")).input;
-  const artifact = JSON.parse(readFileSync(join(packageDir, "build/ShadowFloatMainnet.json"), "utf8"));
+function compileInput(input, solc) {
   const run = spawnSync(solc, ["--standard-json"], {
     input: JSON.stringify(input),
     encoding: "utf8",
@@ -186,23 +181,77 @@ export function reproductionProblems(packageDir, solc) {
     windowsHide: true,
   });
   if (run.status !== 0) {
-    return [`solc --standard-json did not run (status ${run.status}): ${run.error?.message ?? run.stderr.trim()}`];
+    throw new Error(`solc --standard-json did not run (status ${run.status}): ${run.error?.message ?? run.stderr.trim()}`);
   }
   const output = JSON.parse(run.stdout);
-  const contract = output.contracts?.[CONTRACT_SOURCE]?.[CONTRACT_NAME];
-  const evm = contract?.evm;
-  if (!evm) {
+  if (!output.contracts?.[CONTRACT_SOURCE]?.[CONTRACT_NAME]?.evm) {
     const errors = (output.errors ?? []).filter((entry) => entry.severity === "error").map((entry) => entry.message);
-    return [`solc produced no ${CONTRACT_SOURCE}:${CONTRACT_NAME} from build/build-info.json: ${errors.join("; ")}`];
+    throw new Error(`solc produced no ${CONTRACT_SOURCE}:${CONTRACT_NAME} from build/build-info.json: ${errors.join("; ")}`);
   }
+  return output;
+}
+
+// Foundry-compatible fields, all obtained from the same fresh compilation.
+// Rebuilding the reduced input changes AST/source IDs from the whole-project
+// build; its AST, source maps and immutable-reference keys must move together.
+export function artifactFromCompilerOutput(output) {
+  const contract = output.contracts[CONTRACT_SOURCE][CONTRACT_NAME];
+  const source = output.sources[CONTRACT_SOURCE];
+  const bytecode = (value, deployed = false) => ({
+    object: `0x${value.object}`,
+    sourceMap: value.sourceMap,
+    linkReferences: value.linkReferences,
+    ...(deployed ? { immutableReferences: value.immutableReferences } : {}),
+  });
+  return {
+    abi: contract.abi,
+    bytecode: bytecode(contract.evm.bytecode),
+    deployedBytecode: bytecode(contract.evm.deployedBytecode, true),
+    methodIdentifiers: contract.evm.methodIdentifiers,
+    rawMetadata: contract.metadata,
+    metadata: JSON.parse(contract.metadata),
+    ast: source.ast,
+    id: source.id,
+  };
+}
+
+function executableProblems(expected, artifact) {
   const problems = [];
-  if (`0x${evm.bytecode.object}` !== artifact.bytecode.object) {
+  if (expected.bytecode.object !== artifact.bytecode?.object) {
     problems.push("solc's creation bytecode from build/build-info.json differs from build/ShadowFloatMainnet.json");
   }
-  if (`0x${evm.deployedBytecode.object}` !== artifact.deployedBytecode.object) {
+  if (expected.deployedBytecode.object !== artifact.deployedBytecode?.object) {
     problems.push("solc's runtime bytecode from build/build-info.json differs from build/ShadowFloatMainnet.json");
   }
-  if (!sameAbi(contract.abi, artifact.abi)) problems.push("solc's ABI from build/build-info.json differs from build/ShadowFloatMainnet.json");
+  if (!Array.isArray(artifact.abi) || !sameAbi(expected.abi, artifact.abi)) problems.push("solc's ABI from build/build-info.json differs from build/ShadowFloatMainnet.json");
+  return problems;
+}
+
+// Every shipped artifact field and the shipped compiler output must reproduce,
+// including the immutable slots consumed by the release-manifest tooling.
+export function reproductionProblems(packageDir, solc) {
+  const buildInfo = JSON.parse(readFileSync(join(packageDir, "build/build-info.json"), "utf8"));
+  const artifact = JSON.parse(readFileSync(join(packageDir, "build/ShadowFloatMainnet.json"), "utf8"));
+  let output;
+  try {
+    output = compileInput(buildInfo.input, solc);
+  } catch (error) {
+    return [errorMessage(error)];
+  }
+  const expected = artifactFromCompilerOutput(output);
+  const problems = executableProblems(expected, artifact);
+  const withoutObject = (value) => Object.fromEntries(Object.entries(value ?? {}).filter(([key]) => key !== "object"));
+  for (const key of ["bytecode", "deployedBytecode"]) {
+    if (!sameJson(withoutObject(artifact[key]), withoutObject(expected[key]))) {
+      problems.push(`solc's ${key} metadata from build/build-info.json differs from build/ShadowFloatMainnet.json`);
+    }
+  }
+  for (const key of ["methodIdentifiers", "rawMetadata", "metadata", "ast", "id"]) {
+    if (!sameJson(artifact[key], expected[key])) problems.push(`solc's ${key} from build/build-info.json differs from build/ShadowFloatMainnet.json`);
+  }
+  if (!sameJson(Object.keys(artifact).sort(), Object.keys(expected).sort())) problems.push("build/ShadowFloatMainnet.json contains missing or unverified fields");
+  if (!sameJson(buildInfo.output, reviewBuildInfo({ ...buildInfo, output }).output)) problems.push("solc's output differs from the retained build/build-info.json output");
+  if (buildInfo.solcVersion !== SOLC_SHORT_VERSION || buildInfo.solcLongVersion !== EXPECTED_COMPILER.version) problems.push("build/build-info.json compiler version differs from the verified solc version");
   return problems;
 }
 
@@ -251,10 +300,10 @@ export function machinePathHits(files, { root = repoRoot, home = homedir(), user
   return hits;
 }
 
-// The artifact's bytes are read once: the package ships exactly what was checked.
+// Snapshot the cached artifact for lineage and executable-code checks. The
+// shipped artifact is regenerated independently, never copied from this cache.
 function readArtifact() {
-  const artifactBytes = readFileSync(artifactPath);
-  return { artifact: JSON.parse(artifactBytes.toString("utf8")), artifactBytes };
+  return { artifact: JSON.parse(readFileSync(artifactPath, "utf8")) };
 }
 
 function loadBuild() {
@@ -295,8 +344,8 @@ function reviewBuildInfo(buildInfo) {
       errors: (buildInfo.output.errors ?? []).filter((entry) => paths.includes(entry.sourceLocation?.file)),
       sources: pinnedOnly(buildInfo.output.sources),
     },
-    solcLongVersion: buildInfo.solcLongVersion,
-    solcVersion: buildInfo.solcVersion,
+    solcLongVersion: EXPECTED_COMPILER.version,
+    solcVersion: SOLC_SHORT_VERSION,
   };
 }
 
@@ -370,7 +419,7 @@ function reviewScope({ artifact, commit, dirty, tests }) {
     "",
     "## Out of scope",
     "",
-    "- Testnet `ShadowFloat` V2 (`contracts/src/ShadowFloat.sol`) and every other contract in the repository. The Foundry build that produced the artifact compiled the whole project; `build/build-info.json` keeps only the two in-scope sources.",
+    "- Testnet `ShadowFloat` V2 (`contracts/src/ShadowFloat.sol`) and every other contract in the repository. The package artifact and build-info are freshly compiled from only the two in-scope sources; their bytecodes and ABI must also match the checked Foundry build.",
     "- The off-chain tools: the preflight, release manifest, participant CLIs and this package builder (`app/scripts/float-mainnet-*.mjs`).",
     "- Deployment configuration values: chain ID, USDC address, cap maxima and initial values, repayment windows and governance delay. The proposed values in the pilot test plan await owner approval.",
     "",
@@ -409,7 +458,7 @@ function reviewScope({ artifact, commit, dirty, tests }) {
     'const canon = (v) => (Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v));',
     'const abi = (list) => JSON.stringify(list.map(canon).sort());',
     "const same = out.bytecode.object === art.bytecode.object && out.deployedBytecode.object === art.deployedBytecode.object && abi(out.abi) === abi(art.abi);",
-    `console.log(same ? "reproduces the artifact" : "MISMATCH"); process.exit(same ? 0 : 1);'`,
+    `console.log(same ? "reproduces the executable bytecodes and ABI" : "MISMATCH"); process.exit(same ? 0 : 1);'`,
     "```",
     "",
     `With solc directly, where \`solc-0.8.24\` is the ${code(compiler.version)} binary. The builder ran this check before writing the manifest and refuses to package on a mismatch:`,
@@ -422,11 +471,14 @@ function reviewScope({ artifact, commit, dirty, tests }) {
     'const art = require("./build/ShadowFloatMainnet.json");',
     'const canon = (v) => (Array.isArray(v) ? "[" + v.map(canon).join(",") + "]" : v && typeof v === "object" ? "{" + Object.keys(v).sort().map((k) => JSON.stringify(k) + ":" + canon(v[k])).join(",") + "}" : JSON.stringify(v));',
     'const abi = (list) => JSON.stringify(list.map(canon).sort());',
-    'const same = "0x" + out.evm.bytecode.object === art.bytecode.object && "0x" + out.evm.deployedBytecode.object === art.deployedBytecode.object && abi(out.abi) === abi(art.abi);',
+    'const source = require("../float-review-output.json").sources["src/ShadowFloatMainnet.sol"];',
+    'const code = (v, deployed = false) => ({object: "0x" + v.object, sourceMap: v.sourceMap, linkReferences: v.linkReferences, ...(deployed ? {immutableReferences: v.immutableReferences} : {})});',
+    'const expected = {abi: out.abi, bytecode: code(out.evm.bytecode), deployedBytecode: code(out.evm.deployedBytecode, true), methodIdentifiers: out.evm.methodIdentifiers, rawMetadata: out.metadata, metadata: JSON.parse(out.metadata), ast: source.ast, id: source.id};',
+    'const same = abi(out.abi) === abi(art.abi) && canon({...expected, abi: []}) === canon({...art, abi: []});',
     `console.log(same ? "reproduces the artifact" : "MISMATCH"); process.exit(same ? 0 : 1);'`,
     "```",
     "",
-    "`build/build-info.json` is the Foundry build-info reduced to the two in-scope sources. Its `input` is a solc standard JSON input: Foundry's `version`, `allowPaths`, `basePath` and `includePaths` keys are removed, because solc rejects them and the paths are local to the build machine. Its `output` is Foundry's compiler output for those sources. Compare bytecode and ABI, not ASTs: AST node ids depend on which other sources were in the compilation. The ABI is compared as a set of entries, because solc and Foundry list them in different orders.",
+    "`build/build-info.json` contains a standard JSON input reduced to the two in-scope sources and the fresh solc output for that input. Foundry's `version`, `allowPaths`, `basePath` and `includePaths` input keys are removed because solc rejects them and the paths are local to the build machine. The artifact retains only compiler-backed fields and is reconstructed from that same fresh output, including its AST, source maps, method identifiers, metadata and immutable references. These identifiers may differ from a whole-project Foundry build: they must be compared together against the reduced compilation, as in the solc command above. The builder checks every retained artifact field and compiler-output field, not only bytecodes and ABI. The ABI is compared as a set of entries because solc and Foundry may list entries in different orders.",
     "",
     "## Test results",
     "",
@@ -446,7 +498,7 @@ function reviewScope({ artifact, commit, dirty, tests }) {
     "## Contents",
     "",
     "- `contracts/`: the two in-scope sources exactly as compiled (LF line endings, identical to the pinned git blobs) and `foundry.toml`.",
-    "- `build/ShadowFloatMainnet.json`: the Foundry artifact (ABI, bytecode and metadata).",
+    "- `build/ShadowFloatMainnet.json`: a Foundry-compatible artifact regenerated from the reduced solc compilation (ABI, bytecode, immutable references and verified compiler metadata).",
     "- `build/build-info.json`: standard JSON input and output (see \"Reproduce the build\").",
     "- `docs/`: the specification, threat model, test matrix, pilot test plan and mainnet path, with LF line endings. Their links to other repository files resolve in the repository, not in this package.",
     ...(tests ? ["- `results/`: the test outputs."] : []),
@@ -529,7 +581,7 @@ async function main() {
   }
 
   // After loadBuild: its forge build installs solc on a machine that has none yet.
-  const { artifact, artifactBytes, buildInfo } = loadBuild();
+  const { artifact, buildInfo } = loadBuild();
   const solc = findSolc();
   const source = readSourceState(artifact);
   const problems = lineageProblems({ artifact, source, buildInfo });
@@ -539,8 +591,13 @@ async function main() {
   for (const warning of warnings) console.error(`warning: ${warning}`);
 
   const tests = values["skip-tests"] ? null : runTests();
-  const files = packageFiles({ artifact, artifactBytes, buildInfo, commit: source.commit, dirty: tree.dirty, tests });
-  const manifestText = `${stableStringify(packageManifest({ artifact, commit: source.commit, dirty: tree.dirty, files, tests }))}\n`;
+  const reduced = reviewBuildInfo(buildInfo);
+  const output = compileInput(reduced.input, solc);
+  const reviewedArtifact = artifactFromCompilerOutput(output);
+  const executableMismatch = executableProblems(reviewedArtifact, artifact);
+  if (executableMismatch.length) throw new Error(`refusing to package: ${executableMismatch.join("; ")}`);
+  const files = packageFiles({ artifact: reviewedArtifact, artifactBytes: `${stableStringify(reviewedArtifact)}\n`, buildInfo: { ...reduced, output }, commit: source.commit, dirty: tree.dirty, tests });
+  const manifestText = `${stableStringify(packageManifest({ artifact: reviewedArtifact, commit: source.commit, dirty: tree.dirty, files, tests }))}\n`;
   const hits = machinePathHits({ ...files, "PACKAGE_MANIFEST.json": manifestText });
   if (hits.length) throw new Error(`refusing to package: machine-local paths in ${hits.join(", ")}`);
   writePackage(out, files, manifestText, solc);
@@ -555,7 +612,7 @@ async function main() {
         manifestSha256: sha256(manifestText),
         dirty: manifest.dirty,
         runtimeBytes: manifest.runtimeBytes,
-        solcReproduction: "creation and runtime bytecode and ABI match",
+        solcReproduction: "creation and runtime bytecode, ABI and all retained compiler metadata match",
         tests: manifest.tests,
         warnings,
       },

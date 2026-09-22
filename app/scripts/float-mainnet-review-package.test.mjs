@@ -6,6 +6,7 @@ import { homedir, tmpdir, userInfo } from "node:os";
 import { basename, delimiter, join, relative } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { decodeImmutables, maskImmutables } from "./float-mainnet-manifest.mjs";
 
 import {
   findSolc,
@@ -136,7 +137,7 @@ test("the manifest lists every packaged file with its sha256", () => {
 
 test("the summary prints the manifest's own sha256 and the solc reproduction", () => {
   assert.equal(summary.manifestSha256, sha256(readPackaged(first, "PACKAGE_MANIFEST.json")));
-  assert.equal(summary.solcReproduction, "creation and runtime bytecode and ABI match");
+  assert.equal(summary.solcReproduction, "creation and runtime bytecode, ABI and all retained compiler metadata match");
 });
 
 test("packaged sources are byte for byte the pinned git blobs", () => {
@@ -172,11 +173,17 @@ test("the manifest pins the lineage, compiler and runtime size and names the pac
   assert.equal(manifest.tests, "not run (--skip-tests)");
 });
 
-test("the artifact is copied verbatim and the build-info holds exactly the pinned sources and this bytecode", () => {
-  assert.deepEqual(
-    readPackaged(first, "build/ShadowFloatMainnet.json"),
-    readFileSync(join(REPO_ROOT, "contracts/out/ShadowFloatMainnet.sol/ShadowFloatMainnet.json")),
-  );
+test("the artifact is regenerated with the reduced build-info's metadata and unchanged executable code", () => {
+  const packaged = JSON.parse(readPackaged(first, "build/ShadowFloatMainnet.json"));
+  const compiled = buildInfo.output.contracts[CONTRACT].ShadowFloatMainnet;
+  assert.equal(packaged.bytecode.object, artifact.bytecode.object);
+  assert.equal(packaged.deployedBytecode.object, artifact.deployedBytecode.object);
+  assert.deepEqual(packaged.deployedBytecode.immutableReferences, compiled.evm.deployedBytecode.immutableReferences);
+  assert.deepEqual(packaged.ast, buildInfo.output.sources[CONTRACT].ast);
+  assert.equal(packaged.id, buildInfo.output.sources[CONTRACT].id);
+  assert.equal(packaged.rawMetadata, compiled.metadata);
+  assert.deepEqual(packaged.metadata, JSON.parse(compiled.metadata));
+  assert.deepEqual(packaged.methodIdentifiers, compiled.evm.methodIdentifiers);
   assert.deepEqual(Object.keys(buildInfo.input), ["language", "settings", "sources"]);
   const pinned = Object.keys(PINNED_SOURCE_BLOBS).map((path) => path.slice("contracts/".length)).sort();
   assert.deepEqual(Object.keys(buildInfo.input.sources), pinned);
@@ -204,6 +211,23 @@ test("the review scope names the pinned blobs, compiler, skipped tests and corre
   assert.match(scope, /The last timestamp at which a line can buy is therefore `line\.expiry - minimumRepaymentWindow`/);
   assert.match(scope, /one with stale terms reverts `StaleTerms`, which is checked first/);
   assert.match(scope, /if Arc supports EIP-7702, an EOA that has delegated its code has code, so it is routed to ERC-1271/);
+});
+
+test("regenerated immutable IDs preserve release-manifest masking and decoded values", () => {
+  const packaged = JSON.parse(readPackaged(first, "build/ShadowFloatMainnet.json"));
+  let runtime = artifact.deployedBytecode.object.slice(2);
+  let value = 0n;
+  for (const references of Object.values(artifact.deployedBytecode.immutableReferences)) {
+    value += 1n;
+    for (const { start, length } of references) {
+      runtime = runtime.slice(0, start * 2) + value.toString(16).padStart(length * 2, "0") + runtime.slice((start + length) * 2);
+    }
+  }
+  runtime = `0x${runtime}`;
+  const byOffsets = (entries) => entries.map(({ astId, ...entry }) => entry).sort((a, b) => a.offsets[0] - b.offsets[0]);
+  assert.equal(maskImmutables(runtime, packaged), maskImmutables(runtime, artifact));
+  assert.deepEqual(byOffsets(decodeImmutables(runtime, packaged)), byOffsets(decodeImmutables(runtime, artifact)));
+  assert.ok(decodeImmutables(runtime, packaged).every((entry) => entry.consistent));
 });
 
 test("the dirty flag and the rehearsal notice follow the working tree", () => {
@@ -368,10 +392,9 @@ test("a reduced input that compiles to other bytecode is refused", () => {
   const copy = join(root, "corrupted-copy");
   cpSync(first, copy, { recursive: true });
   writeFileSync(join(copy, "build/build-info.json"), corruptedFiles()["build/build-info.json"]);
-  assert.deepEqual(reproductionProblems(copy, solc), [
-    "solc's creation bytecode from build/build-info.json differs from build/ShadowFloatMainnet.json",
-    "solc's runtime bytecode from build/build-info.json differs from build/ShadowFloatMainnet.json",
-  ]);
+  const problems = reproductionProblems(copy, solc);
+  assert.ok(problems.includes("solc's creation bytecode from build/build-info.json differs from build/ShadowFloatMainnet.json"));
+  assert.ok(problems.includes("solc's runtime bytecode from build/build-info.json differs from build/ShadowFloatMainnet.json"));
 });
 
 test("a packaged artifact whose ABI is not solc's is refused", () => {
@@ -382,6 +405,69 @@ test("a packaged artifact whose ABI is not solc's is refused", () => {
   assert.notEqual(edited.abi.length, artifact.abi.length, "the edit must drop an ABI entry");
   writeFileSync(join(copy, "build/ShadowFloatMainnet.json"), JSON.stringify(edited));
   assert.deepEqual(reproductionProblems(copy, solc), ["solc's ABI from build/build-info.json differs from build/ShadowFloatMainnet.json"]);
+});
+
+test("corrupt cached immutable references and compiler metadata are replaced by freshly compiled fields", () => {
+  const cachedPath = join(REPO_ROOT, "contracts/out/ShadowFloatMainnet.sol/ShadowFloatMainnet.json");
+  const original = readFileSync(cachedPath);
+  const cached = JSON.parse(original);
+  cached.deployedBytecode.immutableReferences = { "999999": [{ start: 0, length: 32 }] };
+  cached.bytecode.sourceMap = "corrupt source map";
+  cached.methodIdentifiers["repay(bytes32,uint256)"] = "deadbeef";
+  cached.ast.id = 999999;
+  cached.uncheckedField = "must not ship";
+  cached.metadata.output.devdoc = { details: "unverified metadata" };
+  const out = join(root, "cached-metadata-corruption");
+  try {
+    writeFileSync(cachedPath, JSON.stringify(cached));
+    const run = build(out);
+    assert.equal(run.status, 0, run.stderr);
+    assert.deepEqual(readPackaged(out, "build/ShadowFloatMainnet.json"), readPackaged(first, "build/ShadowFloatMainnet.json"));
+    assert.deepEqual(assertManifestListsEveryFile(out), assertManifestListsEveryFile(first));
+  } finally {
+    writeFileSync(cachedPath, original);
+  }
+});
+
+test("tampered immutable references in both shipped artifact and build-info are rejected independently", () => {
+  const files = filesOf(first);
+  const modifiedArtifact = JSON.parse(files["build/ShadowFloatMainnet.json"]);
+  const modifiedBuild = JSON.parse(files["build/build-info.json"]);
+  const refs = modifiedArtifact.deployedBytecode.immutableReferences;
+  const key = Object.keys(refs)[0];
+  refs[key][0].start += 1;
+  modifiedBuild.output.contracts[CONTRACT].ShadowFloatMainnet.evm.deployedBytecode.immutableReferences = refs;
+  files["build/ShadowFloatMainnet.json"] = JSON.stringify(modifiedArtifact);
+  files["build/build-info.json"] = JSON.stringify(modifiedBuild);
+  const out = join(root, "tampered-immutables");
+  assert.throws(() => writePackage(out, files, readPackaged(first, "PACKAGE_MANIFEST.json"), solc), /solc's deployedBytecode metadata/);
+  assert.equal(existsSync(out), false, "no package or manifest survives an invalid immutable layout");
+});
+
+test("all other retained artifact metadata and compiler output are independently checked", () => {
+  const copy = join(root, "metadata-edited-copy");
+  cpSync(first, copy, { recursive: true });
+  const edited = JSON.parse(readPackaged(copy, "build/ShadowFloatMainnet.json"));
+  edited.bytecode.sourceMap = "corrupt";
+  edited.bytecode.linkReferences = { "src/Injected.sol": { Injected: [{ start: 0, length: 20 }] } };
+  edited.methodIdentifiers["repay(bytes32,uint256)"] = "deadbeef";
+  edited.rawMetadata = "{}";
+  edited.metadata.language = "corrupt";
+  edited.ast.id += 1;
+  edited.id += 1;
+  edited.extra = "unchecked";
+  writeFileSync(join(copy, "build/ShadowFloatMainnet.json"), JSON.stringify(edited));
+  const info = JSON.parse(readPackaged(copy, "build/build-info.json"));
+  info.output.sources[CONTRACT].id += 1;
+  info.solcLongVersion = "0.0.0";
+  writeFileSync(join(copy, "build/build-info.json"), JSON.stringify(info));
+  const problems = reproductionProblems(copy, solc);
+  for (const field of ["bytecode metadata", "methodIdentifiers", "rawMetadata", "metadata", "ast", "id"]) {
+    assert.ok(problems.includes(`solc's ${field} from build/build-info.json differs from build/ShadowFloatMainnet.json`), field);
+  }
+  assert.ok(problems.includes("build/ShadowFloatMainnet.json contains missing or unverified fields"));
+  assert.ok(problems.includes("solc's output differs from the retained build/build-info.json output"));
+  assert.ok(problems.includes("build/build-info.json compiler version differs from the verified solc version"));
 });
 
 test("writePackage removes the partial package on a mismatch or a missing solc", () => {
@@ -462,7 +548,7 @@ test("a fresh checkout on a machine with no solc is built by forge before solc i
   );
   assert.equal(run.status, 0, run.stderr);
   assert.match(run.stderr, /no build-info matches the artifact; running forge build --root contracts --build-info/);
-  assert.equal(JSON.parse(run.stdout).solcReproduction, "creation and runtime bytecode and ABI match");
+  assert.equal(JSON.parse(run.stdout).solcReproduction, "creation and runtime bytecode, ABI and all retained compiler metadata match");
   assert.equal(findSolc([svm]), join(svm, basename(solc)));
 });
 
