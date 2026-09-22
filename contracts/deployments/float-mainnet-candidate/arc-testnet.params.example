@@ -1,0 +1,43 @@
+# ShadowFloatMainnet candidate: Arc testnet deployment inputs for
+# script/DeployShadowFloatMainnet.s.sol and app/scripts/float-mainnet-*.mjs.
+#
+# PROPOSED values pending owner approval. This file authorizes no deployment.
+# Testnet values are never copied as mainnet defaults (spec section 8).
+# Monetary values are integer atomic USDC (6 decimals); windows and delay are seconds.
+#
+# The deployer key is never stored here: export PRIVATE_KEY in the shell only
+# (docs/SHADOW_FLOAT_MAINNET_TESTNET_DEPLOYMENT.md section 4).
+
+# Two independent RPC operators are required by spec section 8.
+ARC_RPC_URL=https://rpc.testnet.arc.io
+ARC_RPC_URL_2=https://rpc.drpc.testnet.arc.io
+ARC_EXPLORER_URL=https://explorer.testnet.arc.io
+
+FLOAT_MAINNET_EXPECTED_CHAIN_ID=5042002
+FLOAT_MAINNET_USDC=0x3600000000000000000000000000000000000000
+
+# Immutable maxima: 50 / 10 / 10 / 2 / 4 USDC.
+FLOAT_MAINNET_MAX_PROTOCOL_RESERVE=50000000
+FLOAT_MAINNET_MAX_LINE_RESERVE=10000000
+FLOAT_MAINNET_MAX_LINE_SPEND=10000000
+FLOAT_MAINNET_MAX_PER_SPEND=2000000
+FLOAT_MAINNET_MAX_DAILY_SPEND=4000000
+
+# Initial effective caps: 25 / 5 / 5 / 1 / 2 USDC.
+FLOAT_MAINNET_INIT_PROTOCOL_RESERVE=25000000
+FLOAT_MAINNET_INIT_LINE_RESERVE=5000000
+FLOAT_MAINNET_INIT_LINE_SPEND=5000000
+FLOAT_MAINNET_INIT_PER_SPEND=1000000
+FLOAT_MAINNET_INIT_DAILY_SPEND=2000000
+
+# 1 hour, 7 days, 2 days.
+FLOAT_MAINNET_MIN_REPAYMENT_WINDOW=3600
+FLOAT_MAINNET_MAX_REPAYMENT_WINDOW=604800
+FLOAT_MAINNET_GOVERNANCE_DELAY=172800
+
+# No operators are set at deploy. Optional next owner for the two-step
+# ownership transfer; blank or zero = none.
+FLOAT_MAINNET_PROPOSED_OWNER=
+
+# Public address of the approved deployer; required by the manifest.
+FLOAT_MAINNET_EXPECTED_DEPLOYER=
