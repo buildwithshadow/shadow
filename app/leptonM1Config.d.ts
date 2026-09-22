@@ -76,6 +76,10 @@ export const LEPTON_M1_DEPLOYMENTS: {
 };
 
 export const LEPTON_WRITE_REASON: Readonly<Record<LeptonWriteReasonCode, LeptonWriteReasonCode>>;
+export function leptonHistoricalProofsForJson(): {
+  circlePasskey: Omit<typeof LEPTON_M1_DEPLOYMENTS.historicalProofs.circlePasskey, "blockNumber"> & { blockNumber: string };
+  morphoStyle: typeof LEPTON_M1_DEPLOYMENTS.historicalProofs.morphoStyle;
+};
 export function classifyLeptonV4Readiness(input: LeptonV4ReadinessInput): LeptonV4Readiness;
 export function runLeptonWalletAction<T>(readiness: LeptonV4Readiness | null | undefined, action: () => Promise<T> | T): Promise<T>;
 export function readWithCanonicalFallback<T>(

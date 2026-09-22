@@ -23,6 +23,8 @@ on:
       - "app/scripts/historical-reads.test.mjs"
       - "app/scripts/float-history-api.test.ts"
       - "app/scripts/treasury-history-api.test.ts"
+      - "app/scripts/treasury-verify-live.mjs"
+      - "app/scripts/treasury-verify-live.test.mjs"
       - "app/scripts/float-mainnet-*"
       - "app/scripts/rpc-read-queue*"
       - "app/tsconfig.json"
@@ -91,6 +93,8 @@ jobs:
         run: npm run lepton:readiness:test
       - name: Test historical explorer retries, deadlines and empty histories
         run: node --test app/scripts/historical-reads.test.mjs app/scripts/float-history-api.test.ts app/scripts/treasury-history-api.test.ts
+      - name: Test Treasury CLI JSON reports and exit status
+        run: node --test app/scripts/treasury-verify-live.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app

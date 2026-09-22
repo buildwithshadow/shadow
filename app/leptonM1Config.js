@@ -56,6 +56,16 @@ export const LEPTON_WRITE_REASON = Object.freeze({
   SINK_NOT_RECOVERABLE: "SINK_NOT_RECOVERABLE",
 });
 
+// Keep bigint block numbers in the chain-read configuration, and use this
+// explicit wire representation for both HTTP responses and CLI JSON reports.
+export function leptonHistoricalProofsForJson() {
+  const proofs = LEPTON_M1_DEPLOYMENTS.historicalProofs;
+  return {
+    ...proofs,
+    circlePasskey: { ...proofs.circlePasskey, blockNumber: proofs.circlePasskey.blockNumber.toString() },
+  };
+}
+
 const REASON_COPY = Object.freeze({
   [LEPTON_WRITE_REASON.NOT_CONFIGURED]: "The current V4 read deployment is not fully configured.",
   [LEPTON_WRITE_REASON.RPC_READ_FAILED]: "Live contract readiness could not be re-read from Arc.",

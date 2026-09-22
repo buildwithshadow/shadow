@@ -12,6 +12,7 @@ import {
 import {
   LEPTON_M1_DEPLOYMENTS,
   classifyLeptonV4Readiness,
+  leptonHistoricalProofsForJson,
   readHistoricalProofInput,
   transactionInputContainsAddress,
 } from "../leptonM1Config.js";
@@ -341,10 +342,7 @@ async function runTreasuryChecks(budget: ReadBudget) {
       morphoStyleVaultSink: MORPHO_SINK,
     },
     currentV4: currentV4Readiness,
-    historicalProofs: {
-      circlePasskey: { ...historicalPasskeyProof, blockNumber: historicalPasskeyProof.blockNumber.toString() },
-      morphoStyle: LEPTON_M1_DEPLOYMENTS.historicalProofs.morphoStyle,
-    },
+    historicalProofs: leptonHistoricalProofsForJson(),
     txs: {
       createMandate: proof.createMandateTx,
       allowedAllocation: proof.allowedAllocationTx,
