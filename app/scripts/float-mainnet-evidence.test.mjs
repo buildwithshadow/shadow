@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { copyFileSync, existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -10,6 +11,7 @@ import {
   decodeEventLog,
   defineChain,
   encodeAbiParameters,
+  encodeFunctionData,
   getAddress,
   hashTypedData,
   http,
@@ -769,6 +771,43 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
     writeJson(path("reversed.json"), { ...index, events: [...index.events].reverse() });
     await ok("evidence", ["export", "--line-id", seen.line.lineId, ...files, "--index", path("reversed.json"), "--out", path("bundle-from-reversed.json")]);
     assert.deepEqual(readJson(path("bundle-from-reversed.json")), bundle);
+  });
+
+  test("a reorg after event observation refuses export without writing either artifact", async () => {
+    const checkpoint = readJson(seen.index).checkpoint;
+    const selector = encodeFunctionData({ abi: floatAbi, functionName: "getLine", args: [seen.line.lineId] }).slice(0, 10);
+    let stateRead = false;
+    let changedHash = false;
+    const proxy = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const message = JSON.parse(body);
+      const upstream = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body });
+      const result = await upstream.json();
+      if (message.method === "eth_call" && message.params[0].data.startsWith(selector)) stateRead = true;
+      if (stateRead && message.method === "eth_getBlockByNumber" && result.result?.number === `0x${BigInt(checkpoint.blockNumber).toString(16)}`) {
+        result.result.hash = hash("replacement observation block");
+        changedHash = true;
+      }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end(JSON.stringify(result));
+    });
+    await new Promise((resolve) => proxy.listen(0, "127.0.0.1", resolve));
+    try {
+      for (const indexed of [false, true]) {
+        stateRead = false;
+        changedHash = false;
+        const out = path(`late-reorg-${indexed}.json`);
+        await fails("evidence", ["export", "--line-id", seen.line.lineId, "--out", out, ...(indexed ? ["--index", seen.index] : [])], { ARC_RPC_URL: `http://127.0.0.1:${proxy.address().port}` }, /the observation block was reorganized during export/);
+        assert.equal(stateRead, true);
+        assert.equal(changedHash, true);
+        assert.equal(existsSync(out), false);
+        assert.equal(existsSync(`${out}.md`), false);
+      }
+    } finally {
+      proxy.closeAllConnections();
+      await new Promise((resolve) => proxy.close(resolve));
+    }
   });
 
   test("export refuses a foreign intent, a receipt its provider did not sign, and an index that is stale, starts late or misses events", async () => {

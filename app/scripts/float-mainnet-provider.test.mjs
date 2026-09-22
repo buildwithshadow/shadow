@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import {
   createPublicClient,
+  createTestClient,
   createWalletClient,
   defineChain,
   encodeAbiParameters,
@@ -229,6 +230,7 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
     rpcUrls: { default: { http: [RPC] } },
   });
   const client = createPublicClient({ chain, transport: http(RPC) });
+  const testClient = createTestClient({ chain, mode: "anvil", transport: http(RPC) });
   const walletOf = (signer) => createWalletClient({ account: signer, chain, transport: http(RPC) });
   const artifact = (path) => JSON.parse(readFileSync(new URL(`../../contracts/out/${path}`, import.meta.url), "utf8"));
 
@@ -699,6 +701,7 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
     const unstored = await ok("provider", acceptArgs(e.file, "req-e3", ["--endpoint", ENDPOINT, "--out", path("acceptance-e3.json")]), PROVIDER);
     assert.equal(unstored.deduplication, none);
 
+    const beforePayment = await testClient.snapshot();
     assert.equal((await ok("submit", ["submit", "--intent", e.file, "--execute"], EXECUTOR)).status, "paid");
     const deliver = (acceptance, result, extra = ["--store", store]) => ["deliver", "--acceptance", path(acceptance), "--result-hash", keccak256(toBytes(result)), ...extra];
     const delivered = await ok("provider", deliver("acceptance-e.json", "answer e"), PROVIDER);
@@ -706,7 +709,8 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
     assert.deepEqual([delivered.deduplication, delivered.crossCheck.startsWith("passed: ")], [`stored at ${storedDelivery}`, true]);
     // A rerun, even with another result, returns the stored delivery and signs nothing.
     const rerun = await ok("provider", deliver("acceptance-e.json", "another answer"), PROVIDER);
-    assert.deepEqual([rerun.signature, rerun.typedData, rerun.payment, rerun.crossCheck], [delivered.signature, delivered.typedData, null, null]);
+    assert.deepEqual([rerun.signature, rerun.typedData, rerun.payment.paid, rerun.crossCheck], [delivered.signature, delivered.typedData, true, delivered.crossCheck]);
+    assert.equal(rerun.payment.observedAt.blockHash, (await client.getBlock({ blockNumber: BigInt(rerun.payment.observedAt.blockNumber) })).hash);
     assert.equal(rerun.deduplication, `returned the delivery stored at ${storedDelivery} for this digest; nothing re-signed`);
     // The stored delivery goes only to an acceptance deliverResult would take:
     // one the provider signed, naming the provider.
@@ -734,5 +738,73 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
     );
     // Without --store deliver signs again, and says it did not de-duplicate.
     assert.equal((await ok("provider", deliver("acceptance-e.json", "answer e", []), PROVIDER)).deduplication, none);
+    seen.reorg = { beforePayment, acceptance: acceptanceE, store, digest: e.digest };
+  });
+
+  test("a reorg during delivery checks prevents signing and an orphaned payment cannot release a stored delivery", async () => {
+    const { beforePayment, acceptance, store, digest } = seen.reorg;
+    const observed = await client.getBlock();
+    let reorganized = false;
+    let signatures = 0;
+    const reorgConnection = {
+      ...connection,
+      client: {
+        ...connection.client,
+        getCode: async (args) => {
+          const code = await connection.client.getCode(args);
+          if (!reorganized) {
+            reorganized = true;
+            await testClient.revert({ id: beforePayment });
+            await testClient.setNextBlockTimestamp({ timestamp: observed.timestamp + 1n });
+            await testClient.mine({ blocks: 1 });
+          }
+          return code;
+        },
+      },
+    };
+    await assert.rejects(
+      deliverResult(reorgConnection, {
+        acceptance,
+        resultHash: keccak256(toBytes("must not sign")),
+        account: { address: provider.address, signTypedData: (typed) => { signatures += 1; return provider.signTypedData(typed); } },
+      }),
+      /the payment observation block was reorganized/,
+    );
+    assert.equal(reorganized, true);
+    assert.equal(signatures, 0, "payment canonicality is checked before signing");
+    assert.equal((await client.getBlock()).number, observed.number, "replacement occupies the same height");
+    assert.equal(await readFloat("receiptStatus", [digest]), 0);
+    const cached = readFileSync(join(store, `${digest}.delivery.json`), "utf8");
+    const out = path("orphaned-delivery.json");
+    await fails("provider", ["deliver", "--acceptance", path("acceptance-e.json"), "--result-hash", keccak256(toBytes("retry")), "--store", store, "--out", out], PROVIDER, /refusing to deliver: receiptStatus .* is none/);
+    assert.equal(existsSync(out), false, "no stored result is released to the output file");
+    assert.equal(readFileSync(join(store, `${digest}.delivery.json`), "utf8"), cached, "the retry does not replace the cached receipt");
+  });
+
+  test("a payment reorganized away while signing does not release the newly signed receipt", async () => {
+    const snapshot = await testClient.snapshot();
+    await ok("submit", ["submit", "--intent", path("e-signed.json"), "--execute"], EXECUTOR);
+    const observed = await client.getBlock();
+    let signatures = 0;
+    await assert.rejects(
+      deliverResult(connection, {
+        acceptance: seen.reorg.acceptance,
+        resultHash: keccak256(toBytes("do not release")),
+        account: {
+          address: provider.address,
+          signTypedData: async (typed) => {
+            signatures += 1;
+            const signature = await provider.signTypedData(typed);
+            await testClient.revert({ id: snapshot });
+            await testClient.setNextBlockTimestamp({ timestamp: observed.timestamp + 1n });
+            await testClient.mine({ blocks: 1 });
+            return signature;
+          },
+        },
+      }),
+      /the payment observation block was reorganized/,
+    );
+    assert.equal(signatures, 1, "the reorg occurs during the asynchronous signing operation");
+    assert.equal(await readFloat("receiptStatus", [seen.reorg.digest]), 0);
   });
 });

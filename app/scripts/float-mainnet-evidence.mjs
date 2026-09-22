@@ -399,6 +399,12 @@ async function exportBundle(values) {
     if (!verdict.valid) throw new Error(`${path}: the ${role} signature does not verify for ${signer}: ${verdict.detail}`);
   }
 
+  // State and signature reads above are pinned by number. Refuse to publish
+  // either artifact if the observation block changed during those reads.
+  const status = await checkpointStatus(connection, observedAt);
+  if (!status.canonical) {
+    throw new Error(`the observation block was reorganized during export: block ${observedAt.blockNumber} is now ${status.canonicalHash ?? "missing"}, not ${observedAt.blockHash}; retry the export`);
+  }
   writeJsonFile(out, bundle);
   const markdown = `${out}.md`;
   writeFileSync(markdown, evidenceMarkdown(bundle, events));
