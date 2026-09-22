@@ -2,6 +2,9 @@ import { randomBytes } from "node:crypto";
 import { readFileSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
 import {
+  BaseError,
+  ContractFunctionRevertedError,
+  ExecutionRevertedError,
   encodeFunctionData,
   getAddress,
   hashTypedData,
@@ -337,10 +340,34 @@ function refuseExpiringPolicy(policy, struct, values, action) {
   );
 }
 
+// An unavailable RPC cannot establish an invalid signature. Keep that failure
+// distinct from a plain validation Error so HTTP providers can return a
+// retryable 500 instead of permanently refusing the intent with 422.
+export class SignatureCheckUnavailable extends Error {
+  constructor(error) {
+    super(`signature verification is unavailable: ${errorMessage(error)}`, { cause: error });
+    this.name = "SignatureCheckUnavailable";
+  }
+}
+
+export function isSignatureRevert(error) {
+  // viem also maps this RPC gas-budget error to ExecutionRevertedError. It
+  // does not establish that the account rejected this signature.
+  const reverted = (cause) => cause instanceof ContractFunctionRevertedError || (
+    cause instanceof ExecutionRevertedError && !/gas required exceeds allowance/i.test(cause.details ?? cause.shortMessage)
+  );
+  return error instanceof BaseError && Boolean(error.walk(reverted));
+}
+
 // Mirrors ShadowFloatMainnet._validateSignature: ERC-1271 exactly when the
 // agent has code (called from the Float address), otherwise 65-byte low-s ECDSA.
 export async function checkSignature(connection, agent, digest, signature) {
-  const code = await connection.client.getCode({ address: agent });
+  let code;
+  try {
+    code = await connection.client.getCode({ address: agent });
+  } catch (error) {
+    throw new SignatureCheckUnavailable(error);
+  }
   const signerKind = code && code !== "0x" ? "erc1271" : "eoa";
   if (signature === null) return { signerKind, valid: null, detail: "no signature supplied" };
   if (signerKind === "erc1271") {
@@ -352,6 +379,7 @@ export async function checkSignature(connection, agent, digest, signature) {
         data: encodeFunctionData({ abi: erc1271Abi, functionName: "isValidSignature", args: [digest, signature] }),
       }));
     } catch (error) {
+      if (!isSignatureRevert(error)) throw new SignatureCheckUnavailable(error);
       return { signerKind, valid: false, detail: `isValidSignature reverted: ${errorMessage(error)}` };
     }
     const valid = data?.toLowerCase() === ERC1271_MAGIC_WORD;
