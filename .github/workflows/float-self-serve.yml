@@ -13,11 +13,18 @@ on:
       - "app/floatV2Operations.test.ts"
       - "app/leptonM1Config.d.ts"
       - "app/leptonM1Config.js"
+      - "app/historicalReads.d.ts"
+      - "app/historicalReads.js"
       - "app/package.json"
       - "app/pnpm-lock.yaml"
       - "app/src/main.tsx"
       - "app/src/styles.css"
       - "app/scripts/lepton-readiness.test.mjs"
+      - "app/scripts/historical-reads.test.mjs"
+      - "app/scripts/float-history-api.test.ts"
+      - "app/scripts/treasury-history-api.test.ts"
+      - "app/scripts/treasury-verify-live.mjs"
+      - "app/scripts/treasury-verify-live.test.mjs"
       - "app/scripts/float-mainnet-*"
       - "app/scripts/rpc-read-queue*"
       - "examples/float-mainnet-provider-server/**"
@@ -85,6 +92,10 @@ jobs:
         run: npm run float:v2-ops:test
       - name: Test Lepton readiness and historical proof fallback
         run: npm run lepton:readiness:test
+      - name: Test historical explorer retries, deadlines and empty histories
+        run: node --test app/scripts/historical-reads.test.mjs app/scripts/float-history-api.test.ts app/scripts/treasury-history-api.test.ts
+      - name: Test Treasury CLI JSON reports and exit status
+        run: node --test app/scripts/treasury-verify-live.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app

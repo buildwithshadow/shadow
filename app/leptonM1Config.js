@@ -1,3 +1,5 @@
+import { readBeforeDeadline } from "./historicalReads.js";
+
 export const LEPTON_M1_DEPLOYMENTS = Object.freeze({
   currentRead: Object.freeze({
     generation: "m1-caller-hardened-2026-06-25",
@@ -23,6 +25,7 @@ export const LEPTON_M1_DEPLOYMENTS = Object.freeze({
       generation: "m1-passkey-proof-2026-06-19",
       label: "Historical June 19 Circle passkey proof",
       txHash: "0x98b8b175d4ec8bf6d457d653383932e69d74300bd0b8a7e324e0cae3ac35a529",
+      blockNumber: 47710773n,
       mandateRegistry: "0x394b6955162ce147e813e0eea6104cd1164e3d33",
       bondedEnforcer: "0x05a11588155c6bde55bb7b3986f200ca556b23cc",
       v4StyleAdapter: "0x16ebc65c9f3188734277c9fafd73d9f13b93d868",
@@ -52,6 +55,16 @@ export const LEPTON_WRITE_REASON = Object.freeze({
   WRONG_SINK_BINDING: "WRONG_SINK_BINDING",
   SINK_NOT_RECOVERABLE: "SINK_NOT_RECOVERABLE",
 });
+
+// Keep bigint block numbers in the chain-read configuration, and use this
+// explicit wire representation for both HTTP responses and CLI JSON reports.
+export function leptonHistoricalProofsForJson() {
+  const proofs = LEPTON_M1_DEPLOYMENTS.historicalProofs;
+  return {
+    ...proofs,
+    circlePasskey: { ...proofs.circlePasskey, blockNumber: proofs.circlePasskey.blockNumber.toString() },
+  };
+}
 
 const REASON_COPY = Object.freeze({
   [LEPTON_WRITE_REASON.NOT_CONFIGURED]: "The current V4 read deployment is not fully configured.",
@@ -124,6 +137,41 @@ export async function readWithCanonicalFallback(primaryRead, canonicalRead) {
       );
     }
   }
+}
+
+export async function readHistoricalProofInput(readers, { deadlineAt = Date.now() + 8_000 } = {}) {
+  const stages = [
+    [["RPC", readers.byHash], ["canonical RPC", readers.byCanonicalHash]],
+    [["pinned block", readers.byBlock], ["canonical pinned block", readers.byCanonicalBlock]],
+    [["Arcscan index", readers.byExplorer]],
+  ];
+  const failures = [];
+  for (const stage of stages) {
+    const available = stage.filter(([, read]) => typeof read === "function");
+    if (available.length === 0) continue;
+    if (Date.now() >= deadlineAt) {
+      failures.push("historical proof deadline exceeded");
+      break;
+    }
+    try {
+      // Each endpoint gets the same remaining budget. A slow failed RPC must
+      // not delay an available pinned block on its peer. Empty reads reject so
+      // they cannot win the race against usable calldata.
+      return await readBeforeDeadline((signal) => Promise.any(available.map(async ([source, read]) => {
+        try {
+          const input = await read(signal);
+          if (!input || input === "0x") throw new Error("no calldata");
+          return { input, source };
+        } catch (error) {
+          throw new Error(`${source}: ${error?.shortMessage || error?.message || String(error)}`);
+        }
+      })), deadlineAt, "historical proof deadline exceeded");
+    } catch (error) {
+      const errors = error instanceof AggregateError ? error.errors : [error];
+      failures.push(...errors.map((entry) => entry?.message || String(entry)));
+    }
+  }
+  return { input: null, source: `unavailable (${failures.join("; ")})` };
 }
 
 export function transactionInputContainsAddress(input, address) {
