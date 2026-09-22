@@ -220,6 +220,36 @@ test("historical proof input reaches the Arcscan index only when every chain rea
   assert.deepEqual(result, { input: "0x765e827f", source: "Arcscan index" });
 });
 
+test("historical proof input reads the canonical pinned block before the explorer", async () => {
+  const touched = [];
+  const fail = (name) => async () => {
+    touched.push(name);
+    throw new Error("configured RPC unavailable or transaction hash pruned");
+  };
+  const result = await readHistoricalProofInput({
+    byHash: fail("configured hash"),
+    byCanonicalHash: fail("canonical hash"),
+    byBlock: fail("configured block"),
+    byCanonicalBlock: async () => {
+      touched.push("canonical block");
+      return "0x765e827f";
+    },
+    byExplorer: async () => {
+      throw new Error("explorer must not be called");
+    },
+  });
+  assert.deepEqual(result, { input: "0x765e827f", source: "canonical pinned block" });
+  assert.deepEqual(touched, ["configured hash", "canonical hash", "configured block", "canonical block"]);
+});
+
+test("a canonical block without the transaction does not suppress the explorer fallback", async () => {
+  const result = await readHistoricalProofInput({
+    byCanonicalBlock: async () => undefined,
+    byExplorer: async () => "0x765e827f",
+  });
+  assert.deepEqual(result, { input: "0x765e827f", source: "Arcscan index" });
+});
+
 test("historical proof input degrades to unusable calldata instead of throwing when every source fails", async () => {
   const result = await readHistoricalProofInput({
     byHash: async () => {

@@ -132,6 +132,7 @@ export async function readHistoricalProofInput(readers) {
     ["RPC", readers.byHash],
     ["canonical RPC", readers.byCanonicalHash],
     ["pinned block", readers.byBlock],
+    ["canonical pinned block", readers.byCanonicalBlock],
     ["Arcscan index", readers.byExplorer],
   ];
   const failures = [];

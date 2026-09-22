@@ -15,6 +15,7 @@ import {
   readHistoricalProofInput,
   transactionInputContainsAddress,
 } from "../leptonM1Config.js";
+import { cachedHistoricalRead } from "../historicalReads.js";
 
 export const config = { maxDuration: 20 };
 
@@ -430,6 +431,7 @@ async function historicalProofInput(
     byHash: () => byHash(publicClient),
     byCanonicalHash: canonicalPublicClient === publicClient ? undefined : () => byHash(canonicalPublicClient),
     byBlock: () => fromBlock(publicClient),
+    byCanonicalBlock: canonicalPublicClient === publicClient ? undefined : () => fromBlock(canonicalPublicClient),
     byExplorer: async () => (await explorerTransaction(proof.txHash))?.raw_input,
   });
 }
@@ -601,24 +603,18 @@ async function explorerFloatReceipts(txHash: `0x${string}`, requestHash: `0x${st
 
 function explorerTransaction(txHash: `0x${string}`) {
   const key = txHash.toLowerCase();
-  let pending = explorerTransactionCache.get(key);
-  if (!pending) {
-    pending = fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}`);
-    explorerTransactionCache.set(key, pending);
-  }
-  return pending;
+  return cachedHistoricalRead(explorerTransactionCache, key, () =>
+    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}`),
+  );
 }
 
 function explorerLogs(txHash: `0x${string}`) {
   const key = txHash.toLowerCase();
-  let pending = explorerLogsCache.get(key);
-  if (!pending) {
-    pending = fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`).then((body) =>
+  return cachedHistoricalRead<any[]>(explorerLogsCache, key, () =>
+    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`).then((body) =>
       Array.isArray(body?.items) ? body.items : [],
-    );
-    explorerLogsCache.set(key, pending);
-  }
-  return pending;
+    ),
+  );
 }
 
 function explorerTransfers(tx: any): any[] {

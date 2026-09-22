@@ -33,6 +33,7 @@ import {
 } from "../floatV2Config.js";
 import { createRpcReadQueue } from "../scripts/rpc-read-queue.mjs";
 import { buildFloatV2OperationalHealth } from "../floatV2Operations.js";
+import { readBeforeDeadline, readExplorerLogPages } from "../historicalReads.js";
 
 export const config = { maxDuration: 20 };
 
@@ -42,6 +43,9 @@ const LOG_LOOKBACK = BigInt(process.env.FLOAT_LOG_LOOKBACK || "250000");
 const LOG_CHUNK_SIZE = BigInt(process.env.FLOAT_LOG_CHUNK_SIZE || "90000");
 const EXPLORER_API = process.env.FLOAT_EXPLORER_API || "https://testnet.arcscan.app/api/v2";
 const EXPLORER_MAX_PAGES = 20;
+// Leave time for the final board/balance reads and response below maxDuration.
+const FLOAT_LOG_DEADLINE_MS = 12_000;
+const EXPLORER_CRAWL_BUDGET_MS = 8_000;
 const DEFAULT_INVITED_AGENTS = [
   "0x13585c6004fbA9D7D49219a6435B68348fD30770",
   "0x7891d0B43F067f1bA52B21682847Bb63985862Cc",
@@ -371,6 +375,7 @@ const REASONS = [
 ];
 
 export default async function handler(req: VercelLikeRequest, res: VercelLikeResponse) {
+  const requestStartedAt = Date.now();
   res.setHeader("Content-Type", "application/json");
   res.setHeader("Cache-Control", "no-store, max-age=0");
 
@@ -449,15 +454,17 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 
     const lookbackFloor = latestBlock > LOG_LOOKBACK ? latestBlock - LOG_LOOKBACK : 0n;
     const fromBlock = cfg.startBlock > lookbackFloor ? cfg.startBlock : lookbackFloor;
+    const logDeadlineAt = requestStartedAt + FLOAT_LOG_DEADLINE_MS;
     const [windowRead, historical] = await Promise.all([
-      readFloatLogs(client, cfg.float, fromBlock, latestBlock).then(
+      readFloatLogs(client, cfg.float, fromBlock, latestBlock, logDeadlineAt).then(
         (value) => ({ value, error: null as unknown }),
         (error: unknown) => ({ value: null, error }),
       ),
-      readFloatLogsFromExplorer(cfg.float),
+      readFloatLogsFromExplorer(cfg.float, Math.min(logDeadlineAt, Date.now() + EXPLORER_CRAWL_BUDGET_MS)),
     ]);
     const historicalEmpty = historical.receiptLogs.length === 0 && historical.x402Logs.length === 0;
-    if (windowRead.error && historicalEmpty) throw windowRead.error;
+    const confirmedEmptyHistory = receiptCount === 0n && historical.warnings.length === 0;
+    if (windowRead.error && historicalEmpty && !confirmedEmptyHistory) throw windowRead.error;
     const live = windowRead.value ?? {
       receiptLogs: [] as Array<IndexedLog<FloatReceiptEventArgs>>,
       x402Logs: [] as Array<IndexedLog<X402PaymentBoundEventArgs>>,
@@ -483,7 +490,10 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
       ]),
     );
 
-    const standingBoard = await buildStandingBoard(client, cfg, logs as Array<{ args: Record<string, unknown> }>);
+    const [standingBoard, alphaWalletBalanceUSDC] = await Promise.all([
+      buildStandingBoard(client, cfg, logs as Array<{ args: Record<string, unknown> }>),
+      safeBalanceOf(client, cfg.usdc, cfg.alpha),
+    ]);
     const indexedReceipts = logs
       .slice()
       .sort((a, b) => Number(b.args.receiptId! - a.args.receiptId!))
@@ -533,7 +543,6 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
       indexedReceipts,
     );
     const proofPointers = buildProofPointers(indexedReceipts, loopRuns);
-    const alphaWalletBalanceUSDC = await safeBalanceOf(client, cfg.usdc, cfg.alpha);
     const walletProof = buildWalletProof(indexedReceipts, alphaLine, alphaWalletBalanceUSDC);
     const proofChecks = buildProofChecks({
       cfg,
@@ -1300,9 +1309,14 @@ async function enrichFloatV2StatsFromLogs(
   return warnings;
 }
 
-async function getLogsWithRetry<TLog>(client: { getLogs: (args: any) => Promise<TLog[]> }, args: any): Promise<TLog[]> {
+async function getLogsWithRetry<TLog>(
+  client: { getLogs: (args: any) => Promise<TLog[]> },
+  args: any,
+  deadlineAt = Infinity,
+): Promise<TLog[]> {
   let lastError: unknown;
   for (let attempt = 0; attempt < 3; attempt += 1) {
+    if (Date.now() >= deadlineAt) throw new Error("Float RPC log deadline exceeded");
     try {
       return await client.getLogs(args);
     } catch (error) {
@@ -1447,48 +1461,38 @@ function mergeIndexedLogs<TArgs>(historical: Array<IndexedLog<TArgs>>, live: Arr
   );
 }
 
-async function readFloatLogsFromExplorer(address: Address) {
+async function readFloatLogsFromExplorer(address: Address, deadlineAt: number) {
   const receiptLogs: Array<IndexedLog<FloatReceiptEventArgs>> = [];
   const x402Logs: Array<IndexedLog<X402PaymentBoundEventArgs>> = [];
-  const warnings: string[] = [];
-  let query = "";
-  let pages = 0;
-  try {
-    while (pages < EXPLORER_MAX_PAGES) {
-      const response = await fetch(`${EXPLORER_API}/addresses/${address}/logs${query}`, {
-        headers: { "User-Agent": "shadow-float-api" },
-        signal: AbortSignal.timeout(8_000),
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      const body = (await response.json()) as { items?: any[]; next_page_params?: Record<string, unknown> | null };
-      pages += 1;
-      for (const item of Array.isArray(body?.items) ? body.items : []) {
-        const log = {
-          transactionHash: item.transaction_hash as `0x${string}`,
-          blockNumber: BigInt(item.block_number),
-          logIndex: Number(item.index),
-          data: (item.data || "0x") as `0x${string}`,
-          topics: (Array.isArray(item.topics) ? item.topics.filter(Boolean) : []) as `0x${string}`[],
-        };
-        const receipt = decodeFloatReceiptLog(log);
-        if (receipt) {
-          receiptLogs.push({ ...log, args: receipt.args });
-          continue;
-        }
-        const x402 = decodeX402PaymentBoundLog(log);
-        if (x402) x402Logs.push({ ...log, args: x402.args });
+  const { items, warnings, pages } = await readExplorerLogPages({
+    url: `${EXPLORER_API}/addresses/${address}/logs`,
+    deadlineAt,
+    maxPages: EXPLORER_MAX_PAGES,
+  });
+  for (const item of items) {
+    try {
+      const log = {
+        transactionHash: item.transaction_hash as `0x${string}`,
+        blockNumber: BigInt(item.block_number),
+        logIndex: Number(item.index),
+        data: (item.data || "0x") as `0x${string}`,
+        topics: (Array.isArray(item.topics) ? item.topics.filter(Boolean) : []) as `0x${string}`[],
+      };
+      const receipt = decodeFloatReceiptLog(log);
+      if (receipt) {
+        receiptLogs.push({ ...log, args: receipt.args });
+        continue;
       }
-      if (!body?.next_page_params) return { receiptLogs, x402Logs, warnings, pages };
-      query = `?${new URLSearchParams(body.next_page_params as Record<string, string>).toString()}`;
+      const x402 = decodeX402PaymentBoundLog(log);
+      if (x402) x402Logs.push({ ...log, args: x402.args });
+    } catch (error) {
+      warnings.push(`explorer logs: ${sanitizeError(error)}`);
     }
-    warnings.push(`explorer logs: stopped at the ${EXPLORER_MAX_PAGES} page cap`);
-  } catch (error) {
-    warnings.push(`explorer logs: ${sanitizeError(error)}`);
   }
   return { receiptLogs, x402Logs, warnings, pages };
 }
 
-async function readFloatLogs(client: any, address: Address, fromBlock: bigint, toBlock: bigint) {
+async function readFloatLogs(client: any, address: Address, fromBlock: bigint, toBlock: bigint, deadlineAt: number) {
   const receiptLogs: Array<IndexedLog<FloatReceiptEventArgs>> = [];
   const x402Logs: Array<IndexedLog<X402PaymentBoundEventArgs>> = [];
   const warnings: string[] = [];
@@ -1497,13 +1501,17 @@ async function readFloatLogs(client: any, address: Address, fromBlock: bigint, t
   for (let start = fromBlock; start <= toBlock; start += LOG_CHUNK_SIZE) {
     const end = start + LOG_CHUNK_SIZE - 1n > toBlock ? toBlock : start + LOG_CHUNK_SIZE - 1n;
     try {
-      const rawLogs = await getLogsWithRetry<{
-        data: `0x${string}`;
-        topics: readonly `0x${string}`[];
-        transactionHash: `0x${string}`;
-        blockNumber: bigint;
-        logIndex: number;
-      }>(client, { address, fromBlock: start, toBlock: end });
+      const rawLogs = await readBeforeDeadline(
+        () => getLogsWithRetry<{
+          data: `0x${string}`;
+          topics: readonly `0x${string}`[];
+          transactionHash: `0x${string}`;
+          blockNumber: bigint;
+          logIndex: number;
+        }>(client, { address, fromBlock: start, toBlock: end }, deadlineAt),
+        deadlineAt,
+        "Float RPC log deadline exceeded",
+      );
       for (const log of rawLogs) {
         const receipt = decodeFloatReceiptLog(log);
         if (receipt) {
@@ -1515,6 +1523,7 @@ async function readFloatLogs(client: any, address: Address, fromBlock: bigint, t
       }
     } catch (error) {
       warnings.push(`logs ${start.toString()}-${end.toString()}: ${sanitizeError(error)}`);
+      if (Date.now() >= deadlineAt) break;
     }
   }
 
@@ -1977,6 +1986,7 @@ async function readFloatLoopRuns(): Promise<FloatLoopRun[]> {
   try {
     const response = await fetch(`${url.replace(/\/$/, "")}/get/${encodeURIComponent("float:loop:runs")}`, {
       headers: { authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(1_000),
     });
     if (!response.ok) return [];
     const json = (await response.json()) as { result?: string | null };
