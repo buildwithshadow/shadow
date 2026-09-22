@@ -61,6 +61,8 @@ The current V2 deployment has `feeBps = 0`. Therefore:
 
 A production fee should not be enabled until repeat unassisted usage demonstrates that the product removes a real funding or operational problem. Any future fee must be visible before signing and included in the signed maximum-debt bound.
 
+This applies to the testnet V2 contract's `feeBps`. The mainnet candidate `ShadowFloatMainnet` is immutably zero-fee: it has no fee parameter, fee accounting or fee withdrawal, and no actor can enable one ([`SHADOW_FLOAT_MAINNET_SPEC.md`](SHADOW_FLOAT_MAINNET_SPEC.md), sections 1 and 7). Any fee on mainnet would need a later, separate contract version with its own specification, threat review, tests and approval.
+
 ## What Does Not Exist Yet
 
 - no pooled sponsor capital;
