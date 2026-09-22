@@ -32,7 +32,7 @@ These values are testnet defaults, not production credit terms. The contract may
 
 ## Unassisted flow
 
-1. Open `https://shadow-arc.vercel.app/builders` and connect the sponsor wallet.
+1. Open `https://www.shadowbuild.xyz/builders` and connect the sponsor wallet.
 2. Enter the agent and provider addresses, run preflight, approve the exact reserve, and call `openSponsoredLine` on V2 at `0x20dcA96B0C487D94De885c726c956ffaF38b12C2`.
 3. Switch the connected wallet to the registered agent.
 4. Create and sign the bounded EIP-712 intent. The private key remains inside the agent wallet.

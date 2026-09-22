@@ -92,7 +92,7 @@ CCTP_BURN_TX=0x... CCTP_SOURCE_DOMAIN=0 CCTP_FOLLOWER=0x... CCTP_EXPECTED_AMOUNT
 Equivalent direct API call:
 
 ```bash
-curl -sS https://shadow-arc.vercel.app/api/cctp-funding \
+curl -sS https://www.shadowbuild.xyz/api/cctp-funding \
   -H 'content-type: application/json' \
   -d '{"burnTx":"0x...","sourceDomain":0,"follower":"0x...","expectedAmountAtomic":"1000000"}'
 ```

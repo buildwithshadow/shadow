@@ -174,7 +174,7 @@ if (!isZeroHash(existingReceipt)) {
         receiptHash: existingReceipt,
         paidSpendCommitment,
         citepayCheckpoint,
-        verifyUrl: `https://shadow-arc.vercel.app/api/float-tools?action=verify&hash=${requestHash}`,
+        verifyUrl: `https://www.shadowbuild.xyz/api/float-tools?action=verify&hash=${requestHash}`,
       },
       null,
       2,
@@ -316,7 +316,7 @@ const result = {
     header: { "X-Arc-Tx-Hash": txHash },
     suggestedBody: { query: "How does Shadow Float V2 work as a sponsor-backed credit line for Arc agents?", policy: "balanced" },
   },
-  verifyUrl: `https://shadow-arc.vercel.app/api/float-tools?action=verify&hash=${requestHash}`,
+  verifyUrl: `https://www.shadowbuild.xyz/api/float-tools?action=verify&hash=${requestHash}`,
 };
 console.log(JSON.stringify(result, null, 2));
 if (!ok) process.exit(1);

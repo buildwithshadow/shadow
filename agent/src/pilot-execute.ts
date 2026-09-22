@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../../app/shadowUrls.js";
 // End-to-end Pilot execution from CLI: fetches a plan from /api/pilot,
 // then runs the same attest -> approve -> deposit -> followSource loop the
 // browser executes. Use to validate the production flow without a wallet UI.
@@ -27,8 +28,8 @@ import { defineChain } from "viem";
 
 loadEnvFile();
 
-const PILOT_API = process.env.PILOT_API || "https://shadow-arc.vercel.app/api/pilot";
-const STATE_API = process.env.STATE_API || "https://shadow-arc.vercel.app/api/state";
+const PILOT_API = migrateShadowUrl(process.env.PILOT_API || "https://www.shadowbuild.xyz/api/pilot");
+const STATE_API = migrateShadowUrl(process.env.STATE_API || "https://www.shadowbuild.xyz/api/state");
 const EXPLORER = "https://explorer.testnet.arc-node.thecanteenapp.com";
 const EXECUTE = process.argv.includes("--execute");
 

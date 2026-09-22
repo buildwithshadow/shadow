@@ -136,6 +136,6 @@ The bounded external integration pilot completed on 2026-07-20:
 | Clearance | `clr_fc7aa568fde6640b99f4e8ad1425d54c` |
 | Spend | [`0x74c1fa...57927`](https://testnet.arcscan.app/tx/0x74c1fa0782dd8c70586bd8a87cb014a1bda6080df794250766720d527fe57927) |
 | Repayment | [`0x1e0279...527f`](https://testnet.arcscan.app/tx/0x1e0279903aba3e728385825e983bc840f9db804142e6314662df33afec54527f) |
-| Public proof | [`citepay-clear-canary.json`](https://shadow-arc.vercel.app/proofs/citepay-clear-canary.json) |
+| Public proof | [`citepay-clear-canary.json`](https://www.shadowbuild.xyz/proofs/citepay-clear-canary.json) |
 
 This is bounded external integration evidence, not production routing, organic adoption, lending revenue, or creator settlement.

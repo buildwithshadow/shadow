@@ -10,9 +10,9 @@ Three things are true on this testnet right now:
 2. **Outside projects use it with their own wallets.** Nine independently controlled external-agent lines still hold reserve, while the public history retains two debt-free CitePay line generations after reclaim. A cross-project loop let one team's agent borrow Shadow credit to pay another team's API. Two external sponsors put their own USDC behind lines; Forum Tollgate remains reserve-backed.
 3. **Anyone can re-check the canonical V2 lifecycle with one command and no keys.** `npm run float:v2-verify-live` runs 26 checks against the public Arc RPC: one proof line whose sponsor is the contract owner's wallet `0xBDb1...1Fb8` (opened, paid, blocked on an overrun, repaid), plus contract-wide conditions such as a zero fee and open external debt within 0.02 USDC. It does not reconstruct the Desk or the external lines above: those figures come from separate read-only APIs (`/api/desk`, and `/api/float?mode=v2` with its checkpoint).
 
-Live app: https://shadow-arc.vercel.app
+Live app: https://www.shadowbuild.xyz
 
-Current Float page: https://shadow-arc.vercel.app/float
+Current Float page: https://www.shadowbuild.xyz/float
 
 Repository: https://github.com/buildwithshadow/shadow
 
@@ -39,7 +39,7 @@ Shadow began this period with a deployed protocol proof and ended it as a self-s
 | --- | --- |
 | Contract | `0x20dcA96B0C487D94De885c726c956ffaF38b12C2` |
 | Source match | https://sourcify.dev/server/v2/contract/5042002/0x20dcA96B0C487D94De885c726c956ffaF38b12C2 |
-| Live activity API | `GET https://shadow-arc.vercel.app/api/float?mode=v2` |
+| Live activity API | `GET https://www.shadowbuild.xyz/api/float?mode=v2` |
 | Local verifier | `npm run float:v2-verify-live` |
 | Builder intent endpoint | `GET /api/float-tools?action=intent&agent=0x...&reason=...` |
 | Builder signing kit | [`examples/float-v2-signed-spend`](examples/float-v2-signed-spend) |
@@ -138,7 +138,7 @@ Forum also completed a separate, bounded integration with Shadow's mirror-fee pa
 | Shadow claim, `3` atomic | [`0x80f2...bf37`](https://testnet.arcscan.app/tx/0x80f29de9c8b4dae23c805763c90901618ffe07756bfee77117b8bcc4ab16bf37) |
 | Final state | allocation `7/3`; outstanding `0/0`; fallback `0/0`; allowances `0/0`; routing disabled |
 
-Public result: https://shadow-arc.vercel.app/proofs/forum-feerouter-canary.json
+Public result: https://www.shadowbuild.xyz/proofs/forum-feerouter-canary.json
 
 Verifier and rollout notes: [`docs/FORUM_FEEROUTER_CANARY.md`](docs/FORUM_FEEROUTER_CANARY.md)
 
@@ -217,9 +217,9 @@ The Records surface and M1 are supporting mandate paths, not the primary product
 
 The Records page separates the current read deployment from historical adapter proofs. The historical records show an execution wallet allocating Arc testnet USDC when a bonded enforcer returned `ALLOW`, and moving zero funds when the same adapter path returned `BLOCK`. The current V4 generation is unbonded and uses an archival nonrecoverable sink, so its wallet action is disabled. This validates a historical policy shape; it is not a production treasury customer, a real Morpho deployment, or a write-ready current adapter.
 
-Records page: https://shadow-arc.vercel.app/records
+Records page: https://www.shadowbuild.xyz/records
 
-Records API: `GET https://shadow-arc.vercel.app/api/treasury`
+Records API: `GET https://www.shadowbuild.xyz/api/treasury`
 
 The Records surface is supporting context. The primary proof path is the V2 verifier below.
 
@@ -243,15 +243,15 @@ cd shadow
 pnpm --dir app install --frozen-lockfile
 
 npm run float:v2-verify-live
-curl -s https://shadow-arc.vercel.app/api/float?mode=v2
-curl -s https://shadow-arc.vercel.app/api/desk
+curl -s https://www.shadowbuild.xyz/api/float?mode=v2
+curl -s https://www.shadowbuild.xyz/api/desk
 ```
 
 `npm run float:v2-verify-live` re-derives the canonical V2 proof loop against the public Arc RPC in 26 checks with no keys: the sponsor line was opened, the agent's signed intent paid the provider from contract custody, an oversized overrun was blocked with no funds moved, debt was repaid, and the line was restored. One external line (Obol) is intentionally left open to show a live, contract-capped debt exposure; the verifier surfaces that open debt and confirms it stays within the documented `0.02` USDC bound, so the one command anyone runs stays green while the open-debt exhibit remains visible. The verifier does not reconstruct external participants' histories: the external-line, sponsor and lifecycle figures on the live board come from the activity API described next, a separate source.
 
 The V2 activity API does not replay the full contract history on every page load. Its committed checkpoint contains a complete event scan through Arc block `52,829,548`; each request scans only newer blocks and advances the same validated checkpoint in KV. Responses label `source: live-rpc` when current chain reads complete and `source: verified-checkpoint` with `degraded: true` when the public RPC is unavailable, so a transport failure cannot become a timeout or be presented as live data.
 
-The public [Builders flow](https://shadow-arc.vercel.app/builders) now covers the complete participant-controlled lifecycle: sponsor preflight, exact reserve approval, line opening or mandate refresh, local EIP-712 signing, signed-spend submission, agent repayment, and sponsor-only debt-free reserve reclaim. Every wallet action re-reads current contract state before prompting. The adjacent pilot monitor derives reserve solvency, open debt, expired debt, reclaimable reserves, defaults, and data-source health from the same V2 state; checkpoint fallback is explicitly degraded and never presented as fresh authorization.
+The public [Builders flow](https://www.shadowbuild.xyz/builders) now covers the complete participant-controlled lifecycle: sponsor preflight, exact reserve approval, line opening or mandate refresh, local EIP-712 signing, signed-spend submission, agent repayment, and sponsor-only debt-free reserve reclaim. Every wallet action re-reads current contract state before prompting. The adjacent pilot monitor derives reserve solvency, open debt, expired debt, reclaimable reserves, defaults, and data-source health from the same V2 state; checkpoint fallback is explicitly degraded and never presented as fresh authorization.
 
 Reserve health indexes every known active sponsored line, including three Shadow-controlled system lines used for CCTP funding, Float Desk operations, and the V2 verifier. Those system lines account for `1.00 USDC` of reserve and are included only in solvency accounting. They remain excluded from external-agent, external-sponsor, and traction totals. Global solvency is reported only when the sum of tracked line reserves equals `totalSponsoredReserveUSDC()` on the deployed contract.
 
@@ -269,8 +269,8 @@ npm run agent:typecheck
 npm run float:v2-ops:test
 
 npm run float:v2-verify-live
-curl -s https://shadow-arc.vercel.app/api/float?mode=v2
-curl -s https://shadow-arc.vercel.app/api/desk
+curl -s https://www.shadowbuild.xyz/api/float?mode=v2
+curl -s https://www.shadowbuild.xyz/api/desk
 ```
 
 Additional historical checks:

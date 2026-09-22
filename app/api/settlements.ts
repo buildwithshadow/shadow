@@ -661,7 +661,7 @@ function readHeader(req: VercelLikeRequest, name: string): string | null {
 }
 
 function absoluteUrl(req: VercelLikeRequest): string {
-  const host = readHeader(req, "x-forwarded-host") || readHeader(req, "host") || "shadow-arc.vercel.app";
+  const host = readHeader(req, "x-forwarded-host") || readHeader(req, "host") || "www.shadowbuild.xyz";
   const proto = readHeader(req, "x-forwarded-proto") || "https";
   return req.url?.startsWith("http") ? req.url : `${proto}://${host}${req.url || "/api/settlements"}`;
 }

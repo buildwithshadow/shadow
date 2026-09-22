@@ -1,3 +1,4 @@
+import { resolveShadowProvider } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -31,7 +32,10 @@ const ADMIN_KEY = normalizeKey(clean(env.FLOAT_ADMIN_PRIVATE_KEY || env.PRIVATE_
 const FACILITATOR_KEY = normalizeKey(
   clean(env.FLOAT_FACILITATOR_PRIVATE_KEY || env.CAT_AGENT_PRIVATE_KEY || env.PRIVATE_KEY),
 );
-const PROVIDER_URL = clean(env.FLOAT_X402_PROVIDER_URL) || "https://shadow-arc.vercel.app/api/reasoning-x402";
+const { url: PROVIDER_URL, endpointLabel } = resolveShadowProvider(
+  clean(env.FLOAT_X402_PROVIDER_URL),
+  clean(env.FLOAT_X402_ENDPOINT_LABEL),
+);
 
 if (!RPC) throw new Error("missing ARC_RPC_URL or VITE_ARC_RPC_URL");
 if (!FLOAT) throw new Error("missing SHADOW_FLOAT or VITE_SHADOW_FLOAT");
@@ -45,7 +49,6 @@ const admin = privateKeyToAccount(ADMIN_KEY);
 const facilitator = privateKeyToAccount(FACILITATOR_KEY);
 const alpha = getAddress(clean(env.FLOAT_ALPHA_ADDRESS) || "0xa100000000000000000000000000000000000001");
 const beta = getAddress(clean(env.FLOAT_BETA_ADDRESS) || "0xbe7a000000000000000000000000000000000002");
-const endpointLabel = clean(env.FLOAT_X402_ENDPOINT_LABEL) || PROVIDER_URL;
 const endpointHash = keccak256(stringToBytes(endpointLabel));
 const overspendAmount = parseUnits(clean(env.FLOAT_OVERSPEND_USDC) || "5", 6);
 const treasuryFund = parseUnits(clean(env.FLOAT_TREASURY_FUND_USDC) || "1.25", 6);

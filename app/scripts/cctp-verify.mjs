@@ -1,4 +1,5 @@
-const baseUrl = (process.env.SHADOW_APP_URL || "https://shadow-arc.vercel.app").replace(/\/$/, "");
+import { migrateShadowUrl } from "../shadowUrls.js";
+const baseUrl = migrateShadowUrl(process.env.SHADOW_APP_URL || "https://www.shadowbuild.xyz").replace(/\/$/, "");
 const burnTx = process.env.CCTP_BURN_TX || process.argv[2];
 const sourceDomain = process.env.CCTP_SOURCE_DOMAIN || process.argv[3];
 const follower = process.env.CCTP_FOLLOWER || process.argv[4];
