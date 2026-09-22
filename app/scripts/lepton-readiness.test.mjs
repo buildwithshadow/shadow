@@ -251,6 +251,17 @@ test("a canonical block without the transaction does not suppress the explorer f
   assert.deepEqual(result, { input: "0x765e827f", source: "Arcscan index" });
 });
 
+test("an empty block response cannot win before its peer returns usable calldata", async () => {
+  let explorerCalls = 0;
+  const result = await readHistoricalProofInput({
+    byBlock: async () => "0x",
+    byCanonicalBlock: async () => { await delay(10); return "0x765e827f"; },
+    byExplorer: async () => { explorerCalls += 1; return "0xbeef"; },
+  });
+  assert.deepEqual(result, { input: "0x765e827f", source: "canonical pinned block" });
+  assert.equal(explorerCalls, 0);
+});
+
 test("slow unavailable proof sources share one deadline and cannot start later fallbacks", async () => {
   const touched = [];
   const started = Date.now();

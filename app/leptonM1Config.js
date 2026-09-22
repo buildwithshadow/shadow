@@ -130,26 +130,35 @@ export async function readWithCanonicalFallback(primaryRead, canonicalRead) {
 }
 
 export async function readHistoricalProofInput(readers, { deadlineAt = Date.now() + 8_000 } = {}) {
-  const attempts = [
-    ["RPC", readers.byHash],
-    ["canonical RPC", readers.byCanonicalHash],
-    ["pinned block", readers.byBlock],
-    ["canonical pinned block", readers.byCanonicalBlock],
-    ["Arcscan index", readers.byExplorer],
+  const stages = [
+    [["RPC", readers.byHash], ["canonical RPC", readers.byCanonicalHash]],
+    [["pinned block", readers.byBlock], ["canonical pinned block", readers.byCanonicalBlock]],
+    [["Arcscan index", readers.byExplorer]],
   ];
   const failures = [];
-  for (const [source, read] of attempts) {
-    if (typeof read !== "function") continue;
+  for (const stage of stages) {
+    const available = stage.filter(([, read]) => typeof read === "function");
+    if (available.length === 0) continue;
     if (Date.now() >= deadlineAt) {
       failures.push("historical proof deadline exceeded");
       break;
     }
     try {
-      const input = await readBeforeDeadline(read, deadlineAt, "historical proof deadline exceeded");
-      if (input) return { input, source };
-      failures.push(`${source}: no calldata`);
+      // Each endpoint gets the same remaining budget. A slow failed RPC must
+      // not delay an available pinned block on its peer. Empty reads reject so
+      // they cannot win the race against usable calldata.
+      return await readBeforeDeadline((signal) => Promise.any(available.map(async ([source, read]) => {
+        try {
+          const input = await read(signal);
+          if (!input || input === "0x") throw new Error("no calldata");
+          return { input, source };
+        } catch (error) {
+          throw new Error(`${source}: ${error?.shortMessage || error?.message || String(error)}`);
+        }
+      })), deadlineAt, "historical proof deadline exceeded");
     } catch (error) {
-      failures.push(`${source}: ${error?.shortMessage || error?.message || String(error)}`);
+      const errors = error instanceof AggregateError ? error.errors : [error];
+      failures.push(...errors.map((entry) => entry?.message || String(entry)));
     }
   }
   return { input: null, source: `unavailable (${failures.join("; ")})` };
