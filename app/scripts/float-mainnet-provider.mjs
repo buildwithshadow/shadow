@@ -38,8 +38,10 @@ import {
 } from "./float-mainnet-cli.mjs";
 import {
   SECP256K1_HALF_ORDER,
+  SignatureCheckUnavailable,
   checkFreshness,
   checkSignature,
+  isSignatureRevert,
   readIntentFile,
   validateIntentFile,
   writeJsonFile,
@@ -250,7 +252,12 @@ export function validateReceiptFile(file, { chainId, address }, expectedKind) {
 // caller is the eth_call sender: the Float for a SpendIntent, as the contract
 // calls it; none for a provider receipt. blockNumber undefined means latest.
 export async function signatureAt(connection, { signer, hash, signature, blockNumber, caller }) {
-  const code = await connection.client.getCode({ address: signer, blockNumber });
+  let code;
+  try {
+    code = await connection.client.getCode({ address: signer, blockNumber });
+  } catch (error) {
+    throw new SignatureCheckUnavailable(error);
+  }
   const at = blockNumber === undefined ? "the latest block" : `block ${blockNumber}`;
   if (code && code !== "0x") {
     let data;
@@ -262,6 +269,7 @@ export async function signatureAt(connection, { signer, hash, signature, blockNu
         blockNumber,
       }));
     } catch (error) {
+      if (!isSignatureRevert(error)) throw new SignatureCheckUnavailable(error);
       return { signerKind: "erc1271", valid: false, detail: `isValidSignature on ${signer} at ${at} failed: ${rpcErrorDetail(error)}` };
     }
     const valid = data?.toLowerCase() === ERC1271_MAGIC_WORD;
