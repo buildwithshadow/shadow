@@ -45,6 +45,7 @@ import {
   writeJsonFile,
 } from "./float-mainnet-intent.mjs";
 import { errorMessage, isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
+import { checkpointStatus } from "./float-mainnet-indexer.mjs";
 
 // Provider-side kit for the ShadowFloatMainnet candidate (Shadow's own
 // convention, not Circle x402). The agent sends its signed intent file before
@@ -345,34 +346,45 @@ export async function acceptIntent(connection, { intent, endpointHash, price, re
 // lookup that finds nothing or fails leaves providerPaid null with a hint.
 // fromBlock bounds the lookup (null: the last MAX_LOOKBACK_BLOCKS blocks).
 export async function checkPayment(connection, digest, { fromBlock = connection.deployBlock } = {}) {
-  const block = await latestBlock(connection);
+  const block = await connection.client.getBlock();
   const status = Number(await read(connection, "receiptStatus", [digest], block.number));
   const result = {
-    observedAt: { blockNumber: block.number, timestamp: block.timestamp },
+    observedAt: { blockNumber: block.number, blockHash: block.hash, timestamp: block.timestamp },
     digest,
     paid: status === 2,
     receiptStatus: RECEIPT_STATUSES[status],
     providerPaid: null,
   };
-  if (status !== 2) return result;
-  try {
-    const { log, fromBlock: scannedFrom } = await findLatestLog(connection, "ProviderPaid", { digest }, { fromBlock, toBlock: block.number });
-    if (!log) {
-      result.hint = `receiptStatus is paid (authoritative), but no ProviderPaid log for this digest is in blocks ${scannedFrom}-${block.number}; pass an earlier --from-block`;
-      return result;
+  if (status === 2) {
+    try {
+      const { log, fromBlock: scannedFrom } = await findLatestLog(connection, "ProviderPaid", { digest }, { fromBlock, toBlock: block.number });
+      if (!log) {
+        result.hint = `receiptStatus is paid (authoritative), but no ProviderPaid log for this digest is in blocks ${scannedFrom}-${block.number}; pass an earlier --from-block`;
+      } else {
+        result.providerPaid = {
+          blockNumber: log.blockNumber,
+          dueAt: log.args.dueAt,
+          lineId: log.args.lineId,
+          principal: log.args.principal,
+          provider: log.args.provider,
+          transactionHash: log.transactionHash,
+        };
+      }
+    } catch (error) {
+      result.hint = `receiptStatus is paid (authoritative); looking up its ProviderPaid log failed (${rpcErrorDetail(error)}); retry, or narrow the scan with --from-block <n>`;
     }
-    result.providerPaid = {
-      blockNumber: log.blockNumber,
-      dueAt: log.args.dueAt,
-      lineId: log.args.lineId,
-      principal: log.args.principal,
-      provider: log.args.provider,
-      transactionHash: log.transactionHash,
-    };
-  } catch (error) {
-    result.hint = `receiptStatus is paid (authoritative); looking up its ProviderPaid log failed (${rpcErrorDetail(error)}); retry, or narrow the scan with --from-block <n>`;
   }
+  await assertPaymentCanonical(connection, result);
   return result;
+}
+
+// Recheck after asynchronous delivery checks too: number-pinned reads are not
+// sufficient when the chain can replace that height while a request runs.
+export async function assertPaymentCanonical(connection, payment) {
+  const { canonical, canonicalHash } = await checkpointStatus(connection, payment.observedAt);
+  if (!canonical) {
+    throw new Error(`the payment observation block was reorganized: block ${payment.observedAt.blockNumber} is now ${canonicalHash ?? "missing"}, not ${payment.observedAt.blockHash}; retry the payment check`);
+  }
 }
 
 // Protocol step 4, delivery. Refuses unless receiptStatus[digest] is paid and,
@@ -380,9 +392,9 @@ export async function checkPayment(connection, digest, { fromBlock = connection.
 // provider for its principal; then signs a DeliveryReceipt for the accepted
 // request. crossCheck says whether the log was compared or why not.
 // deliveredAt is the timestamp of the block the payment was read at.
-export async function deliverResult(connection, { acceptance, resultHash, resultRef, account, fromBlock }) {
+async function checkDeliveryPayment(connection, { acceptance, account, fromBlock }) {
   const accepted = validateReceiptFile(acceptance, connection, ACCEPTANCE_KIND);
-  const { digest, provider, requestIdHash } = accepted.message;
+  const { digest, provider } = accepted.message;
   if (getAddress(account.address) !== provider) throw new Error(`the acceptance is provider ${provider}'s, not ${getAddress(account.address)}'s`);
   const payment = await checkPayment(connection, digest, { fromBlock: fromBlock ?? connection.deployBlock });
   const acceptanceSignature = await signatureAt(connection, {
@@ -408,6 +420,13 @@ export async function deliverResult(connection, { acceptance, resultHash, result
     }
     crossCheck = `passed: ProviderPaid in ${paid.transactionHash} pays this acceptance's provider and principal`;
   }
+  await assertPaymentCanonical(connection, payment);
+  return { accepted, payment, crossCheck };
+}
+
+export async function deliverResult(connection, { acceptance, resultHash, resultRef, account, fromBlock }) {
+  const { accepted, payment, crossCheck } = await checkDeliveryPayment(connection, { acceptance, account, fromBlock });
+  const { digest, provider, requestIdHash } = accepted.message;
   const delivery = await signReceipt(account, {
     kind: DELIVERY_KIND,
     chainId: connection.chainId,
@@ -424,6 +443,7 @@ export async function deliverResult(connection, { acceptance, resultHash, result
     resultRef,
   });
   await assertSigned(connection, delivery, payment.observedAt.blockNumber);
+  await assertPaymentCanonical(connection, payment);
   return { delivery, payment, crossCheck };
 }
 
@@ -582,6 +602,7 @@ async function checkPaymentCommand(values) {
     signature: accepted.signature,
     blockNumber: payment.observedAt.blockNumber,
   });
+  await assertPaymentCanonical(connection, payment);
   const result = {
     ok: verdict.valid,
     ...payment,
@@ -610,21 +631,14 @@ async function deliver(values) {
   const accepted = validateReceiptFile(acceptance, connection, ACCEPTANCE_KIND);
   const binding = { account, digest: accepted.message.digest, requestId: accepted.requestId };
   const file = values.store === undefined ? null : storeFile(values.store, binding.digest, "delivery");
-  const returned = (stored) => {
+  const returned = async (stored) => {
+    const { payment, crossCheck } = await checkDeliveryPayment(connection, { acceptance, account, fromBlock });
     if (values.out !== undefined) writeJsonFile(values.out, stored);
     const deduplication = `returned the delivery stored at ${file} for this digest; nothing re-signed`;
-    return { ok: true, ...stored, payment: null, crossCheck: null, deduplication, out: values.out ?? null };
+    return { ok: true, ...stored, payment, crossCheck, deduplication, out: values.out ?? null };
   };
   const stored = file && (await storedReceipt(file, connection, DELIVERY_KIND, binding));
-  if (stored) {
-    // deliverResult is skipped, so its acceptance checks run here: the stored
-    // delivery goes only to an acceptance this provider signed.
-    const provider = getAddress(account.address);
-    if (accepted.message.provider !== provider) throw new Error(`the acceptance is provider ${accepted.message.provider}'s, not ${provider}'s`);
-    const verdict = await signatureAt(connection, { signer: provider, hash: accepted.hash, signature: accepted.signature });
-    if (!verdict.valid) throw new Error(`the acceptance is not signed by provider ${provider}: ${verdict.detail}`);
-    return returned(stored);
-  }
+  if (stored) return returned(stored);
   const { delivery, payment, crossCheck } = await deliverResult(connection, { acceptance, resultHash, resultRef: values["result-ref"], account, fromBlock });
   if (file && !storeOnce(file, delivery)) return returned(await storedReceipt(file, connection, DELIVERY_KIND, binding));
   if (values.out !== undefined) writeJsonFile(values.out, delivery);
