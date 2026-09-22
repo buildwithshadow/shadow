@@ -8,6 +8,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { after, before, describe, test } from "node:test";
 import {
+  CallExecutionError,
   HttpRequestError,
   createPublicClient,
   createWalletClient,
@@ -153,7 +154,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   // runs and chain calls: failNextSign and failNextCall make the next one fail,
   // and hold, when set, is a promise the signer and the service wait for.
   async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store } = {}) {
-    const stats = { signed: 0, work: [], calls: [], failNextSign: false, failNextCall: null, hold: null };
+    const stats = { signed: 0, work: [], calls: [], failNextSign: false, failNextCall: null, failSignatureRpc: null, hold: null };
     const signer = {
       address: key.address,
       signTypedData: async (typed) => {
@@ -177,6 +178,11 @@ describe("request client against the reference provider server", { skip: e2eSkip
         if (typeof value !== "function") return value;
         return (...args) => {
           stats.calls.push(name);
+          const signatureFailure = stats.failSignatureRpc;
+          if (signatureFailure?.method === name && (args[0]?.address ?? args[0]?.to) === signatureFailure.address) {
+            stats.failSignatureRpc = null;
+            throw signatureFailure.error;
+          }
           const failure = stats.failNextCall;
           if (failure) {
             stats.failNextCall = null;
@@ -322,12 +328,12 @@ describe("request client against the reference provider server", { skip: e2eSkip
     return json;
   }
 
-  async function openLine() {
+  async function openLine(agentAddress = agent.address) {
     const opened = await ok(
       "sponsor",
       [
         "open",
-        "--agent", agent.address,
+        "--agent", agentAddress,
         "--provider", provider.address,
         "--endpoint", ENDPOINT,
         "--reserve", "1000000",
@@ -1005,5 +1011,70 @@ describe("request client against the reference provider server", { skip: e2eSkip
     assert.deepEqual(current.stats.work.slice(workBefore), [e.digest]);
     assert.equal(current.stats.signed - signedBefore, 2, "one acceptance and one delivery signed");
     assert.equal(serves[0].json.delivery.requestId, winner);
+  });
+
+  test("fresh and stored ERC-1271 acceptances retry after signature RPC failures, but reject actual invalid signatures", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    const logged = [];
+    const originalLog = console.error;
+    console.error = (message) => logged.push(JSON.parse(message));
+    try {
+      const smart = await deploy("ShadowFloatMainnetPilotLifecycle.t.sol/PilotSmartAccount.json", [account(7).address]);
+      await openLine(smart);
+      const transport = new HttpRequestError({ url: `${RPC}/signature-rpc-secret`, status: 503 });
+      const failures = [
+        { method: "call", error: new CallExecutionError(transport, { to: smart }) },
+        { method: "call", error: new Error("signature RPC connection reset") },
+        { method: "getCode", error: new Error("account-code RPC unavailable") },
+      ];
+      for (const [index, failure] of failures.entries()) {
+        const intentPath = path(`smart-agent-${index}.json`);
+        const { digest } = await ok("intent", ["build", "--agent", smart, "--sponsor", sponsor.address,
+          "--provider", provider.address, "--endpoint", ENDPOINT, "--principal", PRINCIPAL.toString(),
+          "--executor", executor.address, "--out", intentPath]);
+        await ok("intent", ["verify", "--intent", intentPath, "--signature", await accountSignature(digest, keyOf(7)), "--out", intentPath]);
+        const intent = readJson(intentPath);
+        const requestId = `req-smart-agent-${index}`;
+        const out = path(`smart-agent-${index}-acceptance.json`);
+        const args = acceptArgs(PROXY_URL, intentPath, requestId, out);
+        const signedBefore = current.stats.signed;
+
+        // Both a real contract revert (malformed bytes) and wrong magic
+        // (well-formed signature from another key) are permanent refusals.
+        for (const signature of ["0x1234", await accountSignature(digest, keyOf(8))]) {
+          const reply = await post(current.port, "/accept", { intent: { ...intent, signature }, requestId });
+          assert.equal(reply.status, 422);
+          assert.match(reply.json.error, /the agent's signature does not verify/);
+        }
+
+        current.stats.failSignatureRpc = { ...failure, address: smart };
+        await fails("request", args, {}, /^the provider failed \(HTTP 500\).*retryable/);
+        assert.equal(current.stats.failSignatureRpc, null, "the injected failure reached signature verification");
+        assert.equal(current.stats.signed, signedBefore);
+        assert.equal(existsSync(out), false);
+        assert.equal(existsSync(join(store, `${digest}.acceptance.json`)), false);
+
+        const accepted = await ok("request", args);
+        assert.equal(current.stats.signed, signedBefore + 1);
+        unlinkSync(out);
+        current.stats.failSignatureRpc = { ...failure, address: smart };
+        await fails("request", args, {}, /^the provider failed \(HTTP 500\).*retryable/);
+        assert.equal(current.stats.failSignatureRpc, null);
+        assert.equal(existsSync(out), false);
+        const retried = await ok("request", args);
+        assert.deepEqual([retried.signature, retried.typedData], [accepted.signature, accepted.typedData]);
+        assert.equal(current.stats.signed, signedBefore + 1, "stored acceptance is not signed again");
+
+        const rejected = await post(current.port, "/accept", { intent: { ...intent, signature: "0x1234" }, requestId });
+        assert.equal(rejected.status, 422, "stored acceptance still checks an actually invalid signature");
+      }
+      assert.equal(logged.length, failures.length * 2);
+      assert.ok(logged.every(({ status, error }) => status === 500 && error.includes("SignatureCheckUnavailable")));
+      assert.equal(JSON.stringify(logged).includes("signature-rpc-secret"), false);
+    } finally {
+      console.error = originalLog;
+      current.stats.failSignatureRpc = null;
+      assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);
+    }
   });
 });

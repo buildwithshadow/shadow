@@ -55,6 +55,8 @@ While it runs, the server logs every `500` answer as one JSON line on stderr, `{
 
 Each file is written to a temporary file and flushed to disk (`fsync`) before it is hard-linked into place, so a stored file is never partial and never replaced. The directory is flushed after the link, so a stored file also survives a power loss, except on Windows: Node cannot open a directory there to flush it, so a file stored just before a power loss may be missing afterwards. Until a delivery is stored, a missing result makes the service run again and a missing delivery is signed again; once a delivery is stored, `/serve` answers `500` until its result is restored. A stored result is signed over only if it is the digest's, for its accepted request; otherwise `/serve` answers `500` before reading the chain. A missing acceptance is signed again only before payment, for whichever request id is sent first; after payment, `/serve` answers `404` for the digest.
 
+On `/accept`, an ERC-1271 account that returns a non-magic result or actually reverts rejects the signature (`422`). A failed account-code lookup or unavailable signature-check RPC is retryable (`500`), including when the acceptance is already stored. Retry with the same signed intent and request id.
+
 A stored receipt is checked for shape, provider and digest when it is read. Its signature was verified when it was signed and is not checked again, so a provider whose ERC-1271 account rotates its signer still serves what it stored. Whether that receipt still verifies is decided by `fetch` and the evidence verifier, which check signatures at the block they read.
 
 ## Plugging in your service
