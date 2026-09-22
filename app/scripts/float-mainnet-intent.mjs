@@ -391,7 +391,14 @@ export async function checkSignature(connection, agent, digest, signature) {
   }
   const issue = eoaSignatureIssue(signature);
   if (issue) return { signerKind, valid: false, detail: issue };
-  const recovered = await recoverAddress({ hash: digest, signature });
+  let recovered;
+  try {
+    // Recovery is local parsing/curve arithmetic; malformed r values can
+    // throw even when the signature's length, v and low-s checks passed.
+    recovered = await recoverAddress({ hash: digest, signature });
+  } catch (error) {
+    return { signerKind, valid: false, detail: `no key recovers from the signature: ${errorMessage(error)}` };
+  }
   return recovered === agent
     ? { signerKind, valid: true, detail: "65-byte low-s ECDSA signature recovers to the agent" }
     : { signerKind, valid: false, detail: `signature recovers to ${recovered}, not the agent ${agent}` };

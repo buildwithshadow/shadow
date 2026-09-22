@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { CallExecutionError, ExecutionRevertedError, HttpRequestError, keccak256, stringToBytes } from "viem";
 import { account } from "./float-mainnet-e2e.mjs";
-import { SignatureCheckUnavailable, checkSignature } from "./float-mainnet-intent.mjs";
+import { SECP256K1_HALF_ORDER, SignatureCheckUnavailable, checkSignature, eoaSignatureIssue } from "./float-mainnet-intent.mjs";
 
 const signer = account(7).address;
 const digest = keccak256(stringToBytes("signature transport regression"));
@@ -46,4 +46,26 @@ test("an ERC-1271 reply still requires the exact magic word", async () => {
     const verdict = await checkSignature(connection(async () => ({ data })), signer, digest, "0x1234");
     assert.equal(verdict.valid, data === accepted);
   }
+});
+
+test("malformed EOA r and s values produce invalid verdicts, while valid recovery still works", async () => {
+  const connected = { client: { getCode: async () => "0x" } };
+  const scalar = (value) => value.toString(16).padStart(64, "0");
+  const signatureOf = (r, s, v = "1b") => `0x${scalar(r)}${scalar(s)}${v}`;
+  const order = SECP256K1_HALF_ORDER * 2n + 1n;
+  for (const r of [0n, order]) {
+    const signature = signatureOf(r, 1n);
+    assert.equal(eoaSignatureIssue(signature), null, "this must reach local ECDSA recovery");
+    const verdict = await checkSignature(connected, signer, digest, signature);
+    assert.deepEqual([verdict.signerKind, verdict.valid], ["eoa", false]);
+    assert.match(verdict.detail, /no key recovers from the signature/);
+  }
+  for (const signature of [signatureOf(1n, 0n), signatureOf(1n, SECP256K1_HALF_ORDER + 1n), signatureOf(1n, 1n, "00")]) {
+    const verdict = await checkSignature(connected, signer, digest, signature);
+    assert.deepEqual([verdict.signerKind, verdict.valid], ["eoa", false]);
+    assert.match(verdict.detail, /low-s|v is 0/);
+  }
+  const signature = await account(7).sign({ hash: digest });
+  assert.equal((await checkSignature(connected, signer, digest, signature)).valid, true);
+  assert.equal((await checkSignature(connected, account(8).address, digest, signature)).valid, false);
 });

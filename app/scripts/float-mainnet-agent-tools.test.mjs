@@ -440,6 +440,21 @@ describe("participant lifecycle on a local candidate", { skip: e2eSkip }, () => 
     assert.notEqual(structOf(path("s2.json")).nonce, struct.nonce);
   });
 
+  test("malformed EOA recovery remains a structured invalid signature in verify and submit", async () => {
+    for (const [index, r] of [0n, SECP256K1_HALF_ORDER * 2n + 1n].entries()) {
+      const signature = `0x${r.toString(16).padStart(64, "0")}${"1".padStart(64, "0")}1b`;
+      const verified = fails(await cli("intent", ["verify", "--intent", path("s1.json"), "--signature", signature]), /invalid signature: no key recovers/);
+      assert.deepEqual([verified.signerKind, verified.signatureValid, verified.fresh, verified.predictedOutcome], ["eoa", false, true, null]);
+      const malformed = path(`bad-r-${index}.json`);
+      writeFileSync(malformed, JSON.stringify({ ...readIntent(path("s1.json")), signature }));
+      const rejected = await sentNothing(executor.address, async () =>
+        fails(await cli("submit", ["submit", "--intent", malformed, "--execute"], executorEnv), /InvalidSignature.*no key recovers/),
+      );
+      assert.equal(rejected.error.revert, "InvalidSignature");
+      assert.equal(await readFloat("nonceUsed", [lineId, structOf(malformed).nonce]), false);
+    }
+  });
+
   test("preflight predicts the payment and submit pays exactly once", async () => {
     const predicted = ok(await cli("submit", ["preflight", "--intent", path("s1.json")], executorEnv));
     assert.deepEqual([predicted.outcome, predicted.reason, predicted.receiptStatus, predicted.from], ["pay", "NONE", "none", executor.address]);
