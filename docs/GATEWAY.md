@@ -61,14 +61,14 @@ Expected checks:
 ```bash
 pnpm --dir app typecheck
 pnpm --dir app build
-curl https://shadow-arc.vercel.app/api/settlements
+curl https://www.shadowbuild.xyz/api/settlements
 ```
 
 For a live settlement, run:
 
 ```bash
 cd app
-GATEWAY_PAYER_PRIVATE_KEY=0x... SHADOW_APP_URL=https://shadow-arc.vercel.app pnpm gateway:settle
+GATEWAY_PAYER_PRIVATE_KEY=0x... SHADOW_APP_URL=https://www.shadowbuild.xyz pnpm gateway:settle
 ```
 
 The resulting settlement should appear in `/api/settlements`, then in `/api/state` under the matching copied receipt.
@@ -76,7 +76,7 @@ The resulting settlement should appear in `/api/settlements`, then in `/api/stat
 For the Desk settlement-layer proof, check `deskRecords`:
 
 ```bash
-curl https://shadow-arc.vercel.app/api/settlements
+curl https://www.shadowbuild.xyz/api/settlements
 ```
 
 ## Live settlement proof (Jun 12, 2026)

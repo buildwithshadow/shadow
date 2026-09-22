@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 // Add 1 of the Float differentiator stack: settle Float's take-rate fee through
 // Circle Gateway as a batched sub-cent nanopayment, the Lepton headline rail.
 //
@@ -15,14 +16,14 @@ const env = {
   ...process.env,
 };
 
-const baseUrl = (env.SHADOW_APP_URL || "https://shadow-arc.vercel.app").replace(/\/$/, "");
+const baseUrl = migrateShadowUrl(env.SHADOW_APP_URL || "https://www.shadowbuild.xyz").replace(/\/$/, "");
 const payerKey = env.GATEWAY_PAYER_PRIVATE_KEY || env.BUYER_PRIVATE_KEY;
 // Take-rate on settled float volume, in basis points. Kept small so the fee is a
 // true nanopayment: 50 bps of a 0.001 USDC spend is 0.0000005 USDC.
 const feeBps = Number(env.FLOAT_FEE_BPS || "50");
 // Live settle target. A small float-fee route mirrors /api/settlements; until it
 // exists the script stays a dry-run and prints the computed nanopayment batch.
-const settleUrl = env.FLOAT_SETTLE_URL || `${baseUrl}/api/float-settle`;
+const settleUrl = migrateShadowUrl(env.FLOAT_SETTLE_URL || `${baseUrl}/api/float-settle`);
 
 const res = await fetch(`${baseUrl}/api/float`);
 if (!res.ok) throw new Error(`/api/float failed: ${res.status}`);

@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -60,7 +61,7 @@ const EXPIRY_EXTENSION_SECONDS = BigInt(clean(env.DESK_EXPIRY_EXTENSION_SECONDS)
 const CITEPAY_QUERY =
   clean(env.DESK_CITEPAY_QUERY) ||
   "How does Shadow Float V2 let autonomous agents use sponsor-backed USDC spending lines on Arc?";
-const FLOAT_API_URL = clean(env.DESK_FLOAT_API_URL) || "https://shadow-arc.vercel.app/api/float?mode=v2";
+const FLOAT_API_URL = migrateShadowUrl(clean(env.DESK_FLOAT_API_URL) || "https://www.shadowbuild.xyz/api/float?mode=v2");
 const CITEPAY_API_URL = clean(env.DESK_CITEPAY_API_URL) || "https://citepay-markets.vercel.app/api/ask";
 const DESK_CYCLE = clean(env.FLOAT_DESK_CYCLE) || `${Date.now()}-${Math.random().toString(16).slice(2)}`;
 const NOW = Math.floor(Date.now() / 1000);

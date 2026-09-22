@@ -1,3 +1,4 @@
+import { resolveShadowProvider } from "../shadowUrls.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -32,7 +33,6 @@ const DEFAULT_ATTESTOR = "0x9b5afc6c442364d4397763917ebbc659d85ee86d";
 const DEFAULT_ENFORCER = "0x1825f447c0aa8e64dd2d290cdce85d82993d0e1e";
 const DEFAULT_MORPHO_ADAPTER = "0xba9f134f7b13dadd45dcf16b09c5121a7555e2c5";
 const DEFAULT_MORPHO_SINK = "0x110f79c5617797b199d3d6e2abb855c34fbc5e58";
-const DEFAULT_PROVIDER_URL = "https://shadow-arc.vercel.app/api/reasoning-x402";
 
 const RPC = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
 const USDC = getAddress(clean(env.ARC_USDC || env.VITE_ARC_USDC) || DEFAULT_USDC);
@@ -45,8 +45,10 @@ const MORPHO_SINK = getAddress(clean(env.LEPTON_MORPHO_VAULT_SINK || env.VITE_SH
 const OPERATOR_KEY = normalizeKey(
   clean(env.TREASURY_OPERATOR_PRIVATE_KEY || env.FLOAT_FACILITATOR_PRIVATE_KEY || env.CAT_AGENT_PRIVATE_KEY || env.PRIVATE_KEY),
 );
-const PROVIDER_URL = clean(env.TREASURY_OPERATOR_X402_PROVIDER_URL || env.FLOAT_X402_PROVIDER_URL) || DEFAULT_PROVIDER_URL;
-const endpointLabel = clean(env.FLOAT_X402_ENDPOINT_LABEL) || PROVIDER_URL;
+const { url: PROVIDER_URL, endpointLabel } = resolveShadowProvider(
+  clean(env.TREASURY_OPERATOR_X402_PROVIDER_URL || env.FLOAT_X402_PROVIDER_URL),
+  clean(env.FLOAT_X402_ENDPOINT_LABEL),
+);
 const endpointHash = keccak256(stringToBytes(endpointLabel));
 
 const EXECUTE = clean(env.TREASURY_OPERATOR_EXECUTE) === "1";

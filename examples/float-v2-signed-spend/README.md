@@ -110,5 +110,5 @@ From the repo root:
 
 ```bash
 npm run float:v2-verify-live
-curl -s https://shadow-arc.vercel.app/api/float?mode=v2
+curl -s https://www.shadowbuild.xyz/api/float?mode=v2
 ```

@@ -1,3 +1,4 @@
+import { resolveShadowProvider } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -31,7 +32,10 @@ const USDC = clean(env.ARC_USDC || env.VITE_ARC_USDC || "0x360000000000000000000
 const FACILITATOR_KEY = normalizeKey(
   clean(env.FLOAT_FACILITATOR_PRIVATE_KEY || env.CAT_AGENT_PRIVATE_KEY || env.PRIVATE_KEY),
 );
-const PROVIDER_URL = clean(env.FLOAT_X402_PROVIDER_URL) || "https://shadow-arc.vercel.app/api/reasoning-x402";
+const { url: PROVIDER_URL, endpointLabel } = resolveShadowProvider(
+  clean(env.FLOAT_X402_PROVIDER_URL),
+  clean(env.FLOAT_X402_ENDPOINT_LABEL),
+);
 const BANKR_URL = clean(env.BANKR_LLM_URL) || "https://llm.bankr.bot/v1/chat/completions";
 const BANKR_MODEL = clean(env.BANKR_LLM_MODEL) || "deepseek-v3.2";
 const OPENAI_URL = clean(env.FLOAT_LOOP_OPENAI_URL) || "https://api.openai.com/v1/chat/completions";
@@ -50,7 +54,6 @@ if (!FACILITATOR_KEY) throw new Error("missing FLOAT_FACILITATOR_PRIVATE_KEY or 
 const facilitator = privateKeyToAccount(FACILITATOR_KEY);
 const alpha = getAddress(clean(env.FLOAT_ALPHA_ADDRESS) || "0xa100000000000000000000000000000000000001");
 const beta = getAddress(clean(env.FLOAT_BETA_ADDRESS) || "0xbe7a000000000000000000000000000000000002");
-const endpointLabel = clean(env.FLOAT_X402_ENDPOINT_LABEL) || PROVIDER_URL;
 const endpointHash = keccak256(stringToBytes(endpointLabel));
 const overspendAmount = parseUnits(clean(env.FLOAT_OVERSPEND_USDC) || "5", 6);
 const minUsdcFloor = parseUnits(clean(env.FLOAT_LOOP_MIN_USDC) || "0.1", 6);

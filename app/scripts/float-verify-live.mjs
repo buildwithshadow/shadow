@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 import { readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -10,9 +11,9 @@ import {
 } from "viem";
 
 const CHAIN_ID = 5_042_002;
-const DEFAULT_API = "https://shadow-arc.vercel.app/api/float";
+const DEFAULT_API = "https://www.shadowbuild.xyz/api/float";
 const DEFAULT_RPC = "https://rpc.testnet.arc.network";
-const apiUrl = clean(process.env.FLOAT_API_URL) || DEFAULT_API;
+const apiUrl = migrateShadowUrl(clean(process.env.FLOAT_API_URL) || DEFAULT_API);
 const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
 
 const chain = defineChain({

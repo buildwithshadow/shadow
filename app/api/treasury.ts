@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 import {
   createPublicClient,
   decodeEventLog,
@@ -25,7 +26,7 @@ type ReadBudget = { deadlineAt: number; signal: AbortSignal };
 
 const CHAIN_ID = 5_042_002;
 const DEFAULT_RPC = "https://rpc.testnet.arc.network";
-const DEFAULT_API = "https://shadow-arc.vercel.app/api/float";
+const DEFAULT_API = "https://www.shadowbuild.xyz/api/float";
 const DEFAULT_EXPLORER_API = "https://testnet.arcscan.app/api/v2";
 const DEFAULT_USDC = "0x3600000000000000000000000000000000000000";
 const DEFAULT_FLOAT = "0xF305647bA0ff7f1E2d4bE5f37F2EF9f930531057";
@@ -145,7 +146,7 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 async function runTreasuryChecks(budget: ReadBudget) {
   const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
   const canonicalRpcUrl = clean(process.env.ARC_PUBLIC_RPC_URL) || DEFAULT_RPC;
-  const apiUrl = clean(process.env.TREASURY_VERIFY_FLOAT_API_URL || process.env.FLOAT_API_URL) || DEFAULT_API;
+  const apiUrl = migrateShadowUrl(clean(process.env.TREASURY_VERIFY_FLOAT_API_URL || process.env.FLOAT_API_URL) || DEFAULT_API);
   const USDC = getAddress(clean(process.env.ARC_USDC || process.env.VITE_ARC_USDC) || DEFAULT_USDC);
   const FLOAT = getAddress(clean(process.env.SHADOW_FLOAT || process.env.VITE_SHADOW_FLOAT) || DEFAULT_FLOAT);
   const ATTESTOR = getAddress(clean(process.env.LEPTON_ATTESTOR || process.env.VITE_SHADOW_MANDATE_ATTESTOR) || DEFAULT_ATTESTOR);

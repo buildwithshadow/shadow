@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -46,7 +47,7 @@ if (FLOAT === LEGACY_FLOAT && clean(env.ALLOW_LEGACY_FLOAT) !== "1") {
 }
 const USDC = getAddress(clean(env.ARC_USDC || env.VITE_ARC_USDC) || "0x3600000000000000000000000000000000000000");
 const FACILITATOR_KEY = normalizeKey(clean(env.FLOAT_FACILITATOR_PRIVATE_KEY || env.CAT_AGENT_PRIVATE_KEY || env.PRIVATE_KEY));
-const PROVIDER_URL = clean(env.FLOAT_X402_PROVIDER_URL) || "https://shadow-arc.vercel.app/api/reasoning-x402";
+const PROVIDER_URL = migrateShadowUrl(clean(env.FLOAT_X402_PROVIDER_URL) || "https://www.shadowbuild.xyz/api/reasoning-x402");
 const maxRuns = Number(clean(env.FLOAT_LOOP_MAX_RUNS) || "120");
 const args = process.argv.slice(2);
 const VERIFY_ONLY = args.includes("--verify-only");
@@ -180,7 +181,7 @@ if (VERIFY_ONLY) {
         previewAllowed: true,
         providerMatchesIntent: true,
         assetMatchesArcUSDC: true,
-        verifyUrl: `https://shadow-arc.vercel.app/api/float-tools?action=verify&hash=${requestHash}`,
+        verifyUrl: `https://www.shadowbuild.xyz/api/float-tools?action=verify&hash=${requestHash}`,
       },
       null,
       2,
@@ -223,7 +224,7 @@ await persistRun(run);
 console.log("\ndone. The builder's signed intent was fronted and bound on-chain.");
 console.log(`x402 settlement ${x402.txHash}`);
 console.log(`bind tx         ${bindTxHash}`);
-console.log(`verify          https://shadow-arc.vercel.app/api/float-tools?action=verify&hash=${requestHash}`);
+console.log(`verify          https://www.shadowbuild.xyz/api/float-tools?action=verify&hash=${requestHash}`);
 console.log(JSON.stringify(run, null, 2));
 
 async function recordFloatBind(agent_, provider_, endpointHash_, amount_, requestHash_, x402Hash_) {

@@ -28,6 +28,9 @@ on:
       - "app/scripts/float-mainnet-*"
       - "app/scripts/rpc-read-queue*"
       - "examples/float-mainnet-provider-server/**"
+      - "app/scripts/shadow-url-migration.test.mjs"
+      - "app/shadowUrls.d.ts"
+      - "app/shadowUrls.js"
       - "app/tsconfig.json"
       # forge build compiles the shared Solidity sources and test fixtures too.
       - "contracts/**"
@@ -96,6 +99,8 @@ jobs:
         run: node --test app/scripts/historical-reads.test.mjs app/scripts/float-history-api.test.ts app/scripts/treasury-history-api.test.ts
       - name: Test Treasury CLI JSON reports and exit status
         run: node --test app/scripts/treasury-verify-live.test.mjs
+      - name: Test domain migration and mandate identity compatibility
+        run: node --test app/scripts/shadow-url-migration.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app

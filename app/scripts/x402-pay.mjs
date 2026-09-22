@@ -78,7 +78,7 @@ const payload = {
 };
 const header = Buffer.from(JSON.stringify(payload)).toString("base64url");
 
-const res = await fetch("https://shadow-arc.vercel.app/api/reasoning-x402", {
+const res = await fetch("https://www.shadowbuild.xyz/api/reasoning-x402", {
   headers: { "X-PAYMENT": header },
 });
 console.log("HTTP", res.status);
