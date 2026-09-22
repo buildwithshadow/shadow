@@ -58,6 +58,7 @@ export const LEPTON_M1_DEPLOYMENTS: {
       readonly generation: string;
       readonly label: string;
       readonly txHash: Hash;
+      readonly blockNumber: bigint;
       readonly mandateRegistry: Address;
       readonly bondedEnforcer: Address;
       readonly v4StyleAdapter: Address;
@@ -75,10 +76,21 @@ export const LEPTON_M1_DEPLOYMENTS: {
 };
 
 export const LEPTON_WRITE_REASON: Readonly<Record<LeptonWriteReasonCode, LeptonWriteReasonCode>>;
+export function leptonHistoricalProofsForJson(): {
+  circlePasskey: Omit<typeof LEPTON_M1_DEPLOYMENTS.historicalProofs.circlePasskey, "blockNumber"> & { blockNumber: string };
+  morphoStyle: typeof LEPTON_M1_DEPLOYMENTS.historicalProofs.morphoStyle;
+};
 export function classifyLeptonV4Readiness(input: LeptonV4ReadinessInput): LeptonV4Readiness;
 export function runLeptonWalletAction<T>(readiness: LeptonV4Readiness | null | undefined, action: () => Promise<T> | T): Promise<T>;
 export function readWithCanonicalFallback<T>(
   primaryRead: () => Promise<T> | T,
   canonicalRead?: () => Promise<T> | T,
 ): Promise<T>;
+export function readHistoricalProofInput(readers: {
+  byHash?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+  byCanonicalHash?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+  byBlock?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+  byCanonicalBlock?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+  byExplorer?: () => Promise<Hex | null | undefined> | Hex | null | undefined;
+}, options?: { deadlineAt?: number }): Promise<{ input: Hex | null; source: string }>;
 export function transactionInputContainsAddress(input: Hex | string | null | undefined, address: Address | string): boolean;

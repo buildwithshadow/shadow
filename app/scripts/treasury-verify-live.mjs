@@ -10,7 +10,7 @@ import {
   parseAbi,
   parseAbiItem,
 } from "viem";
-import { LEPTON_M1_DEPLOYMENTS, transactionInputContainsAddress } from "../leptonM1Config.js";
+import { LEPTON_M1_DEPLOYMENTS, leptonHistoricalProofsForJson, transactionInputContainsAddress } from "../leptonM1Config.js";
 
 const env = {
   ...readEnv(new URL("../../.env", import.meta.url)),
@@ -242,10 +242,7 @@ const result = {
     morphoStyleVaultAdapter: MORPHO_ADAPTER,
     morphoStyleVaultSink: MORPHO_SINK,
   },
-  historicalProofs: {
-    circlePasskey: historicalPasskeyProof,
-    morphoStyle: LEPTON_M1_DEPLOYMENTS.historicalProofs.morphoStyle,
-  },
+  historicalProofs: leptonHistoricalProofsForJson(),
   txs: {
     createMandate: proof.createMandateTx,
     allowedAllocation: proof.allowedAllocationTx,
