@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import {
+  CallExecutionError,
+  ExecutionRevertedError,
+  HttpRequestError,
   createPublicClient,
   createTestClient,
   createWalletClient,
@@ -23,7 +26,7 @@ import { sign } from "viem/accounts";
 
 import { connectCandidate, floatAbi } from "./float-mainnet-config.mjs";
 import { CHAIN_ID, account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
-import { validateIntentFile } from "./float-mainnet-intent.mjs";
+import { SignatureCheckUnavailable, validateIntentFile } from "./float-mainnet-intent.mjs";
 import { stableStringify } from "./float-mainnet-preflight.mjs";
 import {
   ACCEPTANCE_KIND,
@@ -34,6 +37,7 @@ import {
   requestIdHashOf,
   resultRefHashOf,
   signReceipt,
+  signatureAt,
   validateReceiptFile,
 } from "./float-mainnet-provider.mjs";
 
@@ -212,6 +216,38 @@ test("request ids and result locations are hashed as UTF-8 text, so a receipt wh
   assert.equal(validate(bare, DELIVERY_KIND).resultRef, null);
   assert.equal(validate({ ...bare, resultRef: null }, DELIVERY_KIND).hash, validate(bare, DELIVERY_KIND).hash);
   assert.throws(() => validate({ ...bare, resultRef: "a" }, DELIVERY_KIND), /^Error: resultRef "a" does not hash to the message's resultRefHash 0x0{64}$/);
+});
+
+test("ERC-1271 receipt checks preserve RPC unavailability separately from execution rejection", async () => {
+  const signer = account(5).address;
+  const hash = keccak256(stringToBytes("receipt signature transport regression"));
+  const transport = new HttpRequestError({ url: "http://rpc.invalid", status: 503 });
+  const reverted = new ExecutionRevertedError({ message: "execution reverted: signature rejected" });
+  const gasBudget = new ExecutionRevertedError({ message: "gas required exceeds allowance (0)" });
+  for (const cause of [transport, reverted, gasBudget, new Error("RPC connection reset")]) {
+    const failures = cause instanceof Error && cause.name !== "Error" ? [cause, new CallExecutionError(cause, { to: signer })] : [cause];
+    for (const failure of failures) {
+      const connection = { client: { getCode: async () => "0x6000", call: async () => { throw failure; } } };
+      const checked = signatureAt(connection, { signer, hash, signature: "0x1234", blockNumber: 5n });
+      if (cause === reverted) {
+        const verdict = await checked;
+        assert.equal(verdict.valid, false);
+        assert.match(verdict.detail, /isValidSignature.*block 5 failed/);
+      } else {
+        await assert.rejects(checked, (error) => {
+          assert.ok(error instanceof SignatureCheckUnavailable);
+          assert.equal(error.cause, failure);
+          return true;
+        });
+      }
+    }
+  }
+  const failure = new Error("RPC unavailable during eth_getCode");
+  await assert.rejects(signatureAt({ client: { getCode: async () => { throw failure; } } }, { signer, hash, signature: "0x1234" }), (error) => {
+    assert.ok(error instanceof SignatureCheckUnavailable);
+    assert.equal(error.cause, failure);
+    return true;
+  });
 });
 
 describe("provider verification kit", { skip: e2eSkip }, () => {
