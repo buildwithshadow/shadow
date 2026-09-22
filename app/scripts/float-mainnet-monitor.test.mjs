@@ -343,7 +343,7 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     if (dir) rmSync(dir, { recursive: true, force: true });
   });
 
-  test("check lists every opened line, from a scan or from an index plus a scan past its checkpoint, with no alert", async () => {
+  test("check lists every opened line from a canonical scan, with index checkpoint diagnostics and no alert", async () => {
     await ok("owner", ["allow-sponsor", "--sponsor", sponsor.address, "--execute"], OWNER);
     seen.lineA = (await ok("sponsor", openArgs(agentA), SPONSOR)).lineId;
     await ok("indexer", ["index", "--out", path("index.json")]);
@@ -370,12 +370,12 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
       ["2000000", "2000000", "86400", "3600"],
     );
 
-    // The index predates line B: its checkpoint lags, and the scan past it finds B.
+    // The index predates line B; canonical discovery still finds both lines.
     const indexed = await monitor(["check", "--index", path("index.json")]);
     const { index, scanned } = indexed.discovery;
     assert.deepEqual([index.canonical, index.note, indexed.discovery.lines, indexed.alerts], [true, null, 2, []]);
     assert.ok(BigInt(index.lagBlocks) > 0n);
-    assert.deepEqual(scanned, { fromBlock: (BigInt(index.checkpoint.blockNumber) + 1n).toString(), toBlock: indexed.observedAt.blockNumber });
+    assert.deepEqual(scanned, { fromBlock: deployBlock.toString(), toBlock: indexed.observedAt.blockNumber });
     assert.deepEqual(indexed.lines, checked.lines);
 
     // An index built from an RPC ahead of this one (a lagging second RPC), and
@@ -438,7 +438,7 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     await reconciles({ balance: "2000000", totalSponsorObligations: "2000000", totalCommittedCapital: "2000000", surplus: "0" });
   });
 
-  test("a drawn line warns MATURITY_SOON inside the horizon, then DEFAULT_ELIGIBLE exits 1 from dueAt itself; a stale index is INDEX_LAG, one missing a line DISCOVERY_INCOMPLETE", async () => {
+  test("a drawn line warns MATURITY_SOON then DEFAULT_ELIGIBLE; stale and incomplete indexes cannot hide it", async () => {
     const paid = await purchase(agentA, AGENT_A, "a1");
     seen.dueAt = BigInt(paid.providerPaid.dueAt);
     // Line B draws and repays in two parts: back to OPEN.
@@ -486,23 +486,16 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     const lagging = await monitor(["check", "--index", path("index.json"), "--max-index-lag", (BigInt(lagSeconds) - 1n).toString()], 1);
     assert.deepEqual(alertList(lagging), alertList(stale));
 
-    // An index that lost line A's LineOpened (its ProviderPolicySet is kept):
-    // the scan past the checkpoint cannot find A, so A's DEFAULT_ELIGIBLE is
-    // never raised, but the lines found no longer hold totalCommittedCapital.
+    // An index that lost line A's LineOpened cannot suppress its maturity
+    // alert or break reconciliation: discovery uses the canonical logs.
     const withoutA = editedIndex("index-without-a.json", (edited) => {
       edited.events = edited.events.filter((entry) => !(entry.event === "LineOpened" && entry.args.lineId === seen.lineA));
     });
-    const blind = await monitor(["check", "--index", withoutA], 1);
-    assert.deepEqual(alertList(blind), [["INDEX_LAG", "warning", null], ["DISCOVERY_INCOMPLETE", "critical", null]]);
-    assert.deepEqual([blind.discovery.lines, blind.lines.map((line) => line.lineId)], [1, [seen.lineB]]);
-    assert.match(blind.alerts[1].detail, /^totalCommittedCapital is 2000000, but the 1 line\(s\) found hold 1000000 in availableReserve \+ principalOutstanding \+ recoveryAvailable: a line is missing/);
-    const unreconciled = await monitor(["reconcile", "--index", withoutA], 1);
-    assert.deepEqual(statuses(unreconciled), {
-      balanceCoversObligations: "PASS",
-      obligationsEqualLines: "FAIL",
-      committedCapitalEqualsLines: "FAIL",
-      linesMatchReserveCap: "PASS",
-    });
+    const complete = await monitor(["check", "--index", withoutA], 1);
+    assert.deepEqual(alertList(complete), alertList(stale));
+    assert.deepEqual([complete.discovery.lines, complete.lines.map((line) => line.lineId)], [2, [seen.lineA, seen.lineB]]);
+    const reconciled = await monitor(["reconcile", "--index", withoutA]);
+    assert.deepEqual(statuses(reconciled), ALL_PASS);
     // --line-id checks only the lines named, so it skips the guard.
     assert.deepEqual(alertList(await monitor(["check", "--index", withoutA, "--line-id", seen.lineB])), [["INDEX_LAG", "warning", null]]);
   });
@@ -535,7 +528,8 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     // amounts as decimal strings, and nothing left to scan.
     await ok("indexer", ["index", "--out", path("index.json"), "--resume"]);
     const fromIndex = await monitor(["reconcile", "--index", path("index.json")]);
-    assert.deepEqual([statuses(fromIndex), fromIndex.discovery.scanned, identityOf(lineOf(fromIndex, seen.lineA))], [ALL_PASS, null, settledA]);
+    assert.deepEqual([statuses(fromIndex), fromIndex.discovery.scanned, identityOf(lineOf(fromIndex, seen.lineA))],
+      [ALL_PASS, { fromBlock: deployBlock.toString(), toBlock: fromIndex.observedAt.blockNumber }, settledA]);
 
     // A DEFAULTED line is no longer DEFAULT_ELIGIBLE.
     const checked = await monitor(["check"]);
@@ -575,6 +569,26 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
       removed.contract.operators.map(({ enabled, set }) => [enabled, set.map((entry) => entry.allowed)]),
       [[false, [true, false]]],
     );
+  });
+
+  test("omitted operator and provider-policy events in a canonical index cannot suppress alerts", async () => {
+    await ok("indexer", ["index", "--out", path("index.json"), "--resume"]);
+    const options = ["check", "--warn-before", "5184000"];
+    const baseline = await monitor(options);
+    assert.ok(baseline.alerts.some((alert) => alert.code === "OPERATOR_CHANGED"));
+    assert.ok(baseline.alerts.some((alert) => alert.code === "POLICY_EXPIRY_SOON" && alert.lineId === seen.lineB));
+    for (const omitted of [["OperatorSet"], ["ProviderPolicySet"], ["OperatorSet", "ProviderPolicySet"]]) {
+      const damaged = editedIndex(`without-${omitted.join("-")}.json`, (edited) => {
+        const before = edited.events.length;
+        edited.events = edited.events.filter((entry) => !omitted.includes(entry.event));
+        assert.ok(edited.events.length < before, "the fixture must actually remove canonical events");
+      });
+      const checked = await monitor([...options, "--index", damaged]);
+      assert.equal(checked.discovery.index.canonical, true);
+      assert.deepEqual(checked.alerts, baseline.alerts);
+      assert.deepEqual(checked.contract.operators, baseline.contract.operators);
+      assert.deepEqual(checked.lines, baseline.lines);
+    }
   });
 
   test("a proposed cap increase is reported with its activation time", async () => {

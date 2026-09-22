@@ -11,6 +11,7 @@ import {
   ACCEPTANCE_KIND,
   DELIVERY_KIND,
   acceptIntent,
+  checkPayment,
   deliverResult,
   resultRefHashOf,
   storeOnce,
@@ -184,29 +185,29 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const acceptance = storedReceipt(digest, ACCEPTANCE_KIND);
     if (!acceptance) return [404, { error: `no accepted request for digest ${digest}` }];
     const delivered = storedReceipt(digest, DELIVERY_KIND);
+    const earlier = readStored(fileOf(digest, "result"));
     if (delivered) {
-      const stored = readStored(fileOf(digest, "result"));
-      if (typeof stored?.result !== "string" || keccak256(Buffer.from(stored.result, "base64")) !== delivered.typedData.message.resultHash.toLowerCase()) {
+      if (typeof earlier?.result !== "string" || keccak256(Buffer.from(earlier.result, "base64")) !== delivered.typedData.message.resultHash.toLowerCase()) {
         throw new HttpError(
           `the provider's stored result for digest ${digest} is missing or does not match its signed delivery; the provider has to restore it before the digest can be served`,
           500,
         );
       }
-      return [200, { result: stored.result, delivery: delivered }];
     }
     // A result kept from an earlier run is signed over only if it is this
     // digest's, for its accepted request; a store that holds another is the
     // provider's to repair, so no chain read is made.
-    const earlier = readStored(fileOf(digest, "result"));
-    if (earlier && (earlier.digest !== digest || earlier.requestId !== acceptance.requestId || typeof earlier.result !== "string")) {
+    if (!delivered && earlier && (earlier.digest !== digest || earlier.requestId !== acceptance.requestId || typeof earlier.result !== "string")) {
       throw new HttpError(
         `the provider's stored result for digest ${digest} is not this digest's result for its accepted request; the provider has to restore it before the digest can be served`,
         500,
       );
     }
-    // receiptStatus alone decides; deliverResult makes the ProviderPaid cross-check.
-    const receiptStatus = RECEIPT_STATUSES[Number(await read(connection, "receiptStatus", [digest]))];
-    if (receiptStatus !== "paid") return [402, { error: "the digest is not paid", receiptStatus }];
+    // A stored delivery is not payment evidence: a reorg can remove its
+    // payment after it was signed. Recheck before returning either path.
+    const payment = await checkPayment(connection, digest);
+    if (!payment.paid) return [402, { error: "the digest is not paid", receiptStatus: payment.receiptStatus }];
+    if (delivered) return [200, { result: earlier.result, delivery: delivered }];
     const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
     const { delivery } = await deliverResult(connection, {

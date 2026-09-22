@@ -2,14 +2,14 @@
 
 A small HTTP server that shows how a provider takes part in a `ShadowFloatMainnet` purchase, and how it recovers a paid request whose answer was interrupted. It is a **reference, not production hosting**: it has no TLS, authentication, rate limiting or monitoring, and it runs as a single process. It is tested end to end on a local anvil chain only. The candidate is not deployed on any network.
 
-The protocol is **Shadow's own convention** for this candidate. It is not x402 or any other payment standard, and no existing seller supports it: a provider has to adopt it. The server uses the provider kit's exported functions (`acceptIntent`, `deliverResult`, `validateReceiptFile`, `storeOnce`) from `app/scripts/float-mainnet-provider.mjs`. Every protocol check is the kit's own, apart from the `receiptStatus` read that gates `/serve`. The server adds the HTTP layer and the store's layout, and on `/accept` it repeats the kit's checks that need no chain read (provider, endpoint, price, a signature present) before calling `acceptIntent`, so an intent refused on its face costs no RPC calls. The receipt formats are described in `docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md` §6. The agent's side is `app/scripts/float-mainnet-request.mjs`.
+The protocol is **Shadow's own convention** for this candidate. It is not x402 or any other payment standard, and no existing seller supports it: a provider has to adopt it. The server uses the provider kit's exported functions (`acceptIntent`, `checkPayment`, `deliverResult`, `validateReceiptFile`, `storeOnce`) from `app/scripts/float-mainnet-provider.mjs`. Every protocol check is the kit's own, including the fresh payment check that gates every `/serve`, even when its result and delivery are already stored. The server adds the HTTP layer and the store's layout, and on `/accept` it repeats the kit's checks that need no chain read (provider, endpoint, price, a signature present) before calling `acceptIntent`, so an intent refused on its face costs no RPC calls. The receipt formats are described in `docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md` §6. The agent's side is `app/scripts/float-mainnet-request.mjs`.
 
 ## How a purchase runs
 
 1. The agent builds and signs an intent (`float-mainnet-intent.mjs`), then sends it to the provider **before payment**, over TLS and to the provider only: `float-mainnet-request.mjs accept`. The provider checks it and signs a `ServiceAcceptance` that binds the request id to the intent's digest.
 2. The executor submits the intent (`float-mainnet-submit.mjs submit --execute`). The contract pays the provider and records `receiptStatus[digest] = 2` (paid).
 3. The agent runs `float-mainnet-request.mjs fetch` with its acceptance (or its request id). It pays nothing. It reads `receiptStatus` from the contract first, and asks the provider to serve only once the digest is paid. The provider runs its service once for the digest and returns the result with a signed `DeliveryReceipt`.
-4. If the answer is lost or fails, `fetch` checks `GET /status/<digest>` and asks again for **the same digest**. The provider answers from its store: the same result and the same receipt, with no new work and no new payment.
+4. If the answer is lost or fails, `fetch` checks `GET /status/<digest>` and asks again for **the same digest**. A failed status poll does not prevent the serve retry. The provider answers from its store: the same result and the same receipt, with no new work and no new payment.
 
 ## Run it
 
@@ -90,6 +90,8 @@ node app/scripts/float-mainnet-request.mjs fetch --provider-url https://provider
   --intent intent.json --acceptance acceptance.json --out result.bin --manifest $M
 ```
 
+The client refuses HTTP redirects, so a signed intent cannot be forwarded to another origin. Configure the final provider URL directly.
+
 `accept` keeps the acceptance only if the provider the intent pays signed it, only if it is for the intent's digest, endpoint and principal and for the request id that was sent, and only if its `acceptedAt` is not after the latest block. A `5xx` answer is retryable: nothing is paid before acceptance, so run `accept` again with the same `--request-id`. A `409` means another request id was accepted first for this digest: if that request id is not yours, do not submit the intent, and cancel its nonce (`float-mainnet-cancel-nonce.mjs`).
 
 `fetch` needs no key, and it needs `--acceptance` or `--request-id`: it keeps a delivery only for the agent's own request. It writes the result only after checking the receipt:
@@ -105,7 +107,7 @@ An answer over 16 MiB is refused without being read to its end. `--out` is writt
 
 ## Guarantees
 
-- **Serves only paid digests.** The contract's `receiptStatus` is authoritative. `deliverResult` also compares the `ProviderPaid` event, when it is found, with the acceptance's provider and principal.
+- **Serves only paid digests.** The contract's `receiptStatus` is authoritative and is rechecked before returning a stored result, so a payment removed by a reorg cannot be bypassed through the cache. `deliverResult` also compares the `ProviderPaid` event, when it is found, with the acceptance's provider and principal.
 - **One acceptance per digest, for the first request id.** The first request id accepted for a digest is the only one ever answered for it; another is refused with `409`. The first is whoever sent the signed intent first: anyone holding the intent file can send it under a request id of their own. Send the intent only to the provider, over TLS, and treat an unexpected `409` as described above.
 - **One result and one receipt per digest.** The service's output is stored before a receipt is signed over it. Every later `/serve` for the digest returns that stored result and receipt: after a lost answer, a retry, concurrent requests or a restart. If signing fails, the stored result is signed on the next request and the service does not run again.
 - **No payment from recovery.** `fetch` never signs or sends a transaction. A retry asks for the same digest, which is already paid.

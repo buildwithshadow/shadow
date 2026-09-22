@@ -138,7 +138,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   const seen = {};
   // Between the client and the in-process server: a log of the requests it
   // relayed, and ways to lose or rewrite the server's answer.
-  const proxy = { upstream: url(SERVER_PORT), log: [], dropNextServe: false, dropped: null, rewrite: null };
+  const proxy = { upstream: url(SERVER_PORT), log: [], dropNextServe: false, dropped: null, rewrite: null, statusFailure: null, redirectAccept: null };
 
   async function deploy(path, args) {
     const { abi, bytecode } = artifact(path);
@@ -197,6 +197,15 @@ describe("request client against the reference provider server", { skip: e2eSkip
         let body = "";
         for await (const chunk of request) body += chunk;
         proxy.log.push(`${request.method} ${request.url}`);
+        if (request.url === "/accept" && proxy.redirectAccept) {
+          response.writeHead(proxy.redirectAccept.status, { location: proxy.redirectAccept.location });
+          return response.end();
+        }
+        if (request.url.startsWith("/status/") && proxy.statusFailure) {
+          if (proxy.statusFailure === "disconnect") return request.socket.destroy();
+          response.writeHead(proxy.statusFailure, { "content-type": "application/json" });
+          return response.end(JSON.stringify({ error: "status is unavailable" }));
+        }
         const upstream = await fetch(`${proxy.upstream}${request.url}`, {
           method: request.method,
           headers: { "content-type": "application/json" },
@@ -486,6 +495,52 @@ describe("request client against the reference provider server", { skip: e2eSkip
     await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
   });
 
+  test("a status outage does not consume the serve retry or strand a paid result", async () => {
+    const { b } = seen;
+    const [nonceBefore, providerBefore, signedBefore, workBefore] = [await executorNonce(), await balance(provider.address), current.stats.signed, current.stats.work.length];
+    for (const statusFailure of [503, "disconnect"]) {
+      const relayed = proxy.log.length;
+      proxy.dropNextServe = true;
+      proxy.statusFailure = statusFailure;
+      try {
+        const out = path(`status-outage-${statusFailure}.txt`);
+        const fetched = await ok("request", fetchArgs(PROXY_URL, ["--intent", b.file, "--acceptance", path("acceptance-b.json")], out));
+        assert.equal(fetched.attempts, 2);
+        assert.deepEqual(proxy.log.slice(relayed), ["POST /serve", `GET /status/${b.digest}`, "POST /serve"]);
+        assert.deepEqual(fetched.delivery, proxy.dropped.delivery);
+        assert.deepEqual(readFileSync(out), Buffer.from(proxy.dropped.result, "base64"));
+      } finally {
+        proxy.statusFailure = null;
+        proxy.dropNextServe = false;
+      }
+    }
+    assert.deepEqual([await executorNonce(), await balance(provider.address), current.stats.signed, current.stats.work.length], [nonceBefore, providerBefore, signedBefore, workBefore]);
+  });
+
+  test("307 and 308 redirects never disclose a signed intent to a different origin", async () => {
+    let leakedRequests = 0;
+    const receiver = await listen(createServer(async (request, response) => {
+      leakedRequests += 1;
+      for await (const _ of request) { /* Drain any leaked body without logging it. */ }
+      response.writeHead(200, { "content-type": "application/json" });
+      response.end("{}");
+    }), 0);
+    const nonceBefore = await executorNonce();
+    try {
+      for (const status of [307, 308]) {
+        proxy.redirectAccept = { status, location: `${url(receiver.address().port)}/stolen` };
+        const out = path(`redirect-${status}.json`);
+        await fails("request", acceptArgs(PROXY_URL, seen.b.file, "req-b", out), {}, /no answer from the provider .*redirect/i);
+        assert.equal(existsSync(out), false);
+      }
+      assert.equal(leakedRequests, 0);
+      assert.equal(await executorNonce(), nonceBefore);
+    } finally {
+      proxy.redirectAccept = null;
+      await stop(receiver);
+    }
+  });
+
   test("a restart between accept and serve keeps the acceptance: nothing is re-signed, and the paid digest is served once", async () => {
     const c = await signedIntent("c");
     const accepted = await ok("request", acceptArgs(PROXY_URL, c.file, "req-c", path("acceptance-c.json")));
@@ -512,6 +567,29 @@ describe("request client against the reference provider server", { skip: e2eSkip
     assert.equal(readFileSync(join(store, `${c.digest}.acceptance.json`), "utf8"), storedAcceptance);
     await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
     seen.c = { ...c, delivery: fetched.delivery };
+  });
+
+  test("a stored delivery is withheld when a reorg removes its payment", async () => {
+    const intent = await signedIntent("reorg");
+    await ok("request", acceptArgs(PROXY_URL, intent.file, "req-reorg", path("acceptance-reorg.json")));
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    let reverted = false;
+    try {
+      await ok("submit", ["submit", "--intent", intent.file, "--execute"], EXECUTOR);
+      const delivered = await post(current.port, "/serve", { digest: intent.digest });
+      assert.equal(delivered.status, 200);
+      const [signed, work] = [current.stats.signed, current.stats.work.length];
+      assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);
+      reverted = true;
+      assert.deepEqual(await post(current.port, "/serve", { digest: intent.digest }), {
+        status: 402,
+        json: { error: "the digest is not paid", receiptStatus: "none" },
+      });
+      assert.deepEqual([current.stats.signed, current.stats.work.length], [signed, work]);
+      assert.deepEqual(readJson(join(store, `${intent.digest}.delivery.json`)), delivered.json.delivery);
+    } finally {
+      if (!reverted) await client.request({ method: "evm_revert", params: [snapshot] });
+    }
   });
 
   test("a tampered result from a malicious server is rejected, and nothing is written", async () => {
@@ -863,6 +941,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   });
 
   test("a stored receipt is not re-verified when read, so an ERC-1271 provider that rotated its signer still serves what it stored", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
     const smartAccount = "ShadowFloatMainnetPilotLifecycle.t.sol/PilotSmartAccount.json";
     const smart = await deploy(smartAccount, [account(7).address]);
     const rotated = await deploy(smartAccount, [account(8).address]);
@@ -871,31 +950,27 @@ describe("request client against the reference provider server", { skip: e2eSkip
     const server = createProviderServer({ connection, account: signer, endpointHash: ENDPOINT_HASH, price: PRICE, storeDir: smartStore, service: exampleService });
     await listen(server, SMART_PORT);
     try {
-      const digest = keccak256(stringToBytes("a digest the smart-account provider delivered"));
-      const result = Buffer.from("the stored answer");
-      const { timestamp } = await client.getBlock();
-      const receipt = (kind, message) => signReceipt(signer, { kind, chainId: CHAIN_ID, verifyingContract: float, message, requestId: "req-smart" });
-      const requestIdHash = requestIdHashOf("req-smart");
-      const acceptance = await receipt(ACCEPTANCE_KIND, { digest, provider: smart, endpointHash: ENDPOINT_HASH, principal: PRINCIPAL, requestIdHash, acceptedAt: timestamp });
-      const delivery = await receipt(DELIVERY_KIND, {
-        digest,
-        provider: smart,
-        requestIdHash,
-        resultHash: keccak256(result),
-        resultRefHash: resultRefHashOf(null),
-        deliveredAt: timestamp,
-      });
-      writeFileSync(join(smartStore, `${digest}.acceptance.json`), stableStringify(acceptance));
-      writeFileSync(join(smartStore, `${digest}.result.json`), stableStringify({ digest, requestId: "req-smart", result: result.toString("base64"), resultRef: null }));
-      writeFileSync(join(smartStore, `${digest}.delivery.json`), stableStringify(delivery));
+      await ok("sponsor", ["set-provider-policy", "--line-id", seen.lineId, "--provider", smart, "--endpoint", ENDPOINT,
+        "--per-spend", "1000000", "--daily", "1000000", "--expiry", SIXTY_DAYS, "--execute"], SPONSOR);
+      const { digest } = await ok("intent", ["build", "--agent", agent.address, "--sponsor", sponsor.address,
+        "--provider", smart, "--endpoint", ENDPOINT, "--principal", PRINCIPAL.toString(), "--executor", executor.address,
+        "--out", path("smart-intent.json")]);
+      await ok("intent", ["sign", "--intent", path("smart-intent.json"), "--out", path("smart-signed.json")], AGENT);
+      assert.equal((await post(SMART_PORT, "/accept", { intent: readJson(path("smart-signed.json")), requestId: "req-smart" })).status, 200);
+      await ok("submit", ["submit", "--intent", path("smart-signed.json"), "--execute"], EXECUTOR);
+      const served = await post(SMART_PORT, "/serve", { digest });
+      assert.equal(served.status, 200);
+      const { delivery } = served.json;
       // The account rotates: its code now accepts only another signer's signatures.
       await client.request({ method: "anvil_setCode", params: [smart, await client.getCode({ address: rotated })] });
       const { hash, signature } = validateReceiptFile(delivery, connection, DELIVERY_KIND);
       assert.equal((await signatureAt(connection, { signer: smart, hash, signature })).valid, false);
 
-      assert.deepEqual(await post(SMART_PORT, "/serve", { digest }), { status: 200, json: { delivery, result: result.toString("base64") } });
+      assert.deepEqual(await post(SMART_PORT, "/serve", { digest }), served);
+      await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
     } finally {
       await stop(server);
+      assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);
     }
   });
 

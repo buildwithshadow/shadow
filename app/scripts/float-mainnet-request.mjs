@@ -55,6 +55,8 @@ async function call(url, body) {
     method: body === undefined ? "GET" : "POST",
     headers: body === undefined ? {} : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+    // A 307/308 must never forward a signed intent to another origin.
+    redirect: "error",
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const chunks = [];
@@ -228,15 +230,15 @@ async function fetchResult(values) {
         status = await call(`${url}/status/${digest}`);
       } catch (error) {
         failures.push(`status: ${failure(error)}`);
-        continue;
       }
-      if (status.status !== 200) {
+      if (status && status.status !== 200) {
         failures.push(`status: HTTP ${status.status}: ${providerError(status.json)}`);
-        continue;
       }
-      if (status.json.accepted !== true) {
+      if (status?.status === 200 && status.json.accepted !== true) {
         throw new Error(`the provider's /status holds no acceptance for digest ${digest}, so it cannot serve it; take the digest and its payment to the provider`);
       }
+      // Status is advisory: a failed poll cannot consume this /serve attempt.
+      // Asking for the same digest never submits another payment.
     }
     attempts += 1;
     let reply;

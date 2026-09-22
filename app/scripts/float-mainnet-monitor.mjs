@@ -35,14 +35,13 @@ function requireManifest(values) {
 }
 
 // The Float events the monitor needs, from the deployment block to the pinned
-// block. An --index file supplies them up to its checkpoint when that block is
-// still canonical; a chunked log scan covers the rest, so a line opened after
-// the checkpoint is never missed. A checkpoint that was reorganized away, or
-// that this RPC's head has not reached (an RPC lagging the one the index was
-// built from), is described in index.note and the whole range is scanned instead.
+// block. A canonical checkpoint does not prove an index contains every event:
+// missing operator/policy changes need not affect the accounting totals. Scan
+// the complete canonical range independently; --index supplies lag and reorg
+// diagnostics only, never the events that determine alerts or reconciliation.
 async function discover(connection, indexPath, pinned) {
-  let events = [];
-  let from = connection.deployBlock;
+  const events = [];
+  const from = connection.deployBlock;
   let index = null;
   if (indexPath !== undefined) {
     const file = readIndexFile(indexPath, connection);
@@ -72,7 +71,6 @@ async function discover(connection, indexPath, pinned) {
           ? null
           : `the index checkpoint ${checkpoint} (${file.checkpoint.blockHash}) was reorganized away (block ${checkpoint} is now ${block.hash}), so the lines were scanned from the deployment block instead; run the indexer with --resume to rebuild it`,
       };
-      if (canonical) [events, from] = [file.events, checkpoint + 1n];
     }
   }
   const scanned = from <= pinned.number ? { fromBlock: from, toBlock: pinned.number } : null;
@@ -85,11 +83,10 @@ async function discover(connection, indexPath, pinned) {
   const lineIds = [...new Set(events.filter((entry) => entry.event === "LineOpened").map((entry) => entry.args.lineId))];
   const providers = new Map(lineIds.map((lineId) => [lineId, new Set()]));
   const sponsorClaimed = new Map(lineIds.map((lineId) => [lineId, 0n]));
-  // An event of a line with no LineOpened (a damaged index) is skipped here:
+  // An event of a line with no LineOpened (an incomplete RPC scan) is skipped here:
   // check's DISCOVERY_INCOMPLETE and reconcile's line sums report the missing line.
   for (const { event, args } of events) {
     if (event === "ProviderPolicySet") providers.get(args.lineId)?.add(args.provider);
-    // An index holds amounts as decimal strings, a scan as bigints.
     if (event === "SponsorClaimed" && sponsorClaimed.has(args.lineId)) sponsorClaimed.set(args.lineId, sponsorClaimed.get(args.lineId) + BigInt(args.amount));
   }
   const operatorSets = events.filter((entry) => entry.event === "OperatorSet");
@@ -277,8 +274,8 @@ async function check(values) {
       providers,
     });
   }
-  // DEFAULT_ELIGIBLE needs every line: a DRAWN line missing from the index and
-  // the scan would raise nothing. The lines found hold totalCommittedCapital
+  // DEFAULT_ELIGIBLE needs every line: a DRAWN line missing from the RPC's
+  // log scan would raise nothing. The lines found hold totalCommittedCapital
   // exactly when none is missing (reconcile's committedCapitalEqualsLines); a
   // missed line that holds nothing is CLOSED or DEFAULTED and raises no alert.
   if (only === null) {
@@ -287,7 +284,7 @@ async function check(values) {
       alert(
         "critical",
         "DISCOVERY_INCOMPLETE",
-        `totalCommittedCapital is ${totalCommittedCapital}, but the ${lines.length} line(s) found hold ${held} in availableReserve + principalOutstanding + recoveryAvailable: a line is missing from the index and the scan, so its alerts (DEFAULT_ELIGIBLE included) cannot be raised, or the totals and the lines have diverged; run check without --index, and reconcile`,
+        `totalCommittedCapital is ${totalCommittedCapital}, but the ${lines.length} line(s) found hold ${held} in availableReserve + principalOutstanding + recoveryAvailable: a line is missing from the canonical log scan, so its alerts (DEFAULT_ELIGIBLE included) cannot be raised, or the totals and the lines have diverged; run check and reconcile with an independent RPC`,
       );
     }
   }
@@ -476,7 +473,7 @@ const TOOL = "node app/scripts/float-mainnet-monitor.mjs";
 const USAGE = [
   `${TOOL} check --manifest <path> [--index <index.json>] [--warn-before <seconds>] [--max-index-lag <seconds>] [--line-id <bytes32> ...]`,
   `${TOOL} reconcile --manifest <path> [--index <index.json>]`,
-  "Both read one pinned block and list every line from LineOpened events: from --index (float-mainnet-indexer.mjs) up to its checkpoint, then a chunked log scan to the pinned block. A checkpoint reorganized away or ahead of the RPC's head is noted, and the whole range is scanned.",
+  "Both read one pinned block and discover events with a complete canonical log scan from deployment. --index (float-mainnet-indexer.mjs) supplies checkpoint lag/reorg diagnostics only; cached events never determine alerts or reconciliation.",
   `check reports each line, the pauses, pending cap increases, operators and owner, and alerts: DEFAULT_ELIGIBLE and DISCOVERY_INCOMPLETE (critical: exit 1), MATURITY_SOON, LINE_EXPIRY_SOON, POLICY_EXPIRY_SOON, SPENDS_PAUSED, OPENINGS_PAUSED, CAP_INCREASE_PENDING, OWNERSHIP_PENDING, OPERATOR_CHANGED, PROTOCOL_CAP_EXCEEDED, SPONSOR_REMOVED, INDEX_LAG. --warn-before (default ${DEFAULT_WARN_BEFORE}) is the warning horizon in seconds for maturities, expiries and the end of purchases before a line's expiry; --max-index-lag (default ${DEFAULT_MAX_INDEX_LAG}) is the largest index lag in seconds before INDEX_LAG; --line-id limits the lines checked and skips the DISCOVERY_INCOMPLETE guard.`,
   "reconcile compares the Float's USDC balance with totalSponsorObligations (CAP-02, surplus reported), totalSponsorObligations with the lines' availableReserve + recoveryAvailable, totalCommittedCapital with their availableReserve + principalOutstanding + recoveryAvailable, and each line with its reserveCap for its state (a DEFAULTED line with its SponsorClaimed amounts); any mismatch exits 1.",
 ];
