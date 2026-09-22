@@ -1,10 +1,12 @@
+import { Buffer } from "node:buffer";
+
 type ApiRequest = {
   method: string;
   url: string;
   headers: Record<string, string>;
   query: Record<string, string | string[]>;
   body?: unknown;
-  [Symbol.asyncIterator](): AsyncGenerator<Uint8Array>;
+  [Symbol.asyncIterator](): AsyncGenerator<Buffer>;
 };
 
 type ApiResponse = {
@@ -35,7 +37,7 @@ export async function runApiHandler(request: Request, handler: ApiHandler): Prom
   }
 
   let body: unknown;
-  const chunks: Uint8Array[] = [];
+  const chunks: Buffer[] = [];
   if (request.body) {
     const reader = request.body.getReader();
     let size = 0;
@@ -48,7 +50,7 @@ export async function runApiHandler(request: Request, handler: ApiHandler): Prom
           await reader.cancel();
           return errorResponse(413, "request body too large");
         }
-        chunks.push(value);
+        chunks.push(Buffer.from(value));
       }
     } catch {
       return errorResponse(400, "request body could not be read");

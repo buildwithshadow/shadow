@@ -45,12 +45,31 @@ test("resource URLs cannot be changed by spoofed forwarding headers", async () =
 test("legacy raw-body iteration is preserved", async () => {
   const response = await runApiHandler(new Request("https://shadow.example/api/test", { method: "POST", body: "raw fixture" }), async (req, res) => {
     let raw = "";
-    for await (const chunk of req) raw += new TextDecoder().decode(chunk);
+    for await (const chunk of req) raw += chunk.toString("utf8");
     assert.equal(raw, "raw fixture");
     assert.equal(req.body, raw);
     res.status(200).json({ ok: true });
   });
   assert.equal(response.status, 200);
+});
+
+test("the real CCTP raw reader handles JSON with absent or alternate content types", async () => {
+  const body = JSON.stringify({ burnTx: "invalid" });
+  const baseline = await routeApi(new Request("https://shadow.example/api/cctp-funding", {
+    method: "POST", headers: { "content-type": "application/json" }, body,
+  }));
+  assert.equal(baseline.status, 400);
+  const expected = await baseline.json();
+  assert.doesNotMatch(expected.error, /invalid JSON body/);
+  for (const contentType of [null, "application/problem+json", "text/plain"]) {
+    const headers = contentType ? { "content-type": contentType } : undefined;
+    const request = new Request("https://shadow.example/api/cctp-funding", {
+      method: "POST", headers, body: new TextEncoder().encode(body),
+    });
+    const response = await routeApi(request);
+    assert.equal(response.status, baseline.status);
+    assert.deepEqual(await response.json(), expected);
+  }
 });
 
 test("invalid JSON is rejected before calling a handler", async () => {

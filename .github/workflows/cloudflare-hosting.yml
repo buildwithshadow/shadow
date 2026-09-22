@@ -4,18 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/cloudflare-hosting.yml"
-      - "app/api/**"
-      - "app/cloudflare/**"
-      - "app/functions/**"
-      - "app/public/_headers"
-      - "app/scripts/cloudflare-*"
-      - "app/wrangler.jsonc"
-      - "app/package.json"
-      - "app/pnpm-lock.yaml"
-      - "app/tsconfig.json"
-      - "app/historicalReads*"
-      - "app/floatV2*"
-      - "app/leptonM1*"
+      - "app/**"
+      - "package.json"
   workflow_dispatch:
 
 permissions:

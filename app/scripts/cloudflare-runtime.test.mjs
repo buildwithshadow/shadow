@@ -64,7 +64,10 @@ try {
   assert.match(unknown.headers.get("content-type"), /application\/json/);
   const invalid = await fetch(`${origin}/api/pilot`, { method: "POST", headers: { "content-type": "application/json" }, body: "{" });
   assert.equal(invalid.status, 400);
-  console.log("Cloudflare runtime passed: SPA/assets, WebAuthn headers, 13 route guards, JSON 404 and invalid-body rejection.");
+  const raw = await fetch(`${origin}/api/cctp-funding`, { method: "POST", body: new TextEncoder().encode(JSON.stringify({ burnTx: "invalid" })) });
+  assert.equal(raw.status, 400);
+  assert.doesNotMatch((await raw.json()).error, /invalid JSON body/);
+  console.log("Cloudflare runtime passed: SPA/assets, WebAuthn headers, 13 route guards, raw Buffer reader, JSON 404 and invalid-body rejection.");
 } finally {
   stop("SIGTERM");
   await Promise.race([exited, delay(5000)]);
