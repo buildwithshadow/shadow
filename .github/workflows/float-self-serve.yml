@@ -18,8 +18,11 @@ on:
       - "app/src/main.tsx"
       - "app/src/styles.css"
       - "app/scripts/lepton-readiness.test.mjs"
+      - "app/scripts/float-mainnet-*"
       - "app/tsconfig.json"
       - "contracts/foundry.toml"
+      - "contracts/script/DeployShadowFloatMainnet.s.sol"
+      - "contracts/deployments/float-mainnet-candidate/**"
       - "contracts/src/ShadowFloatMainnet.sol"
       - "contracts/src/interfaces/IERC20.sol"
       - "contracts/test/ShadowFloatMainnet*.t.sol"
@@ -29,6 +32,7 @@ on:
       - "docs/SHADOW_FLOAT_MAINNET_SPEC.md"
       - "docs/SHADOW_FLOAT_MAINNET_TEST_MATRIX.md"
       - "docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md"
+      - "docs/SHADOW_FLOAT_MAINNET_*.md"
       - "docs/PILOT_OPERATIONS.md"
       - "docs/PILOT_RECRUITMENT.md"
       - "package.json"
@@ -38,6 +42,33 @@ permissions:
   contents: read
 
 jobs:
+  mainnet-tooling-gate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Deployment tests verify the pinned source commit's blobs.
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - uses: foundry-rs/foundry-toolchain@v1
+        with:
+          version: v1.7.1
+      - name: Install app dependencies
+        working-directory: app
+        run: pnpm install --frozen-lockfile --ignore-workspace
+      - name: Build local contract artifacts
+        run: forge build --root contracts
+      - name: Test all candidate tooling against local Anvil
+        # The glob includes new provider, evidence, review and pilot suites as
+        # they land. Run serially because the suites use fixed local RPC ports.
+        run: npm run float:mainnet:all-tools:test
+
   self-serve-gate:
     runs-on: ubuntu-latest
     timeout-minutes: 8
