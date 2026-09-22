@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 // Settle recent Float Desk PAY cycle amounts through Circle Gateway batching.
 //
 // This is an additive settlement-layer proof over recorded Desk activity. It is
@@ -17,7 +18,7 @@ const env = {
 };
 
 const LIVE = clean(env.GATEWAY_DESK_LIVE) === "1";
-const baseUrl = (clean(env.SHADOW_APP_URL) || "https://shadow-arc.vercel.app").replace(/\/$/, "");
+const baseUrl = migrateShadowUrl(clean(env.SHADOW_APP_URL) || "https://www.shadowbuild.xyz").replace(/\/$/, "");
 const limit = boundedInt(clean(env.GATEWAY_DESK_LIMIT), 1, 8, 3);
 const payerKey = clean(env.GATEWAY_PAYER_PRIVATE_KEY) || clean(env.CAT_AGENT_PRIVATE_KEY) || clean(env.BUYER_PRIVATE_KEY);
 const rpcUrl = clean(env.ARC_RPC_URL) || clean(env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";

@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
 
@@ -6,7 +7,7 @@ const env = {
   ...process.env,
 };
 
-const baseUrl = (env.SHADOW_APP_URL || "https://shadow-arc.vercel.app").replace(/\/$/, "");
+const baseUrl = migrateShadowUrl(env.SHADOW_APP_URL || "https://www.shadowbuild.xyz").replace(/\/$/, "");
 const payerKey = env.GATEWAY_PAYER_PRIVATE_KEY || env.BUYER_PRIVATE_KEY;
 const limit = Number(env.GATEWAY_SETTLEMENT_LIMIT || "5");
 

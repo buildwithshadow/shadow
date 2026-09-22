@@ -1,7 +1,8 @@
 #!/usr/bin/env node
+import { migrateShadowUrl } from "../shadowUrls.js";
 
-const DEFAULT_BASE_URL = "https://shadow-arc.vercel.app";
-const baseUrl = (process.env.SHADOW_APP_URL || process.env.VITE_APP_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
+const DEFAULT_BASE_URL = "https://www.shadowbuild.xyz";
+const baseUrl = migrateShadowUrl(process.env.SHADOW_APP_URL || process.env.VITE_APP_URL || DEFAULT_BASE_URL).replace(/\/$/, "");
 
 const checks = [];
 

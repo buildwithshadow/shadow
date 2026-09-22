@@ -1,3 +1,4 @@
+import { migrateShadowUrl } from "../shadowUrls.js";
 import {
   createPublicClient,
   createWalletClient,
@@ -168,7 +169,7 @@ function paymentRequirements(req: VercelLikeRequest, gate: X402Config) {
     scheme: "exact",
     network: "arc-testnet",
     maxAmountRequired: gate.priceAtomic.toString(),
-    resource: process.env.X402_RESOURCE_URL || absoluteUrl(req),
+    resource: migrateShadowUrl(process.env.X402_RESOURCE_URL || absoluteUrl(req)),
     description: "Read the latest Shadow source-agent reasoning packet",
     mimeType: "application/json",
     payTo: gate.payTo,
@@ -406,7 +407,7 @@ function readQueryParam(req: VercelLikeRequest, name: string): string | null {
 }
 
 function absoluteUrl(req: VercelLikeRequest): string {
-  const host = readHeader(req, "x-forwarded-host") || readHeader(req, "host") || "shadow-arc.vercel.app";
+  const host = readHeader(req, "x-forwarded-host") || readHeader(req, "host") || "www.shadowbuild.xyz";
   const proto = readHeader(req, "x-forwarded-proto") || "https";
   return req.url?.startsWith("http") ? req.url : `${proto}://${host}${req.url || "/api/reasoning-x402"}`;
 }

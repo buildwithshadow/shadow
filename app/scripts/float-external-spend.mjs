@@ -1,3 +1,4 @@
+import { resolveShadowProvider } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -28,8 +29,10 @@ const USDC = clean(env.ARC_USDC || env.VITE_ARC_USDC || "0x360000000000000000000
 const FACILITATOR_KEY = normalizeKey(
   clean(env.FLOAT_FACILITATOR_PRIVATE_KEY || env.CAT_AGENT_PRIVATE_KEY || env.PRIVATE_KEY),
 );
-const PROVIDER_URL = clean(env.FLOAT_X402_PROVIDER_URL) || "https://shadow-arc.vercel.app/api/reasoning-x402";
-const endpointLabel = clean(env.FLOAT_X402_ENDPOINT_LABEL) || PROVIDER_URL;
+const { url: PROVIDER_URL, endpointLabel } = resolveShadowProvider(
+  clean(env.FLOAT_X402_PROVIDER_URL),
+  clean(env.FLOAT_X402_ENDPOINT_LABEL),
+);
 const endpointHash = keccak256(stringToBytes(endpointLabel));
 const maxRuns = Number(clean(env.FLOAT_LOOP_MAX_RUNS) || "120");
 const EXTERNAL_AGENTS_FILE = clean(env.FLOAT_EXTERNAL_AGENTS_FILE) || "/home/qdee/shadow/app/scripts/external-agents.json";
