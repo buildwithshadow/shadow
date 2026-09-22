@@ -6,16 +6,31 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { createPublicClient, createTestClient, createWalletClient, defineChain, encodeAbiParameters, getAddress, http, keccak256, toBytes, toHex, zeroHash } from "viem";
+import {
+  createPublicClient,
+  createTestClient,
+  createWalletClient,
+  defineChain,
+  encodeAbiParameters,
+  encodeFunctionData,
+  getAddress,
+  http,
+  keccak256,
+  parseEventLogs,
+  toBytes,
+  toHex,
+  zeroHash,
+} from "viem";
 import { sign } from "viem/accounts";
 
-import { BLOCK_REASONS } from "./float-mainnet-config.mjs";
+import { BLOCK_REASONS, floatAbi } from "./float-mainnet-config.mjs";
 import { CHAIN_ID, account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
 import { DECLARED_LABEL } from "./float-mainnet-evidence.mjs";
 import { INDEX_KIND, validateIndex } from "./float-mainnet-indexer.mjs";
+import { SECP256K1_HALF_ORDER, validateIntentFile } from "./float-mainnet-intent.mjs";
 import { PINNED_SOURCE_COMMIT, stableStringify } from "./float-mainnet-preflight.mjs";
 import { ACCEPTANCE_KIND, DELIVERY_KIND, signReceipt, validateReceiptFile } from "./float-mainnet-provider.mjs";
-import { manifestProvenance, matchRepayments, refusalTransferProblems } from "./float-mainnet-verify.mjs";
+import { calldataMismatches, manifestProvenance, matchRepayments, refusalTransferProblems } from "./float-mainnet-verify.mjs";
 
 // The independent verifier against a real local lifecycle driven through the
 // participant CLIs. The evidence bundles are assembled here from the CLIs'
@@ -176,6 +191,57 @@ test("a refusal's transaction may move USDC out of the Float only as another Flo
   assert.deepEqual(problems([blocked, paid(2, refused, 7n)], [transfer(1, provider, 7n)]), [`the transaction also emits ProviderPaid for the refused digest ${refused}`]);
 });
 
+test("an intent file matches its transaction's executeSpend calldata only with every message field and the signature exactly the call's", () => {
+  const hash = (label) => keccak256(toBytes(label));
+  const struct = {
+    agent: account(3).address,
+    sponsor: account(2).address,
+    lineId: hash("line"),
+    lineEpoch: 1n,
+    termsHash: hash("terms"),
+    provider: account(5).address,
+    endpointHash: hash("endpoint"),
+    principal: 250_000n,
+    maximumTotalDebt: 250_000n,
+    dueAt: 1_000n,
+    nonce: 7n,
+    signatureExpiry: 900n,
+    executor: account(4).address,
+  };
+  const signature = `${hash("r")}${hash("s").slice(2)}1b`;
+  const call = { struct, signature };
+  assert.deepEqual(calldataMismatches({ struct: { ...struct }, signature }, call), []);
+  // An address's case does not matter; its value does.
+  assert.deepEqual(calldataMismatches({ struct: { ...struct, agent: struct.agent.toLowerCase() }, signature }, call), []);
+  const other = {
+    agent: account(6).address,
+    sponsor: account(6).address,
+    lineId: hash("other line"),
+    lineEpoch: 2n,
+    termsHash: hash("other terms"),
+    provider: account(6).address,
+    endpointHash: hash("other endpoint"),
+    principal: 250_001n,
+    maximumTotalDebt: 250_001n,
+    dueAt: 1_001n,
+    nonce: 8n,
+    signatureExpiry: 901n,
+    executor: account(6).address,
+  };
+  // Every field of the SpendIntent is compared.
+  assert.deepEqual(Object.keys(other).sort(), Object.keys(struct).sort());
+  for (const [name, value] of Object.entries(other)) {
+    assert.deepEqual(
+      calldataMismatches({ struct: { ...struct, [name]: value }, signature }, call),
+      [`message.${name} is ${value} in the intent file, ${struct[name]} in the calldata`],
+      name,
+    );
+  }
+  const resigned = `${hash("r")}${hash("s").slice(2)}1c`;
+  assert.deepEqual(calldataMismatches({ struct, signature: resigned }, call), [`the intent file's signature ${resigned} is not the calldata's ${signature}`]);
+  assert.deepEqual(calldataMismatches({ struct, signature: null }, call), ["the intent file carries no signature; the calldata carries the one the Float accepted"]);
+});
+
 // The indexer feeds the exporter, not the verifier; its block numbers must be canonical decimal strings.
 test("an index's block numbers must be in their stored form: a lone leading-zero block number is refused", () => {
   const deployment = { chainId: CHAIN_ID, address: account(20).address };
@@ -235,6 +301,8 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
   let deployment;
   let manifest;
   let bundleA;
+  // A USDC mint: a transaction sent to the token, not the Float.
+  let mint;
 
   async function deploy(path, args) {
     const { abi, bytecode } = artifact(path);
@@ -448,7 +516,9 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     const { abi } = artifact("MockAsset.sol/MockAsset.json");
     for (const [holder, amount] of [[sponsor, 10_000_000n], [agent, 3_000_000n]]) {
       const hash = await walletOf(owner).writeContract({ address: usdc, abi, functionName: "mint", args: [holder.address, amount] });
-      assert.equal((await client.waitForTransactionReceipt({ hash })).status, "success");
+      const minted = await client.waitForTransactionReceipt({ hash });
+      assert.equal(minted.status, "success");
+      mint = { txHash: hash, blockNumber: minted.blockNumber.toString() };
     }
     await ok("owner", ["allow-sponsor", "--sponsor", sponsor.address, "--execute"], OWNER);
   });
@@ -513,7 +583,9 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     const { out, ...printed } = report;
     assert.equal(out, path("a-report.json"));
     assert.deepEqual(readJson(path("a-report.json")), printed);
-    assert.deepEqual(Object.keys(report.scope).sort(), ["declaredOnly", "notChecked", "verifiedAgainstBundleSignatures", "verifiedOnChain"]);
+    assert.deepEqual(Object.keys(report.scope).sort(), ["declaredOnly", "intentFromCalldata", "notChecked", "verifiedAgainstBundleSignatures", "verifiedOnChain"]);
+    // Every intent file is in the bundle, so no intent check read the calldata's intent.
+    assert.deepEqual(report.scope.intentFromCalldata, []);
     // ok, but not qualifying: cycle 3 has no provider receipts, and the
     // manifest, written to a temporary directory, is not a committed release record.
     assert.deepEqual([report.ok, report.qualifying], [true, false]);
@@ -541,11 +613,13 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       "exit.state",
       "exporterSummary",
       "refusal[0].event",
+      "refusal[0].calldata",
       "refusal[0].intent.digest",
+      "refusal[0].intent.matchesCalldata",
       "refusal[0].noUsdcTransfer",
       "refusal[0].receiptStatus",
       ...[0, 1, 2].flatMap((i) =>
-        ["spend.receipt", "spend.providerPaid", "spend.usdcTransfer", "spend.executor", "intent.digest", "intent.fields", "intent.signature", "state.before", "state.termsHash", "repayments", "cleared", "receiptStatus"].map(
+        ["spend.receipt", "spend.providerPaid", "spend.usdcTransfer", "spend.calldata", "spend.executor", "intent.digest", "intent.fields", "intent.signature", "intent.matchesCalldata", "state.before", "state.termsHash", "repayments", "cleared", "receiptStatus"].map(
           (name) => `cycle[${i}].${name}`,
         ),
       ),
@@ -558,6 +632,10 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     }
     assert.match(check("cycle[0].spend.executor").detail, new RegExp(`named executor ${executor.address}`));
     assert.match(check("cycle[0].intent.signature").detail, /\(eoa\): 65-byte low-s ECDSA signature recovers to/);
+    // Each spend and the refusal carry their intent in their executeSpend calldata, and each intent file is exactly it.
+    assert.match(check("cycle[0].spend.calldata").detail, new RegExp(`^the transaction calls executeSpend on the Float with an intent that recomputes to the cycle's digest for chain ${CHAIN_ID} and Float ${float}$`));
+    assert.match(check("refusal[0].calldata").detail, /^the transaction calls executeSpend on the Float with an intent that recomputes to the refused digest/);
+    assert.equal(check("cycle[0].intent.matchesCalldata").detail, "the intent file's message and signature are exactly those in the transaction's executeSpend calldata");
     assert.match(check("cycle[0].repayments").detail, /^2 repayment\(s\)/);
     assert.match(check("deployment.artifact").detail, /immutable ranges masked, the runtime code at 0x[0-9a-fA-F]{40} equals the local artifact compiled from the pinned reviewed lineage/);
     assert.match(check("deployment.config").detail, new RegExp(`usdc\\(\\) is its configured USDC ${usdc}$`));
@@ -618,6 +696,31 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     const eoaStyle = structuredClone(bundle);
     eoaStyle.cycles[0].intent.signature = await sign({ hash: built.digest, privateKey: keyOf(7), to: "hex" });
     await failsAt("smart-eoa-style.json", eoaStyle, "cycle[0].intent.signature", /isValidSignature on 0x[0-9a-fA-F]{40} at block \d+ failed/);
+
+    // The high-s twin of the account's signature, (r, n - s, the other v), is
+    // another signature the account accepts for the digest, but not the one the
+    // spend carried: only the comparison with the calldata catches it.
+    const { r, s, v } = await sign({ hash: built.digest, privateKey: keyOf(7) });
+    const twin = encodeAbiParameters(
+      [{ type: "bytes32" }, { type: "bytes32" }, { type: "uint8" }],
+      [r, toHex(2n * SECP256K1_HALF_ORDER + 1n - BigInt(s), { size: 32 }), Number(v) === 27 ? 28 : 27],
+    );
+    const resigned = structuredClone(bundle);
+    resigned.cycles[0].intent.signature = twin;
+    const twinned = await failsAt("smart-twin.json", resigned, ["cycle[0].intent.matchesCalldata"], new RegExp(`^the intent file's signature ${twin} is not the calldata's ${signature}$`));
+    assert.match(twinned.check("cycle[0].intent.signature").detail, /\(erc1271\): isValidSignature on 0x[0-9a-fA-F]{40} returned the ERC-1271 magic value/);
+
+    // Without the intent file, the account's signature in the spend's calldata verifies through isValidSignature.
+    const recovered = structuredClone(bundle);
+    recovered.cycles[0].intent = null;
+    recovered.exporterSummary.missingIntentFiles = "1";
+    const fromCalldata = await verifiesOk("smart-no-intent.json", recovered);
+    assert.deepEqual([fromCalldata.report.qualifying, fromCalldata.ids("MANUAL")], [false, ["deployment.manifestProvenance"]]);
+    assert.match(
+      fromCalldata.check("cycle[0].intent.signature").detail,
+      /\(erc1271\): isValidSignature on 0x[0-9a-fA-F]{40} returned the ERC-1271 magic value at block \d+ \(intent from the transaction calldata: the bundle has no intent file\)$/,
+    );
+    assert.ok(fromCalldata.report.scope.verifiedOnChain.includes("cycle[0].intent.signature"));
 
     // The line is repaid after observedAt: the pinned bundle still verifies,
     // and the report names what it leaves out, without changing ok.
@@ -793,8 +896,12 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       new RegExp(`recovers to ${stranger.address}, not ${agent.address}`),
     );
     assert.equal(wrongSignature.check("cycle[0].intent.digest").status, "PASS");
+    assert.deepEqual(
+      [wrongSignature.check("cycle[0].intent.matchesCalldata").status, wrongSignature.check("cycle[0].intent.matchesCalldata").detail],
+      ["FAIL", `the intent file's signature ${strangerSignature.toLowerCase()} is not the calldata's ${bundleA.cycles[0].intent.signature.toLowerCase()}`],
+    );
 
-    await failsAt(
+    const principal = await failsAt(
       "t-principal.json",
       tamper((b) => {
         b.cycles[1].intent.typedData.message.principal = (PRINCIPAL + 1n).toString();
@@ -803,6 +910,12 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       "cycle[1].intent.digest",
       /the intent's message recomputes to digest 0x[0-9a-f]{64} .*not the cycle's/,
     );
+    assert.deepEqual(
+      [principal.check("cycle[1].intent.matchesCalldata").status, principal.check("cycle[1].intent.matchesCalldata").detail],
+      ["FAIL", `message.principal is ${PRINCIPAL + 1n} in the intent file, ${PRINCIPAL} in the calldata`],
+    );
+    // The spend's own calldata is untouched, and still recomputes to the cycle's digest.
+    assert.equal(principal.check("cycle[1].spend.calldata").status, "PASS");
     await failsAt(
       "t-principal-with-digest.json",
       tamper((b) => (b.cycles[1].intent.typedData.message.principal = (PRINCIPAL + 1n).toString())),
@@ -819,6 +932,7 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       /currentTermsHash\(line, 0x[0-9a-fA-F]{40}\) at block \d+ is 0x[0-9a-f]{64}, not the intent's termsHash/,
     );
     assert.equal(terms.check("cycle[0].intent.digest").status, "FAIL");
+    assert.match(terms.check("cycle[0].intent.matchesCalldata").detail, /^message\.termsHash is 0x[0-9a-f]{64} in the intent file, 0x[0-9a-f]{64} in the calldata$/);
 
     const omitted = await failsAt(
       "t-omitted.json",
@@ -928,10 +1042,11 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
         b.cycles[0].intent.typedData.message.executor = stranger.address;
         bare(b.cycles[0].intent);
       }),
-      ["cycle[0].intent.digest", "cycle[0].spend.executor", "cycle[0].intent.signature"],
+      ["cycle[0].intent.digest", "cycle[0].spend.executor", "cycle[0].intent.signature", "cycle[0].intent.matchesCalldata"],
       /the intent's message recomputes to digest 0x[0-9a-f]{64} .*not the cycle's/,
     );
     assert.match(executorSwap.check("cycle[0].spend.executor").detail, new RegExp(`^the intent names executor ${stranger.address}, but ${executor.address} sent the spend$`, "i"));
+    assert.equal(executorSwap.check("cycle[0].intent.matchesCalldata").detail, `message.executor is ${stranger.address} in the intent file, ${executor.address} in the calldata`);
     const otherReason = BLOCK_REASONS.find((name) => name !== "NONE" && name !== bundleA.refusals[0].reason);
     await failsAt(
       "t-refusal-reason.json",
@@ -970,23 +1085,23 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       ["cycle[0].provider.acceptance", "cycle[0].provider.delivery"],
       new RegExp(`^its endpointHash ${otherEndpoint} is not the intent's endpoint \\(${keccak256(toBytes(ENDPOINT))}\\)$`),
     );
-    // Without the intent file, the endpoint is the one the provider's policy approved before the spend.
+    // Without the intent file, the endpoint is the one in the spend's executeSpend calldata.
     const withoutIntent = (b) => {
       b.cycles[1].intent = null;
       b.exporterSummary.missingIntentFiles = "1";
     };
-    const byPolicy = await verifiesOk("t-no-intent-endpoint-ok.json", tamper(withoutIntent));
-    assert.equal(byPolicy.check("cycle[1].provider.acceptance").status, "PASS");
-    assert.match(byPolicy.check("cycle[1].provider.acceptance").detail, /, at the endpoint provider 0x[0-9a-fA-F]{40}'s policy approved at block \d+; /);
-    const policyEndpointAcceptance = await resigned(second.provider.acceptance, ACCEPTANCE_KIND, { endpointHash: otherEndpoint });
+    const byCalldata = await verifiesOk("t-no-intent-endpoint-ok.json", tamper(withoutIntent));
+    assert.equal(byCalldata.check("cycle[1].provider.acceptance").status, "PASS");
+    assert.match(byCalldata.check("cycle[1].provider.acceptance").detail, /, at the intent's endpoint in the transaction calldata; /);
+    const calldataEndpointAcceptance = await resigned(second.provider.acceptance, ACCEPTANCE_KIND, { endpointHash: otherEndpoint });
     await failsAt(
       "t-no-intent-endpoint.json",
       tamper((b) => {
         withoutIntent(b);
-        b.cycles[1].provider.acceptance = policyEndpointAcceptance;
+        b.cycles[1].provider.acceptance = calldataEndpointAcceptance;
       }),
       ["cycle[1].provider.acceptance", "cycle[1].provider.delivery"],
-      new RegExp(`^its endpointHash ${otherEndpoint} is not the endpoint provider ${provider.address}'s policy approved at block \\d+ \\(${keccak256(toBytes(ENDPOINT))}\\)$`),
+      new RegExp(`^its endpointHash ${otherEndpoint} is not the intent's endpoint in the transaction calldata \\(${keccak256(toBytes(ENDPOINT))}\\)$`),
     );
     const spentAt = (await client.getBlock({ blockNumber: BigInt(first.spend.blockNumber) })).timestamp;
     const lateAcceptance = await resigned(first.provider.acceptance, ACCEPTANCE_KIND, { acceptedAt: spentAt + 1n });
@@ -1004,17 +1119,49 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       new RegExp(`^deliveredAt ${spentAt - 1n} is before the payment block's timestamp ${spentAt}$`),
     );
 
-    // A stripped intent signature counts as a missing intent file: the summary fails, not only a MANUAL check.
+    // A stripped intent signature counts as a missing intent file: the summary fails, not only a MANUAL check,
+    // and the file no longer holds the signature the spend's calldata carries.
     const unsigned = await failsAt(
       "t-unsigned-intent.json",
       tamper((b) => {
         delete b.cycles[0].intent.signature;
         delete b.cycles[0].intent.signerKind;
       }),
-      ["exporterSummary"],
-      /^missingIntentFiles is 0; this verifier derives 1$/,
+      ["cycle[0].intent.matchesCalldata", "exporterSummary"],
+      /^the intent file carries no signature; the calldata carries the one the Float accepted$/,
     );
+    assert.equal(unsigned.check("exporterSummary").detail, "missingIntentFiles is 0; this verifier derives 1");
     assert.deepEqual([unsigned.check("cycle[0].intent.signature").status, unsigned.check("cycle[0].intent.signature").detail], ["MANUAL", "the intent file carries no signature"]);
+
+    // A cycle pointing at another cycle's executeSpend transaction: that call's intent recomputes to the other
+    // cycle's digest, with or without the intent file.
+    const pointAtSecond = (b) => (b.cycles[0].spend = { ...b.cycles[1].spend });
+    const [digest0, digest1] = [bundleA.cycles[0].digest, bundleA.cycles[1].digest];
+    const redirected = await failsAt(
+      "t-other-spend.json",
+      tamper(pointAtSecond),
+      "cycle[0].spend.calldata",
+      new RegExp(`^the intent in its executeSpend calldata recomputes to digest ${digest1} for chain ${CHAIN_ID} and Float ${float}, not the cycle's ${digest0}$`),
+    );
+    assert.match(redirected.check("cycle[0].intent.matchesCalldata").detail, /message\.nonce is \d+ in the intent file, \d+ in the calldata/);
+    // The file itself still recomputes to the cycle's digest; the events and the calldata tell the transaction is another's.
+    assert.deepEqual(
+      ["cycle[0].intent.digest", "cycle[0].spend.providerPaid", "completeness.providerPaid"].map((id) => redirected.check(id).status),
+      ["PASS", "FAIL", "FAIL"],
+    );
+    const redirectedWithoutIntent = await failsAt(
+      "t-other-spend-no-intent.json",
+      tamper((b) => {
+        pointAtSecond(b);
+        b.cycles[0].intent = null;
+        b.exporterSummary.missingIntentFiles = "1";
+      }),
+      "cycle[0].intent.digest",
+      new RegExp(
+        `^the intent's message recomputes to digest ${digest1} for chain ${CHAIN_ID} and Float ${float}, not the cycle's ${digest0} \\(intent from the transaction calldata: the bundle has no intent file\\)$`,
+      ),
+    );
+    assert.equal(redirectedWithoutIntent.check("cycle[0].spend.calldata").status, "FAIL");
 
     // The shape is strict: no unknown key, and only the exporter's declaration label.
     for (const [name, edit, pattern] of [
@@ -1040,6 +1187,64 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     );
 
     await failsAt("t-kind.json", tamper((b) => (b.kind = "ShadowFloat.EvidenceBundle")), "bundle.shape", /kind is "ShadowFloat.EvidenceBundle"/);
+  });
+
+  test("a spend or refusal pointed at another Float call fails its calldata check; one pointed at a transaction to another contract leaves it MANUAL", async () => {
+    const tamper = (edit) => {
+      const copy = structuredClone(bundleA);
+      edit(copy);
+      return copy;
+    };
+    // cycle 0's first repayment: a repay call sent to the Float.
+    const repaid = { txHash: bundleA.cycles[0].repayments[0].txHash, blockNumber: bundleA.cycles[0].repayments[0].blockNumber };
+    const callsRepay = new RegExp(`^transaction ${repaid.txHash.toLowerCase()} calls repay on the Float, not executeSpend$`);
+
+    // The spend's own checks fail as well: the repay has no ProviderPaid, its sender is the agent, and the line owed money before it.
+    const spend = await failsAt("x-spend-repay.json", tamper((b) => (b.cycles[0].spend = { ...b.cycles[0].spend, ...repaid })), "cycle[0].spend.calldata", callsRepay);
+    assert.deepEqual(spend.ids("FAIL"), [
+      "completeness.providerPaid",
+      ...["spend.receipt", "spend.providerPaid", "spend.usdcTransfer", "spend.calldata", "intent.fields", "spend.executor", "intent.matchesCalldata", "state.before", "provider.acceptance", "provider.delivery"].map(
+        (name) => `cycle[0].${name}`,
+      ),
+    ]);
+    assert.match(spend.check("cycle[0].intent.matchesCalldata").detail, callsRepay);
+
+    const refusal = await failsAt("x-refusal-repay.json", tamper((b) => Object.assign(b.refusals[0], repaid)), "refusal[0].calldata", callsRepay);
+    assert.deepEqual(refusal.ids("FAIL"), ["completeness.spendBlocked", "refusal[0].event", "refusal[0].calldata", "refusal[0].intent.digest", "refusal[0].intent.matchesCalldata"]);
+    assert.match(refusal.check("refusal[0].intent.matchesCalldata").detail, callsRepay);
+
+    // A USDC mint is sent to the token, not the Float: its calldata is not
+    // decoded, so the calldata checks are MANUAL, and the report cannot qualify.
+    // The refusal's other checks still fail: the mint emits no SpendBlocked.
+    const toUsdc = `transaction ${mint.txHash} is sent to ${usdc}, not the Float ${float}`;
+    const baseManual = ["deployment.manifestProvenance", "cycle[2].provider.acceptance", "cycle[2].provider.delivery"];
+    const minted = await failsAt(
+      "x-refusal-mint.json",
+      tamper((b) => Object.assign(b.refusals[0], mint)),
+      ["completeness.spendBlocked", "refusal[0].event", "refusal[0].intent.digest"],
+      new RegExp(`in the bundle but not on chain: ${bundleA.refusals[0].digest}@${mint.txHash}$`),
+    );
+    assert.deepEqual(minted.ids("MANUAL"), [...baseManual, "refusal[0].calldata", "refusal[0].intent.matchesCalldata"]);
+    assert.match(minted.check("refusal[0].calldata").detail, new RegExp(`^${toUsdc}: only a direct executeSpend call's calldata is decoded$`, "i"));
+    assert.match(minted.check("refusal[0].intent.matchesCalldata").detail, new RegExp(`^${toUsdc}, so the intent file is not compared with the call it relays$`, "i"));
+    assert.equal(minted.check("refusal[0].intent.signature").status, "PASS");
+    assert.ok(minted.report.scope.notChecked.some((entry) => entry.startsWith("refusal[0].calldata: ")));
+
+    // Without the intent file, nothing can recover the intent: its checks are MANUAL too.
+    const unrecoverable = await failsAt(
+      "x-refusal-mint-no-intent.json",
+      tamper((b) => {
+        Object.assign(b.refusals[0], mint, { intent: null });
+        b.exporterSummary.missingIntentFiles = "1";
+      }),
+      ["completeness.spendBlocked", "refusal[0].event"],
+      new RegExp(`in the bundle but not on chain: ${bundleA.refusals[0].digest}@${mint.txHash}$`),
+    );
+    assert.deepEqual(unrecoverable.ids("MANUAL"), [...baseManual, "refusal[0].calldata", "refusal[0].intent.digest", "refusal[0].intent.signature"]);
+    for (const id of ["refusal[0].intent.digest", "refusal[0].intent.signature"]) {
+      assert.match(unrecoverable.check(id).detail, new RegExp(`^intent file not supplied, and ${toUsdc}, so it cannot be recovered from the transaction's calldata$`, "i"), id);
+    }
+    assert.ok(!unrecoverable.report.checks.some((entry) => entry.id === "refusal[0].intent.matchesCalldata"));
   });
 
   test("an RPC that fails mid-run fails the checks that needed it, and passes none of them", async () => {
@@ -1155,7 +1360,7 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     assert.equal(changed, true);
   });
 
-  test("declared fields are never scored, and a cycle without its intent file is MANUAL, not PASS", async () => {
+  test("declared fields are never scored, and a cycle or refusal without its intent file is checked on the intent in its transaction's calldata", async () => {
     const declared = structuredClone(bundleA);
     declared.declared = { ...declared.declared, customerPurpose: "a recurring paid research job", independentControl: "claimed independent" };
     const { check } = await verifiesOk("d-declared.json", declared);
@@ -1164,19 +1369,162 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
       ["DECLARED", "a recurring paid research job", "claimed independent"],
     );
 
+    // The spend and the refusal each carry their intent and the agent's signature
+    // in their executeSpend calldata, so without the files their intent checks
+    // read it there and pass, verified on chain. The summary still counts both
+    // files as missing from the bundle. MANUAL is left as for bundleA: the
+    // rehearsal manifest and cycle 2's missing provider receipts.
     const withoutIntent = structuredClone(bundleA);
     withoutIntent.cycles[2].intent = null;
-    withoutIntent.exporterSummary.missingIntentFiles = "1";
-    const { report, check: checkOf } = await verifiesOk("d-no-intent.json", withoutIntent);
+    withoutIntent.refusals[0].intent = null;
+    withoutIntent.exporterSummary.missingIntentFiles = "2";
+    const { report, check: checkOf, ids } = await verifiesOk("d-no-intent.json", withoutIntent);
     assert.deepEqual([report.ok, report.qualifying], [true, false]);
-    for (const name of ["intent.signature", "intent.digest", "intent.fields", "spend.executor", "state.termsHash"]) {
-      assert.deepEqual([checkOf(`cycle[2].${name}`).status, checkOf(`cycle[2].${name}`).detail], ["MANUAL", "intent file not supplied"]);
+    assert.deepEqual(ids("MANUAL"), ["deployment.manifestProvenance", "cycle[2].provider.acceptance", "cycle[2].provider.delivery"]);
+    const recovered = [
+      ...["intent.digest", "intent.fields", "spend.executor", "intent.signature", "state.termsHash"].map((name) => `cycle[2].${name}`),
+      ...["intent.digest", "intent.signature"].map((name) => `refusal[0].${name}`),
+    ];
+    for (const id of recovered) {
+      assert.equal(checkOf(id).status, "PASS", `${id}: ${checkOf(id).detail}`);
+      assert.match(checkOf(id).detail, /\(intent from the transaction calldata: the bundle has no intent file\)$/, id);
+      assert.ok(report.scope.verifiedOnChain.includes(id), id);
+      assert.ok(!report.scope.verifiedAgainstBundleSignatures.includes(id), id);
+      assert.ok(!report.scope.notChecked.some((entry) => entry.startsWith(`${id}:`)), id);
     }
-    assert.ok(report.scope.notChecked.includes("cycle[2].intent.signature: intent file not supplied"));
-    assert.ok(!report.scope.verifiedAgainstBundleSignatures.includes("cycle[2].intent.signature"));
+    assert.deepEqual(report.scope.intentFromCalldata, recovered);
+    assert.match(checkOf("cycle[2].intent.signature").detail, new RegExp(`^agent ${agent.address} \\(eoa\\): 65-byte low-s ECDSA signature recovers to ${agent.address}`));
+    // With no file there is nothing to compare with the calldata, whose own digest check still runs.
+    assert.ok(!report.checks.some((entry) => ["cycle[2].intent.matchesCalldata", "refusal[0].intent.matchesCalldata"].includes(entry.id)));
+    assert.deepEqual([checkOf("cycle[2].spend.calldata").status, checkOf("refusal[0].calldata").status], ["PASS", "PASS"]);
+    assert.equal(checkOf("exporterSummary").status, "PASS");
     // The event-derived checks still run for that cycle.
     for (const name of ["spend.receipt", "spend.providerPaid", "spend.usdcTransfer", "state.before", "repayments", "receiptStatus"]) {
       assert.equal(checkOf(`cycle[2].${name}`).status, "PASS", name);
     }
+  });
+
+  // Last: it opens a new line and leaves it drawn.
+  test("a genuine refusal relayed through a contract verifies ok but never qualifies, its calldata MANUAL; a spend relayed through it fails", async () => {
+    // A minimal forwarder, assembled here: its runtime copies its calldata to
+    // memory, CALLs the Float with it (no value, all gas), and returns the
+    // Float's return data, or reverts with its revert data.
+    const head = [
+      ...[0x36, 0x60, 0x00, 0x60, 0x00, 0x37], // CALLDATACOPY(0, 0, CALLDATASIZE)
+      ...[0x60, 0x00, 0x60, 0x00, 0x36, 0x60, 0x00, 0x60, 0x00, 0x73, ...toBytes(float), 0x5a, 0xf1], // CALL(GAS, float, 0, 0, CALLDATASIZE, 0, 0)
+      ...[0x3d, 0x60, 0x00, 0x60, 0x00, 0x3e], // RETURNDATACOPY(0, 0, RETURNDATASIZE)
+    ];
+    const reverted = [0x3d, 0x60, 0x00, 0xfd]; // REVERT(0, RETURNDATASIZE)
+    const succeeded = [0x5b, 0x3d, 0x60, 0x00, 0xf3]; // JUMPDEST; RETURN(0, RETURNDATASIZE)
+    // PUSH1 <succeeded's JUMPDEST> JUMPI, taken when the CALL succeeded.
+    const runtime = [...head, 0x60, head.length + 3 + reverted.length, 0x57, ...reverted, ...succeeded];
+    // PUSH1 <runtime length> DUP1 PUSH1 <runtime offset> PUSH1 0 CODECOPY PUSH1 0 RETURN, then the runtime.
+    const deployer = [0x60, runtime.length, 0x80, 0x60, 0, 0x60, 0x00, 0x39, 0x60, 0x00, 0xf3];
+    deployer[4] = deployer.length;
+    const created = await client.waitForTransactionReceipt({ hash: await walletOf(owner).sendTransaction({ data: toHex(new Uint8Array([...deployer, ...runtime])) }) });
+    assert.equal(created.status, "success");
+    const forwarder = getAddress(created.contractAddress);
+    assert.equal(await client.getCode({ address: forwarder }), toHex(new Uint8Array(runtime)));
+
+    // The executor sends executeSpend(intent, signature) to the forwarder, which
+    // relays it to the Float. The intents name no executor, so any sender may execute them.
+    const relay = async (signedFile, eventName) => {
+      const { struct, signature } = validateIntentFile(readJson(path(signedFile)), { chainId: CHAIN_ID, address: float });
+      const data = encodeFunctionData({ abi: floatAbi, functionName: "executeSpend", args: [struct, signature] });
+      const receipt = await client.waitForTransactionReceipt({ hash: await walletOf(executor).sendTransaction({ to: forwarder, data }) });
+      assert.deepEqual([receipt.status, getAddress(receipt.to), getAddress(receipt.from)], ["success", forwarder, executor.address]);
+      const [logged] = parseEventLogs({ abi: floatAbi, eventName, logs: receipt.logs });
+      assert.equal(logged.address.toLowerCase(), float.toLowerCase());
+      return { txHash: receipt.transactionHash, blockNumber: receipt.blockNumber.toString(), args: logged.args };
+    };
+
+    // bundleA's line is closed, so the sponsor opens the agent's next line.
+    const line = await openLine(agent.address);
+    assert.equal(line.epoch, "2");
+    const { providers } = await ok("line", ["status", "--line-id", line.lineId, "--provider", provider.address]);
+    const overCap = BigInt(providers[0].remaining.nextSpendMax) + 1n;
+    await ok("intent", buildArgs(agent.address, overCap, path("relayed-over.json"), ["--allow-block"]));
+    await ok("intent", ["sign", "--intent", path("relayed-over.json"), "--out", path("relayed-over-signed.json"), "--allow-block"], AGENT);
+    const blocked = await relay("relayed-over-signed.json", "SpendBlocked");
+    const refusal = {
+      digest: blocked.args.digest,
+      txHash: blocked.txHash,
+      blockNumber: blocked.blockNumber,
+      reason: BLOCK_REASONS[blocked.args.reason],
+      intent: readJson(path("relayed-over-signed.json")),
+    };
+    assert.equal(refusal.intent.digest, refusal.digest);
+    const none = { kind: "none", txHash: null, blockNumber: null, amount: null };
+    const refused = bundleOf({
+      line,
+      cycles: [],
+      refusals: [refusal],
+      exit: none,
+      observedAt: await observed(),
+      summary: { cycles: 0, cyclesCleared: 0, principalPaid: 0, principalRepaid: 0, refusals: 1, missingIntentFiles: 0, missingDeliveries: 0 },
+    });
+
+    // Every check the verifier can make passes; the relayed call is left to the reviewer.
+    const toForwarder = `transaction ${refusal.txHash} is sent to ${forwarder}, not the Float ${float}`;
+    const relayed = await verifiesOk("relayed-refusal.json", refused);
+    assert.deepEqual([relayed.report.ok, relayed.report.qualifying, relayed.report.totals.FAIL], [true, false, 0]);
+    assert.deepEqual(relayed.ids("MANUAL"), ["deployment.manifestProvenance", "refusal[0].calldata", "refusal[0].intent.matchesCalldata"]);
+    assert.match(relayed.check("refusal[0].calldata").detail, new RegExp(`^${toForwarder}: only a direct executeSpend call's calldata is decoded$`, "i"));
+    assert.match(relayed.check("refusal[0].intent.matchesCalldata").detail, new RegExp(`^${toForwarder}, so the intent file is not compared with the call it relays$`, "i"));
+    for (const id of ["completeness.spendBlocked", "refusal[0].event", "refusal[0].intent.digest", "refusal[0].intent.signature", "refusal[0].noUsdcTransfer", "refusal[0].receiptStatus", "exit.state"]) {
+      assert.equal(relayed.check(id).status, "PASS", `${id}: ${relayed.check(id).detail}`);
+    }
+
+    // Without its intent file, the relayed refusal's intent cannot be recovered from the transaction's calldata.
+    const withoutIntent = structuredClone(refused);
+    withoutIntent.refusals[0].intent = null;
+    withoutIntent.exporterSummary.missingIntentFiles = "1";
+    const unrecovered = await verifiesOk("relayed-refusal-no-intent.json", withoutIntent);
+    assert.deepEqual(
+      [unrecovered.report.qualifying, unrecovered.ids("MANUAL")],
+      [false, ["deployment.manifestProvenance", "refusal[0].calldata", "refusal[0].intent.digest", "refusal[0].intent.signature"]],
+    );
+    assert.match(unrecovered.check("refusal[0].intent.signature").detail, new RegExp(`^intent file not supplied, and ${toForwarder}, so it cannot be recovered from the transaction's calldata$`, "i"));
+
+    // A paid spend through the same forwarder fails the direct-call rule, in
+    // spend.receipt and spend.calldata. Its intent.matchesCalldata is only
+    // MANUAL, as there is no direct call to compare with, and the report is not ok.
+    await ok("intent", buildArgs(agent.address, PRINCIPAL, path("relayed-spend.json")));
+    await ok("intent", ["sign", "--intent", path("relayed-spend.json"), "--out", path("relayed-spend-signed.json")], AGENT);
+    const paid = await relay("relayed-spend-signed.json", "ProviderPaid");
+    const cycle = {
+      digest: paid.args.digest,
+      intent: readJson(path("relayed-spend-signed.json")),
+      spend: { txHash: paid.txHash, blockNumber: paid.blockNumber, executor: executor.address },
+      repayments: [],
+      cleared: false,
+      provider: { requestId: null, acceptance: null, delivery: null },
+    };
+    const spent = await failsAt(
+      "relayed-spend.json",
+      bundleOf({
+        line,
+        cycles: [cycle],
+        refusals: [refusal],
+        exit: none,
+        observedAt: await observed(),
+        summary: { cycles: 1, cyclesCleared: 0, principalPaid: PRINCIPAL, principalRepaid: 0, refusals: 1, missingIntentFiles: 0, missingDeliveries: 1 },
+      }),
+      ["cycle[0].spend.receipt", "cycle[0].spend.calldata"],
+      new RegExp(`^transaction is sent to ${forwarder}, not the Float ${float}$`, "i"),
+    );
+    assert.match(
+      spent.check("cycle[0].spend.calldata").detail,
+      new RegExp(`^transaction ${paid.txHash} is sent to ${forwarder}, not the Float ${float}: a spend must be a direct executeSpend call to the Float$`, "i"),
+    );
+    assert.deepEqual(spent.ids("MANUAL"), [
+      "deployment.manifestProvenance",
+      "cycle[0].intent.matchesCalldata",
+      "cycle[0].provider.acceptance",
+      "cycle[0].provider.delivery",
+      "refusal[0].calldata",
+      "refusal[0].intent.matchesCalldata",
+    ]);
+    assert.equal(spent.check("cycle[0].spend.executor").detail, "the intent allows any executor");
   });
 });

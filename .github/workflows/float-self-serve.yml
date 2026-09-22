@@ -20,6 +20,7 @@ on:
       - "app/scripts/lepton-readiness.test.mjs"
       - "app/scripts/float-mainnet-*"
       - "app/scripts/rpc-read-queue*"
+      - "examples/float-mainnet-provider-server/**"
       - "app/tsconfig.json"
       # forge build compiles the shared Solidity sources and test fixtures too.
       - "contracts/**"

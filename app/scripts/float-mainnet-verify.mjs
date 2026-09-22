@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import {
   BlockNotFoundError,
+  decodeFunctionData,
   encodeAbiParameters,
   erc20Abi,
   getAddress,
@@ -16,7 +17,7 @@ import {
 } from "viem";
 import { BLOCK_REASONS, LINE_STATES, connectCandidate, floatAbi, printJson, readDeployment, revertName } from "./float-mainnet-config.mjs";
 import { MAX_LOOKBACK_BLOCKS, UsageError, findLogs, parseAddress, parseBytes32, parseUint, read, readPolicy, required, rpcErrorDetail } from "./float-mainnet-cli.mjs";
-import { validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
+import { intentDigest, messageFromStruct, validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
 import { IMMUTABLE_GETTERS, decodeImmutables, immutableRanges, immutableWord, maskImmutables } from "./float-mainnet-manifest.mjs";
 import { ACCEPTANCE_KIND, DELIVERY_KIND, signatureAt, validateReceiptFile } from "./float-mainnet-provider.mjs";
 import {
@@ -44,6 +45,9 @@ import {
 // upstream branch and that this checkout, which also supplies the pins and this
 // verifier, is that branch. Signatures in the bundle (the agent's intents, the
 // provider's receipts) are checked against the chain's code at a pinned block.
+// Each spend and refusal sent directly to the Float carries its intent and the
+// agent's signature in its executeSpend calldata: an intent file must equal it,
+// and a missing one is recovered from it.
 // Declared fields are reported verbatim and never scored. Any FAIL makes the
 // report not ok (exit 1); MANUAL marks what the bundle does not let it check,
 // and a report with any MANUAL check is not qualifying.
@@ -76,7 +80,7 @@ const NEVER_CHECKED = [
   "what the provider delivered: resultHash and resultRef are the provider's signed commitment, and a DeliveryReceipt is the provider's own claim of delivery",
   "when the provider accepted or delivered: acceptedAt and deliveredAt are the provider's own claim in its signed receipts, compared only with the payment block's timestamp",
   "state between two transactions in one block: pre-spend state and signatures are read at the end of the block before the spend",
-  "spends relayed through a contract (a Safe or relayer): the spend checks require the transaction to be sent by the executor directly to the Float",
+  "spends relayed through a contract (a Safe, a 4337 account or a relayer): the spend checks require the transaction to be sent by the executor directly to the Float, and only a direct executeSpend call's calldata is decoded, so a relayed refusal's intent is neither compared with nor recovered from its calldata",
 ];
 
 const PASS = (detail) => ["PASS", detail];
@@ -282,8 +286,10 @@ function checklist() {
     checks.push({ id, status: "DECLARED", detail: `declared by ${JSON.stringify(label ?? null)}; reported verbatim, not verified`, label: label ?? null, value });
     scopes.set(id, "declared");
   }
+  // Scope "calldata" is an intent check that read the intent from the
+  // transaction's calldata: it is verified on chain, and listed apart as well.
   function report(extra) {
-    const ids = (scope) => checks.filter((entry) => entry.status === "PASS" && scopes.get(entry.id) === scope).map((entry) => entry.id);
+    const ids = (...scope) => checks.filter((entry) => entry.status === "PASS" && scope.includes(scopes.get(entry.id))).map((entry) => entry.id);
     const manual = checks.filter((entry) => entry.status === "MANUAL").map((entry) => `${entry.id}: ${entry.detail}`);
     const ok = checks.every((entry) => entry.status !== "FAIL");
     return {
@@ -293,7 +299,8 @@ function checklist() {
       qualifying: ok && manual.length === 0,
       ...extra,
       scope: {
-        verifiedOnChain: ids("chain"),
+        verifiedOnChain: ids("chain", "calldata"),
+        intentFromCalldata: ids("calldata"),
         verifiedAgainstBundleSignatures: ids("signature"),
         declaredOnly: checks.filter((entry) => entry.status === "DECLARED").map((entry) => entry.id),
         notChecked: [...manual, ...NEVER_CHECKED],
@@ -306,9 +313,10 @@ function checklist() {
 }
 
 // Everything the per-entry checks share: the connection, the pinned
-// observation block, and cached receipts and blocks.
+// observation block, and cached receipts, transactions and blocks.
 function context(connection, bundle, usdc) {
   const receipts = new Map();
+  const transactions = new Map();
   const blocks = new Map();
   const cached = (map, key, load) => {
     if (!map.has(key)) map.set(key, load());
@@ -322,6 +330,7 @@ function context(connection, bundle, usdc) {
     lineId: bundle.line.lineId,
     observed: bundle.observedAt.blockNumber,
     receipt: (hash) => cached(receipts, hash, () => connection.client.getTransactionReceipt({ hash })),
+    transaction: (hash) => cached(transactions, hash, () => connection.client.getTransaction({ hash })),
     block: (blockNumber) => cached(blocks, blockNumber, () => connection.client.getBlock({ blockNumber })),
     floatEvents: (receipt) => parseEventLogs({ abi: floatAbi, logs: receipt.logs.filter((log) => isAddressEqual(log.address, float)) }),
     transfers: (receipt) =>
@@ -353,11 +362,62 @@ function parseIntent(file, connection) {
   }
 }
 
-// null when the intent is usable; otherwise the [status, detail] its checks report.
-function intentGate(intent) {
-  if (intent.missing) return MANUAL("intent file not supplied");
+// The executeSpend call a transaction sends directly to the Float, decoded: the
+// intent and signature in its calldata, and the digest that intent recomputes
+// to for this chain and Float. The Float pays, and records a refusal, only in
+// executeSpend(intent, signature), so that call holds the intent the Float
+// executed and the signature it accepted. A call relayed through a contract (a
+// Safe, a 4337 account, a relayer) is inside that contract's calldata, not the
+// transaction's, and is not decoded: { relayed } says where the transaction went.
+async function executeSpendCall(ctx, txHash) {
+  const tx = await ctx.transaction(txHash);
+  if (!tx.to || !isAddressEqual(tx.to, ctx.float)) return { relayed: `transaction ${txHash} is sent to ${tx.to ?? "no address"}, not the Float ${ctx.float}` };
+  // Lowercased, so its bytes32 fields and signature compare with the bundle's lowercase hex.
+  const { functionName, args } = decodeFunctionData({ abi: floatAbi, data: tx.input.toLowerCase() });
+  if (functionName !== "executeSpend") throw new Error(`transaction ${txHash} calls ${functionName} on the Float, not executeSpend`);
+  const [struct, signature] = args;
+  return { struct, signature, digest: intentDigest(ctx.connection.chainId, ctx.float, struct) };
+}
+
+// The intent an entry's intent checks read: its bundle file or, when the bundle
+// has none, the one in its transaction's executeSpend calldata. { gate } is the
+// [status, detail] those checks report when neither is usable.
+async function intentOf(ctx, intent, txHash) {
+  if (intent.error) return { gate: ["FAIL", `the intent file is rejected: ${intent.error}`] };
+  if (intent.value) return intent.value;
+  const call = await executeSpendCall(ctx, txHash);
+  if (call.relayed) return { gate: MANUAL(`intent file not supplied, and ${call.relayed}, so it cannot be recovered from the transaction's calldata`) };
+  return { ...call, fromCalldata: true };
+}
+
+// Runs `check` on the intent `resolve` gives; its detail says when that intent came from calldata.
+async function onIntent(resolve, check) {
+  const used = await resolve();
+  if (used.gate) return used.gate;
+  const [status, detail] = await check(used);
+  return [status, used.fromCalldata ? `${detail} (intent from the transaction calldata: the bundle has no intent file)` : detail];
+}
+
+// How an intent file differs from the executeSpend call its transaction made:
+// each message field that is not the call's, and a signature that is not
+// exactly the call's. None when the file holds the call's intent and signature.
+export function calldataMismatches(file, call) {
+  const inFile = messageFromStruct(file.struct);
+  const inCall = messageFromStruct(call.struct);
+  const problems = Object.keys(inCall)
+    .filter((name) => inFile[name] !== inCall[name])
+    .map((name) => `message.${name} is ${inFile[name]} in the intent file, ${inCall[name]} in the calldata`);
+  if (file.signature === null) problems.push("the intent file carries no signature; the calldata carries the one the Float accepted");
+  else if (file.signature !== call.signature) problems.push(`the intent file's signature ${file.signature} is not the calldata's ${call.signature}`);
+  return problems;
+}
+
+// The bundle's intent file against its transaction's executeSpend calldata.
+async function matchesCalldata(ctx, intent, txHash) {
   if (intent.error) return ["FAIL", `the intent file is rejected: ${intent.error}`];
-  return null;
+  const call = await executeSpendCall(ctx, txHash);
+  if (call.relayed) return MANUAL(`${call.relayed}, so the intent file is not compared with the call it relays`);
+  return verdict(calldataMismatches(intent.value, call), "the intent file's message and signature are exactly those in the transaction's executeSpend calldata");
 }
 
 // Each on-chain payment and the Repaid events between it and the next payment.
@@ -437,7 +497,9 @@ async function verifyCycle(ctx, { record }, cycle, i, windowOf, bundle) {
   };
   const spendBlock = async () => (await receipt).blockNumber;
   const intent = parseIntent(cycle.intent, connection);
-  const struct = intent.value?.struct;
+  const withIntent = (check) => onIntent(() => intentOf(ctx, intent, cycle.spend.txHash), check);
+  // An intent check without the bundle's file reads the calldata's intent.
+  const intentScope = (scope) => (intent.missing ? "calldata" : scope);
 
   await record(id("spend.receipt"), "chain", async () => {
     const mined = await receipt;
@@ -455,49 +517,58 @@ async function verifyCycle(ctx, { record }, cycle, i, windowOf, bundle) {
     const moved = hasTransfer(ctx, await receipt, { from: float, to: paid.args.provider, value: paid.args.principal, beforeLog: paid });
     return verdict(moved ? [] : [`no USDC Transfer of exactly ${paid.args.principal} from the Float to ${paid.args.provider} precedes the ProviderPaid`], `USDC ${ctx.usdc} moved exactly ${paid.args.principal} from the Float to ${paid.args.provider}`);
   });
-  await record(id("intent.digest"), "chain", async () => {
-    const gate = intentGate(intent);
-    if (gate) return gate;
+  await record(id("spend.calldata"), "chain", async () => {
+    const call = await executeSpendCall(ctx, cycle.spend.txHash);
+    if (call.relayed) return ["FAIL", `${call.relayed}: a spend must be a direct executeSpend call to the Float`];
     return verdict(
-      intent.value.digest === cycle.digest ? [] : [`the intent's message recomputes to digest ${intent.value.digest} for chain ${connection.chainId} and Float ${float}, not the cycle's ${cycle.digest}`],
-      `the intent's message recomputes to the paid digest for chain ${connection.chainId} and Float ${float}`,
+      call.digest === cycle.digest ? [] : [`the intent in its executeSpend calldata recomputes to digest ${call.digest} for chain ${connection.chainId} and Float ${float}, not the cycle's ${cycle.digest}`],
+      `the transaction calls executeSpend on the Float with an intent that recomputes to the cycle's digest for chain ${connection.chainId} and Float ${float}`,
     );
   });
-  await record(id("intent.fields"), "chain", async () => {
-    const gate = intentGate(intent);
-    if (gate) return gate;
-    const paid = await event();
-    const problems = [];
-    const expect = (name, actual, expected) => {
-      if (actual !== expected) problems.push(`message.${name} is ${actual}, not ${expected}`);
-    };
-    expect("lineId", struct.lineId, lineId);
-    expect("sponsor", struct.sponsor, bundle.line.sponsor);
-    expect("agent", struct.agent, bundle.line.agent);
-    expect("lineEpoch", struct.lineEpoch, bundle.line.epoch);
-    expect("provider", struct.provider, getAddress(paid.args.provider));
-    expect("principal", struct.principal, paid.args.principal);
-    expect("dueAt", struct.dueAt, paid.args.dueAt);
-    return verdict(problems, "line, sponsor, agent, epoch, provider, principal and dueAt equal the line and the ProviderPaid event");
-  });
-  await record(id("spend.executor"), "chain", async () => {
-    const gate = intentGate(intent);
-    if (gate) return gate;
-    const mined = await receipt;
-    if (struct.executor === zeroAddress) return PASS("the intent allows any executor");
-    return verdict(
-      isAddressEqual(mined.from, struct.executor) ? [] : [`the intent names executor ${struct.executor}, but ${mined.from} sent the spend`],
-      `sent by the intent's named executor ${struct.executor}`,
-    );
-  });
-  await record(id("intent.signature"), "signature", async () => {
-    const gate = intentGate(intent);
-    if (gate) return gate;
-    if (intent.value.signature === null) return MANUAL("the intent file carries no signature");
-    const at = (await spendBlock()) - 1n;
-    const signature = await signatureAt(connection, { signer: struct.agent, hash: intent.value.digest, signature: intent.value.signature, blockNumber: at, caller: float });
-    return verdict(signature.valid ? [] : [`agent ${struct.agent}: ${signature.detail}`], `agent ${struct.agent} (${signature.signerKind}): ${signature.detail}`);
-  });
+  await record(id("intent.digest"), intentScope("chain"), () =>
+    withIntent(({ digest }) =>
+      verdict(
+        digest === cycle.digest ? [] : [`the intent's message recomputes to digest ${digest} for chain ${connection.chainId} and Float ${float}, not the cycle's ${cycle.digest}`],
+        `the intent's message recomputes to the paid digest for chain ${connection.chainId} and Float ${float}`,
+      ),
+    ),
+  );
+  await record(id("intent.fields"), intentScope("chain"), () =>
+    withIntent(async ({ struct }) => {
+      const paid = await event();
+      const problems = [];
+      const expect = (name, actual, expected) => {
+        if (actual !== expected) problems.push(`message.${name} is ${actual}, not ${expected}`);
+      };
+      expect("lineId", struct.lineId, lineId);
+      expect("sponsor", struct.sponsor, bundle.line.sponsor);
+      expect("agent", struct.agent, bundle.line.agent);
+      expect("lineEpoch", struct.lineEpoch, bundle.line.epoch);
+      expect("provider", struct.provider, getAddress(paid.args.provider));
+      expect("principal", struct.principal, paid.args.principal);
+      expect("dueAt", struct.dueAt, paid.args.dueAt);
+      return verdict(problems, "line, sponsor, agent, epoch, provider, principal and dueAt equal the line and the ProviderPaid event");
+    }),
+  );
+  await record(id("spend.executor"), intentScope("chain"), () =>
+    withIntent(async ({ struct }) => {
+      const mined = await receipt;
+      if (struct.executor === zeroAddress) return PASS("the intent allows any executor");
+      return verdict(
+        isAddressEqual(mined.from, struct.executor) ? [] : [`the intent names executor ${struct.executor}, but ${mined.from} sent the spend`],
+        `sent by the intent's named executor ${struct.executor}`,
+      );
+    }),
+  );
+  await record(id("intent.signature"), intentScope("signature"), () =>
+    withIntent(async ({ struct, digest, signature: signed }) => {
+      if (signed === null) return MANUAL("the intent file carries no signature");
+      const at = (await spendBlock()) - 1n;
+      const signature = await signatureAt(connection, { signer: struct.agent, hash: digest, signature: signed, blockNumber: at, caller: float });
+      return verdict(signature.valid ? [] : [`agent ${struct.agent}: ${signature.detail}`], `agent ${struct.agent} (${signature.signerKind}): ${signature.detail}`);
+    }),
+  );
+  if (cycle.intent !== null) await record(id("intent.matchesCalldata"), "chain", () => matchesCalldata(ctx, intent, cycle.spend.txHash));
   await record(id("state.before"), "chain", async () => {
     const at = (await spendBlock()) - 1n;
     const line = await read(connection, "getLine", [lineId], at);
@@ -508,16 +579,16 @@ async function verifyCycle(ctx, { record }, cycle, i, windowOf, bundle) {
     if (!isAddressEqual(line.sponsor, bundle.line.sponsor) || !isAddressEqual(line.agent, bundle.line.agent)) problems.push(`the line's sponsor/agent at block ${at} are ${line.sponsor}/${line.agent}`);
     return verdict(problems, `at block ${at} the line was OPEN with no outstanding principal, epoch ${line.epoch}`);
   });
-  await record(id("state.termsHash"), "chain", async () => {
-    const gate = intentGate(intent);
-    if (gate) return gate;
-    const at = (await spendBlock()) - 1n;
-    const current = await read(connection, "currentTermsHash", [lineId, struct.provider], at);
-    return verdict(
-      current === struct.termsHash ? [] : [`currentTermsHash(line, ${struct.provider}) at block ${at} is ${current}, not the intent's termsHash ${struct.termsHash}`],
-      `the intent's termsHash equals currentTermsHash(line, ${struct.provider}) at block ${at}`,
-    );
-  });
+  await record(id("state.termsHash"), intentScope("chain"), () =>
+    withIntent(async ({ struct }) => {
+      const at = (await spendBlock()) - 1n;
+      const current = await read(connection, "currentTermsHash", [lineId, struct.provider], at);
+      return verdict(
+        current === struct.termsHash ? [] : [`currentTermsHash(line, ${struct.provider}) at block ${at} is ${current}, not the intent's termsHash ${struct.termsHash}`],
+        `the intent's termsHash equals currentTermsHash(line, ${struct.provider}) at block ${at}`,
+      );
+    }),
+  );
   await record(id("repayments"), "chain", async () => {
     const window = windowOf(cycle.digest);
     const unmatched = [...window.repaid];
@@ -573,11 +644,13 @@ async function verifyCycle(ctx, { record }, cycle, i, windowOf, bundle) {
     const acceptance = validateReceiptFile(cycle.provider.acceptance, connection, ACCEPTANCE_KIND);
     const signature = await signatureAt(connection, { signer: acceptance.message.provider, hash: acceptance.hash, signature: acceptance.signature, blockNumber: observed });
     const spentAt = await spendTime();
-    // Without a usable intent file, the paid endpoint is the one the provider's
-    // policy approved before the spend: the contract pays no other endpoint.
+    // Without a usable intent, from the file or the calldata, the paid endpoint
+    // is the one the provider's policy approved before the spend: the contract
+    // pays no other endpoint.
     const policyAt = (await spendBlock()) - 1n;
+    const { struct, fromCalldata } = await intentOf(ctx, intent, cycle.spend.txHash);
     const endpoint = struct
-      ? { hash: struct.endpointHash, source: "the intent's endpoint" }
+      ? { hash: struct.endpointHash, source: fromCalldata ? "the intent's endpoint in the transaction calldata" : "the intent's endpoint" }
       : {
           hash: (await readPolicy(connection, lineId, paid.args.provider, policyAt)).endpointHash,
           source: `the endpoint provider ${paid.args.provider}'s policy approved at block ${policyAt}`,
@@ -630,6 +703,9 @@ async function verifyRefusal(ctx, { record }, refusal, j) {
     return need(found, `transaction ${refusal.txHash} emits no SpendBlocked for digest ${refusal.digest} on line ${lineId}`);
   };
   const intent = parseIntent(refusal.intent, connection);
+  const withIntent = (check) => onIntent(() => intentOf(ctx, intent, refusal.txHash), check);
+  // An intent check without the bundle's file reads the calldata's intent.
+  const intentScope = (scope) => (intent.missing ? "calldata" : scope);
   await record(id("event"), "chain", async () => {
     const mined = await receipt;
     const blocked = await event();
@@ -637,27 +713,37 @@ async function verifyRefusal(ctx, { record }, refusal, j) {
     if (!reasonMatches(refusal.reason, blocked.args.reason)) problems.push(`the recorded reason is ${BLOCK_REASONS[blocked.args.reason]}, not the bundle's ${refusal.reason}`);
     return verdict(problems, `SpendBlocked(${BLOCK_REASONS[blocked.args.reason]}) for nonce ${blocked.args.nonce} in block ${mined.blockNumber}`);
   });
-  await record(id("intent.digest"), "chain", async () => {
-    const gate = intentGate(intent);
-    if (gate) return gate;
-    const blocked = await event();
-    const problems = [];
-    if (intent.value.digest !== refusal.digest) problems.push(`the intent's message recomputes to digest ${intent.value.digest}, not ${refusal.digest}`);
-    if (intent.value.struct.lineId !== lineId) problems.push(`message.lineId is ${intent.value.struct.lineId}, not ${lineId}`);
-    if (intent.value.struct.nonce !== blocked.args.nonce) problems.push(`message.nonce is ${intent.value.struct.nonce}, not the recorded ${blocked.args.nonce}`);
-    return verdict(problems, "the intent's message recomputes to the refused digest, on this line with the recorded nonce");
+  // A refusal relayed through a contract (a batch that also closes a line, say)
+  // is not a direct call, so its calldata is left to the reviewer.
+  await record(id("calldata"), "chain", async () => {
+    const call = await executeSpendCall(ctx, refusal.txHash);
+    if (call.relayed) return MANUAL(`${call.relayed}: only a direct executeSpend call's calldata is decoded`);
+    return verdict(
+      call.digest === refusal.digest ? [] : [`the intent in its executeSpend calldata recomputes to digest ${call.digest} for chain ${connection.chainId} and Float ${float}, not the refusal's ${refusal.digest}`],
+      `the transaction calls executeSpend on the Float with an intent that recomputes to the refused digest for chain ${connection.chainId} and Float ${float}`,
+    );
   });
+  await record(id("intent.digest"), intentScope("chain"), () =>
+    withIntent(async ({ struct, digest }) => {
+      const blocked = await event();
+      const problems = [];
+      if (digest !== refusal.digest) problems.push(`the intent's message recomputes to digest ${digest}, not ${refusal.digest}`);
+      if (struct.lineId !== lineId) problems.push(`message.lineId is ${struct.lineId}, not ${lineId}`);
+      if (struct.nonce !== blocked.args.nonce) problems.push(`message.nonce is ${struct.nonce}, not the recorded ${blocked.args.nonce}`);
+      return verdict(problems, "the intent's message recomputes to the refused digest, on this line with the recorded nonce");
+    }),
+  );
   // The contract records a SpendBlocked only after validating the signature,
   // so it is checked as for a paid cycle, at the block before the refusal.
-  await record(id("intent.signature"), "signature", async () => {
-    const gate = intentGate(intent);
-    if (gate) return gate;
-    if (intent.value.signature === null) return MANUAL("the intent file carries no signature");
-    const { agent } = intent.value.struct;
-    const at = (await receipt).blockNumber - 1n;
-    const signature = await signatureAt(connection, { signer: agent, hash: intent.value.digest, signature: intent.value.signature, blockNumber: at, caller: float });
-    return verdict(signature.valid ? [] : [`agent ${agent}: ${signature.detail}`], `agent ${agent} (${signature.signerKind}): ${signature.detail}`);
-  });
+  await record(id("intent.signature"), intentScope("signature"), () =>
+    withIntent(async ({ struct: { agent }, digest, signature: signed }) => {
+      if (signed === null) return MANUAL("the intent file carries no signature");
+      const at = (await receipt).blockNumber - 1n;
+      const signature = await signatureAt(connection, { signer: agent, hash: digest, signature: signed, blockNumber: at, caller: float });
+      return verdict(signature.valid ? [] : [`agent ${agent}: ${signature.detail}`], `agent ${agent} (${signature.signerKind}): ${signature.detail}`);
+    }),
+  );
+  if (refusal.intent !== null) await record(id("intent.matchesCalldata"), "chain", () => matchesCalldata(ctx, intent, refusal.txHash));
   await record(id("noUsdcTransfer"), "chain", async () => {
     const mined = await receipt;
     const transfers = ctx.transfers(mined);
@@ -1066,7 +1152,7 @@ const USAGE = [
   "node app/scripts/float-mainnet-verify.mjs verify --bundle <evidence-bundle.json> --manifest <release manifest> [--out <report.json>]",
   "Reads ARC_RPC_URL only; the chain id, Float address, runtime code hash and deploy block come from the bundle and are checked against the chain and against --manifest. State is read at pinned historical blocks, so the RPC must serve archive state.",
   "--manifest is the repository's reviewed release record (a manifest committed at a reviewed commit), never a file from the bundle's author. The code at its address must equal this checkout's forge build of the pinned reviewed source (contracts/out), with the manifest's config and USDC. Those checks catch a manifest inconsistent with the chain or the reviewed code, not a consistent one written for another deployment. deployment.manifestProvenance passes only when the bytes read from --manifest are that file as committed at HEAD in this checkout, and fails if the file changes during the run; any other --manifest is a rehearsal and leaves it MANUAL. A pass proves only that the manifest is committed in this checkout's history, which anyone can arrange on a local branch: confirm that the reported commit is on the reviewed upstream branch and that this checkout, which also supplies the pins and this verifier, is that branch.",
-  "Exit 1 when any check FAILs. qualifying is ok with nothing MANUAL, so it needs a committed release manifest. MANUAL checks (for example a rehearsal manifest, or a cycle without its intent file or provider receipts) and DECLARED fields never pass or fail the report.",
+  "Exit 1 when any check FAILs. qualifying is ok with nothing MANUAL, so it needs a committed release manifest. MANUAL checks (for example a rehearsal manifest, a cycle without its provider receipts, or a refusal relayed through a contract, whose calldata is not decoded) and DECLARED fields never pass or fail the report. An intent file missing from the bundle is recovered from the executeSpend calldata of a transaction sent directly to the Float.",
 ];
 
 // runCli's contract (one JSON object; a usage error exits 2 with the full

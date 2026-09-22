@@ -250,4 +250,3 @@ This plan incorporates Nurudeen's `SHADOW-VS-ARC-PORTAL-for-qdee.md`, Apata's tw
 This final version incorporates Ridwan’s candidate-lineage correction and Isiaq’s tooling, repayment-limit, release-gate and pilot-evidence refinements. It retains the initial focus, recurring commercial test and subsequent Path B expansion.
 
 Earlier documents remain unchanged: the September 2 roadmap, September 17 proposal and revision 2, and both teammate reviews. Milestones remain open until supported by evidence. Changes to scope or dates should record the reason, owner and effect on the release conditions.
-
