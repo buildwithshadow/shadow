@@ -1,5 +1,7 @@
 # Shadow Float Mainnet Path
 
+**Plan of record:** [`ROADMAP.md`](ROADMAP.md) (final roadmap, version 3, 18 September 2026) takes precedence where this document differs. In particular, the independent pilot is planned on the `ShadowFloatMainnet` candidate deployed to Arc testnet, not on V2, because V2 evidence cannot substitute for candidate validation; Phase 1's "No V2 redeploy is required" no longer describes the pilot. The rest of this document is kept as written on 21 August 2026.
+
 Shadow Float's current product is a sponsor-backed USDC spending line for autonomous agents on Arc testnet. A sponsor can open a line without Shadow owner approval, the agent signs each bounded spend, `ShadowFloat` pays the approved provider directly, debt opens onchain, and repayment restores capacity.
 
 The current milestone is the sponsored-only immutable Mainnet V1 candidate and its security tests. Deployment, funding, Arc transactions, third-party capital, and public readiness claims remain outside this phase; repeat unassisted use is still required before any production launch.
@@ -150,4 +152,4 @@ The initial mainnet launch should retain dedicated sponsor reserves unless evide
 
 ## One-Line Direction
 
-Shadow Float is moving from a proven sponsor-backed spending primitive to a self-serve capital layer where autonomous agents can pay approved providers before each wallet is funded, then earn reusable capacity through repayment.
+Shadow Float is moving from a proven sponsor-backed spending primitive to a self-serve capital layer where autonomous agents can pay approved providers before each wallet is funded, then earn reusable capacity through repayment. [Under the `ShadowFloatMainnet` candidate, repayment restores a line's reserve but never its cumulative line-spend cap: `lineSpendCap` counts cumulative principal paid in the line epoch, and only a new epoch starts a new count ([`SHADOW_FLOAT_MAINNET_SPEC.md`](SHADOW_FLOAT_MAINNET_SPEC.md), section 3).]

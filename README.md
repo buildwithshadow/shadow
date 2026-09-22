@@ -8,7 +8,7 @@ Three things are true on this testnet right now:
 
 1. **An autonomous desk runs the book.** An LLM-driven desk decides what to buy, its one-sentence rationale rides inside the signed intent, and the intent digest becomes the onchain `requestHash`, so every decision is cryptographically bound to its receipt. After the desk's first clean lifecycle, the contract raised the desk's own credit limit from behavior alone.
 2. **Outside projects use it with their own wallets.** Nine independently controlled external-agent lines still hold reserve, while the public history retains two debt-free CitePay line generations after reclaim. A cross-project loop let one team's agent borrow Shadow credit to pay another team's API. Two external sponsors put their own USDC behind lines; Forum Tollgate remains reserve-backed.
-3. **Anyone can verify all of it with one command and no keys.** `npm run float:v2-verify-live` re-derives the proof loop against the public Arc RPC, 26 checks.
+3. **Anyone can re-check the canonical V2 lifecycle with one command and no keys.** `npm run float:v2-verify-live` runs 26 checks against the public Arc RPC: one proof line whose sponsor is the contract owner's wallet `0xBDb1...1Fb8` (opened, paid, blocked on an overrun, repaid), plus contract-wide conditions such as a zero fee and open external debt within 0.02 USDC. It does not reconstruct the Desk or the external lines above: those figures come from separate read-only APIs (`/api/desk`, and `/api/float?mode=v2` with its checkpoint).
 
 Live app: https://shadow-arc.vercel.app
 
@@ -17,6 +17,17 @@ Current Float page: https://shadow-arc.vercel.app/float
 Repository: https://github.com/buildwithshadow/shadow
 
 Chain: Arc Testnet, chain id `5042002`
+
+## Mainnet Candidate
+
+`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is the mainnet-candidate contract, a separate generation from the testnet V2 contract described below. It is not deployed and not audited, and its Arc testnet deployment is pending authorization. It admits approved sponsors only, allows one outstanding draw per line, excludes automatic scoring, keeps protocol fees at zero and requires no Gateway behavior. The plan of record is [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+- Specification: [`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md)
+- Threat model: [`docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md`](docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md)
+- Invariant and test matrix: [`docs/SHADOW_FLOAT_MAINNET_TEST_MATRIX.md`](docs/SHADOW_FLOAT_MAINNET_TEST_MATRIX.md)
+- Pilot test plan: [`docs/SHADOW_FLOAT_MAINNET_PILOT_TEST_PLAN.md`](docs/SHADOW_FLOAT_MAINNET_PILOT_TEST_PLAN.md)
+- Arc testnet deployment runbook: [`docs/SHADOW_FLOAT_MAINNET_TESTNET_DEPLOYMENT.md`](docs/SHADOW_FLOAT_MAINNET_TESTNET_DEPLOYMENT.md)
+- Participant tools: [`docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md`](docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md)
 
 ## What Changed, July 13 to August 9, 2026
 
@@ -51,6 +62,8 @@ Live V2 activity currently shown on the site:
 The live board currently tracks nine reserve-backed, independently controlled external-agent lines. Eight were funded by Shadow's operator and remain valid integration proof, but they are not counted as unassisted pilot traction. Forum Tollgate supplies the one external-sponsor reserve still held by the contract. CitePay and Forum both completed externally sponsored lifecycles; CitePay later reclaimed its renewed line after two signed spend-and-repay cycles, including a fail-closed CitePay Clear-gated provider payment. Closing a line removes it from current reserve counts and clears its current `behaviorStats`, while immutable event-derived paid, repayment, returning-agent, and returning-sponsor history remains visible separately. Driplet and Argus Alpha each completed a second operator-sponsored provider loop; Obol has a provider-paid V2 spend with repayment intentionally left open and labeled on the live board.
 
 ### Autonomous Underwriting Is Deployed
+
+**Testnet V2 only.** The behavior scoring and automatic limit changes in this section and in the Desk and External Sponsor Path sections below belong to the deployed Arc testnet V2 contract. They are not part of the mainnet candidate: its approved specification excludes automatic scoring ([`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md), section 1).
 
 Sponsored V2 lines are re-scored by `ShadowFloat` itself. Paid, blocked, and repaid actions update `behaviorStats(agent)` and trigger the same internal refresh path that recomputes `deterministicScore`, adjusts the line cap within the sponsor reserve, and emits `DeterministicFloatScored`.
 
@@ -192,9 +205,9 @@ Arc's agentic workflow lane combines identity, settlement, and programmable cont
 
 Shadow uses Arc USDC as the settlement asset. The historical V1 path binds x402/EIP-3009 settlement hashes into Float receipts. V2 removes the blind operator-bind gap by verifying the agent intent in the contract and paying the provider directly from reserved USDC.
 
-Circle Gateway is documented as additive settlement plumbing over recorded Desk activity: two Desk PAY cycles totaling `0.002` USDC were settled through Gateway batching on Jul 2, 2026 and are served from `/api/settlements` under `deskRecords`. This is not the V2 provider payment path and is not counted as external traction; it shows how sub-cent Desk economics can batch through Circle tooling. Details: [`docs/GATEWAY.md`](docs/GATEWAY.md).
+Circle Gateway is documented as additive settlement plumbing over recorded Desk activity: two Desk PAY cycles totaling `0.002` USDC were settled through Gateway batching on Jul 2, 2026 and are served from `/api/settlements` under `deskRecords`. This is not the V2 provider payment path and is not counted as external traction; it shows how sub-cent Desk economics can batch through Circle tooling. Details: [`docs/GATEWAY.md`](docs/GATEWAY.md). Gateway settlement is not part of the mainnet candidate either: the candidate's specification requires no Gateway behavior from the core contract ([`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md), section 8), and the roadmap treats Gateway support as a separate design decision.
 
-Circle CCTP V2 is load-bearing, not a footnote. On Jul 5, 2026 a dollar burned on Ethereum Sepolia was minted natively on Arc and locked as the reserve behind a live Float sponsored line, which an autonomous agent then drew against to pay a provider and repaid in full (score `7500 -> 8250`, limit `0.025 -> 0.05` USDC, status `REPAID`). Remove the CCTP hop and that reserve does not exist on Arc. The six-transaction chain (burn `0x05c3731e` -> Iris attestation -> Arc mint `0xca5825f8` -> `openSponsoredLine` `0x8c3a5781` -> draw `0xa5dee9bb` -> repay `0x41e203d3`) plus a self-serve `/api/cctp-funding` acknowledgement route are in [`docs/CCTP.md`](docs/CCTP.md).
+Circle CCTP V2 is load-bearing, not a footnote. On Jul 5, 2026 a dollar burned on Ethereum Sepolia was minted natively on Arc and locked as the reserve behind a live Float sponsored line, which an autonomous agent then drew against to pay a provider and repaid in full (score `7500 -> 8250`, limit `0.025 -> 0.05` USDC, status `REPAID`). Remove the CCTP hop and that reserve does not exist on Arc. The six-transaction chain (burn `0x05c3731e` -> Iris attestation -> Arc mint `0xca5825f8` -> `openSponsoredLine` `0x8c3a5781` -> draw `0xa5dee9bb` -> repay `0x41e203d3`) plus a self-serve `/api/cctp-funding` acknowledgement route are in [`docs/CCTP.md`](docs/CCTP.md). This is testnet V2 funding history: the mainnet candidate's specification requires no CCTP behavior from the core contract (spec, section 8).
 
 Circle wallet tooling was explored for future onboarding, but it is not required for the current Float V2 spend path.
 
@@ -220,7 +233,7 @@ Next M1 hardening:
 
 ## Verify It Yourself
 
-No private keys are required to verify the current system.
+No private keys are required for the V2 checks below.
 
 The quickest public path is the live V2 verifier plus the two read-only APIs that back the site:
 
@@ -234,7 +247,7 @@ curl -s https://shadow-arc.vercel.app/api/float?mode=v2
 curl -s https://shadow-arc.vercel.app/api/desk
 ```
 
-`npm run float:v2-verify-live` re-derives the canonical V2 proof loop against the public Arc RPC in 26 checks with no keys: the sponsor line was opened, the agent's signed intent paid the provider from contract custody, an oversized overrun was blocked with no funds moved, debt was repaid, and the line was restored. One external line (Obol) is intentionally left open to show a live, contract-capped debt exposure; the verifier surfaces that open debt and confirms it stays within the documented `0.02` USDC bound, so the one command anyone runs stays green while the open-debt exhibit remains visible.
+`npm run float:v2-verify-live` re-derives the canonical V2 proof loop against the public Arc RPC in 26 checks with no keys: the sponsor line was opened, the agent's signed intent paid the provider from contract custody, an oversized overrun was blocked with no funds moved, debt was repaid, and the line was restored. One external line (Obol) is intentionally left open to show a live, contract-capped debt exposure; the verifier surfaces that open debt and confirms it stays within the documented `0.02` USDC bound, so the one command anyone runs stays green while the open-debt exhibit remains visible. The verifier does not reconstruct external participants' histories: the external-line, sponsor and lifecycle figures on the live board come from the activity API described next, a separate source.
 
 The V2 activity API does not replay the full contract history on every page load. Its committed checkpoint contains a complete event scan through Arc block `52,829,548`; each request scans only newer blocks and advances the same validated checkpoint in KV. Responses label `source: live-rpc` when current chain reads complete and `source: verified-checkpoint` with `degraded: true` when the public RPC is unavailable, so a transport failure cannot become a timeout or be presented as live data.
 
@@ -285,7 +298,7 @@ Supporting M1 contracts are documented in [`docs/MANDATE_M1.md`](docs/MANDATE_M1
 - Direct provider payment from sponsor reserve.
 - Debt opening, repayment, and restored capacity.
 - Blocked overrun path with no provider transfer.
-- Autonomous sponsored-line scoring from on-chain behavior stats.
+- Autonomous sponsored-line scoring from on-chain behavior stats (testnet V2 only: the mainnet candidate's specification excludes automatic scoring, [`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md) section 1).
 - Source-matched deployed contract.
 - Live external activity board.
 - Forkable builder signing kit for the V2 signed spend and repay flow.
