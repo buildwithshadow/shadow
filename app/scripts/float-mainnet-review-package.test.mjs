@@ -411,7 +411,7 @@ test("a missing solc is refused", () => {
 
 test("a fresh checkout on a machine with no solc is built by forge before solc is looked up", () => {
   // A new clone of HEAD running this builder, with a home directory that holds
-  // no compiler and a PATH with no forge. The home's forge is a copy of node,
+  // no compiler and a PATH with no forge. The home's forge runs node,
   // so `forge build` runs the clone's `build` script, which does what forge
   // build does on a new machine: installs solc into the home's svm directory
   // and writes the artifact and its build-info.
@@ -429,7 +429,11 @@ test("a fresh checkout on a machine with no solc is built by forge before solc i
   symlinkSync(join(REPO_ROOT, "app/node_modules"), join(checkout, "app/node_modules"), "junction");
   const forge = process.platform === "win32" ? "forge.exe" : "forge";
   mkdirSync(join(home, ".foundry", "bin"), { recursive: true });
-  cpSync(process.execPath, join(home, ".foundry", "bin", forge));
+  const fixtureForge = join(home, ".foundry", "bin", forge);
+  // Homebrew's macOS Node resolves libnode relative to its executable. Copying
+  // that binary alone breaks dyld before the fake forge can run.
+  if (process.platform === "darwin") symlinkSync(process.execPath, fixtureForge);
+  else cpSync(process.execPath, fixtureForge);
   const built = join(REPO_ROOT, "contracts", "out");
   writeFileSync(
     join(checkout, "build"),
