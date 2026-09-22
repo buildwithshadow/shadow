@@ -6,6 +6,7 @@ type ApiRequest = {
   headers: Record<string, string>;
   query: Record<string, string | string[]>;
   body?: unknown;
+  waitUntil?: (promise: Promise<unknown>) => void;
   [Symbol.asyncIterator](): AsyncGenerator<Buffer>;
 };
 
@@ -16,13 +17,14 @@ type ApiResponse = {
 };
 
 export type ApiHandler = (request: ApiRequest, response: ApiResponse) => Promise<void>;
+export type ApiContext = { waitUntil(promise: Promise<unknown>): void };
 const MAX_BODY_BYTES = 1_048_576;
 
 function errorResponse(status: number, error: string) {
   return Response.json({ error }, { status, headers: { "Cache-Control": "no-store" } });
 }
 
-export async function runApiHandler(request: Request, handler: ApiHandler): Promise<Response> {
+export async function runApiHandler(request: Request, handler: ApiHandler, context?: ApiContext): Promise<Response> {
   const url = new URL(request.url);
   const headers = Object.fromEntries(request.headers);
   // Handlers construct payment-resource URLs from these headers. Use the actual
@@ -96,6 +98,8 @@ export async function runApiHandler(request: Request, handler: ApiHandler): Prom
       headers,
       query,
       body,
+      // Keep the platform context as the receiver; its methods need their binding.
+      ...(context ? { waitUntil: (promise: Promise<unknown>) => context.waitUntil(promise) } : {}),
       async *[Symbol.asyncIterator]() { yield* chunks; },
     }, res);
     return response ?? errorResponse(500, "API handler did not return a response");

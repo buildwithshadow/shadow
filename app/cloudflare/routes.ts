@@ -10,7 +10,7 @@ import settlements from "../api/settlements.ts";
 import state from "../api/state.ts";
 import treasury from "../api/treasury.ts";
 import verifySlippage from "../api/verify-slippage.ts";
-import { runApiHandler, type ApiHandler } from "./request-adapter.ts";
+import { runApiHandler, type ApiContext, type ApiHandler } from "./request-adapter.ts";
 
 export const apiRoutes: ReadonlyMap<string, ApiHandler> = new Map([
   ["/api/cctp-funding", cctpFunding],
@@ -27,7 +27,7 @@ export const apiRoutes: ReadonlyMap<string, ApiHandler> = new Map([
   ["/api/verify-slippage", verifySlippage],
 ]);
 
-export async function routeApi(request: Request): Promise<Response> {
+export async function routeApi(request: Request, context?: ApiContext): Promise<Response> {
   const url = new URL(request.url);
   if (url.pathname === "/api/desk") {
     url.pathname = "/api/float";
@@ -38,5 +38,5 @@ export async function routeApi(request: Request): Promise<Response> {
   if (!handler) {
     return Response.json({ error: "API route not found" }, { status: 404, headers: { "Cache-Control": "no-store" } });
   }
-  return runApiHandler(request, handler);
+  return runApiHandler(request, handler, context);
 }

@@ -3,9 +3,12 @@
 Target hostname: `shadow.dolepee.com`. Pages serves the Vite build and runs the
 existing APIs through `app/functions/api/[[path]].ts`. The adapter preserves
 query arrays, JSON/raw bodies, response status, payment headers, and the `/api/desk`
-rewrite. Unknown APIs return JSON 404. The existing API implementations remain
-unchanged. Node compatibility populates `process.env` from deployed bindings; no
+rewrite. Unknown APIs return JSON 404. It reuses the existing API implementations.
+Node compatibility populates `process.env` from deployed bindings; no
 request mutates global environment settings.
+State-cache refreshes use the Pages request context's `waitUntil` so they survive
+the response. Runtimes without that hook await the same best-effort write, with a
+two-second network timeout.
 
 This is migration infrastructure, not a completed deployment. It does not deploy
 contracts, fund accounts, provision Circle wallets, or establish mainnet readiness.
@@ -17,7 +20,7 @@ may not support the configured compatibility date.
 
 ```sh
 pnpm --dir app install --frozen-lockfile --ignore-workspace
-node --test app/scripts/cloudflare-adapter.test.ts
+node --test app/scripts/cloudflare-adapter.test.ts app/scripts/cloudflare-state-cache.test.ts
 pnpm --dir app typecheck
 pnpm --dir app build
 cd app

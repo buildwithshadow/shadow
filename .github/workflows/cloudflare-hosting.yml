@@ -27,7 +27,7 @@ jobs:
         working-directory: app
         run: pnpm install --frozen-lockfile --ignore-workspace
       - name: Test HTTP adapter and route coverage
-        run: node --test app/scripts/cloudflare-adapter.test.ts
+        run: node --test app/scripts/cloudflare-adapter.test.ts app/scripts/cloudflare-state-cache.test.ts
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build frontend
