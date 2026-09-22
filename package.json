@@ -42,6 +42,7 @@
     "float:mainnet:evidence": "node app/scripts/float-mainnet-evidence.mjs",
     "float:mainnet:verify": "node app/scripts/float-mainnet-verify.mjs",
     "float:mainnet:tooling:test": "node --test app/scripts/float-mainnet-tooling.test.mjs",
+    "float:mainnet:all-tools:test": "node --test --test-concurrency=1 app/scripts/float-mainnet-*.test.mjs",
     "float:mainnet:tools:test": "node --test --test-concurrency=1 app/scripts/float-mainnet-config.test.mjs app/scripts/float-mainnet-agent-tools.test.mjs app/scripts/float-mainnet-sponsor-tools.test.mjs app/scripts/float-mainnet-lifecycle.test.mjs app/scripts/float-mainnet-provider.test.mjs app/scripts/float-mainnet-evidence.test.mjs app/scripts/float-mainnet-verify.test.mjs app/scripts/float-mainnet-evidence-roundtrip.test.mjs",
     "float:autounderwrite": "node app/scripts/float-autounderwrite.mjs",
     "float:desk": "node app/scripts/float-desk.mjs",
