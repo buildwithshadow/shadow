@@ -13,6 +13,7 @@ import {
   acceptIntent,
   checkPayment,
   deliverResult,
+  requestIdHashOf,
   resultRefHashOf,
   storeOnce,
   validateReceiptFile,
@@ -87,6 +88,23 @@ export function createProviderServer({ connection, account, endpointHash, price,
   const accepting = new Map();
   const serving = new Map();
 
+  // This server reserves each provider job id for at most one intent digest.
+  // The durable claim also arbitrates concurrent accepts for different digests.
+  function bindRequest(requestId, digest) {
+    const file = join(storeDir, `request-${requestIdHashOf(requestId)}.json`);
+    const binding = { requestId, digest };
+    const kept = storeOnce(file, binding) ? binding : readStored(file);
+    if (kept?.requestId !== requestId || !/^0x[0-9a-f]{64}$/.test(kept?.digest)) {
+      throw new HttpError(`the stored binding for request ${JSON.stringify(requestId)} is invalid; the provider has to repair it`, 500);
+    }
+    if (kept.digest !== digest) {
+      throw new HttpError(
+        `request ${JSON.stringify(requestId)} is already accepted for digest ${kept.digest}; refusing a second intent for the same request`,
+        409,
+      );
+    }
+  }
+
   // A stored receipt, checked for shape and for this provider and digest. Its
   // signature was verified when it was signed and is not checked again, so an
   // ERC-1271 provider that rotates its signer still serves what it stored.
@@ -104,7 +122,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
   // (null for a stored one).
   async function acceptOnce({ digest, struct, signature }, intent, requestId) {
     const stored = storedReceipt(digest, ACCEPTANCE_KIND);
-    if (stored) return { acceptance: stored, checkedIntent: null };
+    if (stored) {
+      bindRequest(stored.requestId, digest);
+      return { acceptance: stored, checkedIntent: null };
+    }
     // acceptIntent's checks that need no chain read, made first, so that an
     // intent refused on its face costs no RPC call.
     const problems = [];
@@ -133,6 +154,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       if (!signing && Object.getPrototypeOf(error) === Error.prototype) throw new HttpError(errorMessage(error), 422);
       throw error;
     }
+    bindRequest(requestId, digest);
     const kept = storeOnce(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
     return { acceptance: kept, checkedIntent: intent };
   }
@@ -170,15 +192,34 @@ export function createProviderServer({ connection, account, endpointHash, price,
   // The service's output, stored before any delivery is signed over it, so a
   // crash after this point never runs the service again for the digest.
   async function produce(digest, acceptance) {
-    const output = await service({ digest, requestId: acceptance.requestId, acceptance });
-    const result = output?.result;
-    if (typeof result !== "string" && !(result instanceof Uint8Array)) {
-      throw new Error("the service must return { result: string | Uint8Array, resultRef?: string }");
+    const markerFile = fileOf(digest, "started");
+    const marker = { digest, requestId: acceptance.requestId };
+    if (!storeOnce(markerFile, marker)) {
+      const kept = readStored(markerFile);
+      if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId) {
+        throw new HttpError(`the provider's stored service marker for digest ${digest} disagrees with its acceptance; the provider has to repair it`, 500);
+      }
+      throw new HttpError(`service outcome for digest ${digest} is unknown; the provider must reconcile it before work can be retried`, 409);
     }
-    const resultRef = output.resultRef ?? null;
-    resultRefHashOf(resultRef); // throws unless resultRef is null or a non-empty string
-    const record = { digest, requestId: acceptance.requestId, result: Buffer.from(result).toString("base64"), resultRef };
-    return storeOnce(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
+    try {
+      const output = await service({ digest, requestId: acceptance.requestId, acceptance });
+      const result = output?.result;
+      if (typeof result !== "string" && !(result instanceof Uint8Array)) {
+        throw new Error("the service must return { result: string | Uint8Array, resultRef?: string }");
+      }
+      const resultRef = output.resultRef ?? null;
+      resultRefHashOf(resultRef); // throws unless resultRef is null or a non-empty string
+      const record = { digest, requestId: acceptance.requestId, result: Buffer.from(result).toString("base64"), resultRef };
+      const kept = storeOnce(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
+      if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || typeof kept?.result !== "string") {
+        throw new Error(`stored result for digest ${digest} is missing or disagrees with its acceptance`);
+      }
+      return kept;
+    } catch (cause) {
+      const error = new HttpError(`service outcome for digest ${digest} is unknown; the provider must reconcile it before work can be retried`, 500);
+      error.cause = cause;
+      throw error;
+    }
   }
 
   async function serveOnce(digest) {
@@ -186,6 +227,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (!acceptance) return [404, { error: `no accepted request for digest ${digest}` }];
     const delivered = storedReceipt(digest, DELIVERY_KIND);
     const earlier = readStored(fileOf(digest, "result"));
+    const marker = readStored(fileOf(digest, "started"));
+    if (marker && (marker.digest !== digest || marker.requestId !== acceptance.requestId)) {
+      throw new HttpError(`the provider's stored service marker for digest ${digest} disagrees with its acceptance; the provider has to repair it`, 500);
+    }
     if (delivered) {
       if (typeof earlier?.result !== "string" || keccak256(Buffer.from(earlier.result, "base64")) !== delivered.typedData.message.resultHash.toLowerCase()) {
         throw new HttpError(

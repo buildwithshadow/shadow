@@ -142,12 +142,12 @@ async function accept(values) {
     reply = await call(`${url}/accept`, { intent, requestId });
   } catch (error) {
     throw new Error(
-      `no answer from the provider (${failure(error)}); nothing is paid before acceptance, and accept with the same --request-id returns the acceptance the provider stored`,
+      `no answer from the provider (${failure(error)}); nothing is paid before acceptance, and accept with the same signed intent and --request-id returns the acceptance the provider stored`,
     );
   }
   if (reply.status >= 500) {
     throw new Error(
-      `the provider failed (HTTP ${reply.status}): ${providerError(reply.json)}; nothing is paid before acceptance, so this is retryable: run accept again with the same --request-id`,
+      `the provider failed (HTTP ${reply.status}): ${providerError(reply.json)}; nothing is paid before acceptance, so this is retryable: run accept again with the same signed intent and --request-id`,
     );
   }
   if (reply.status !== 200) throw new Error(`the provider refused the intent (HTTP ${reply.status}): ${providerError(reply.json)}`);
@@ -305,7 +305,7 @@ const TOOL = "node app/scripts/float-mainnet-request.mjs";
 const USAGE = [
   `${TOOL} accept --provider-url <url> --intent <signed.json> --request-id <id> [--out <acceptance.json>] [--manifest <path>]`,
   `${TOOL} fetch --provider-url <url> (--intent <signed.json> | --digest <bytes32>) (--acceptance <acceptance.json> | --request-id <id>) --out <result file> [--manifest <path>]`,
-  "accept sends the signed intent to the provider's POST /accept before payment, and keeps the ServiceAcceptance only when it is signed by the provider the intent pays, for this digest, request id, endpoint and principal, and accepted no later than the latest block. Re-running it with the same --request-id returns the provider's stored acceptance; a 5xx answer is retryable that way.",
+  "accept sends the signed intent to the provider's POST /accept before payment, and keeps the ServiceAcceptance only when it is signed by the provider the intent pays, for this digest, request id, endpoint and principal, and accepted no later than the latest block. Re-running it with the same signed intent and --request-id returns the provider's stored acceptance; a 5xx answer is retryable that way.",
   `fetch never pays and needs no key. It reads receiptStatus from the contract and, unless the digest is paid, stops without contacting the provider. Then it asks POST /serve for the digest; on a lost or failed answer it checks GET /status and asks again for the same digest, at most ${MAX_ATTEMPTS} times with backoff. It writes the result only after checking the DeliveryReceipt: signed by the paid provider, for this digest and the agent's request (the acceptance's, or --request-id; with both, they must agree), with resultHash equal to keccak256 of the returned bytes, a resultRef that matches its signed hash and, when the digest's ProviderPaid is found, a deliveredAt no earlier than the payment block (and an acceptance no later). An answer over ${MAX_ANSWER_BYTES} bytes is refused; --out is replaced through a temporary file and a rename.`,
   "The protocol is Shadow's own convention, not x402: examples/float-mainnet-provider-server/README.md.",
 ];
