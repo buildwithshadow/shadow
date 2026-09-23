@@ -575,6 +575,78 @@ describe("request client against the reference provider server", { skip: e2eSkip
     seen.c = { ...c, delivery: fetched.delivery };
   });
 
+  test("one provider request id cannot accept two fresh intent digests, including across a restart", async () => {
+    const [first, second] = await Promise.all([signedIntent("same-job-first"), signedIntent("same-job-second")]);
+    assert.notEqual(first.digest, second.digest);
+    const requestId = "req-same-provider-job";
+    const before = [await executorNonce(), await balance(provider.address)];
+    const replies = await Promise.all([first, second].map((intent) =>
+      post(current.port, "/accept", { intent: readJson(intent.file), requestId })));
+    assert.deepEqual(replies.map((reply) => reply.status).sort(), [200, 409]);
+    const winner = replies.findIndex((reply) => reply.status === 200);
+    const accepted = [first, second][winner];
+    const refused = [first, second][1 - winner];
+    assert.match(replies[1 - winner].json.error,
+      new RegExp(`^request "${requestId}" is already accepted for digest ${accepted.digest}; refusing a second intent for the same request$`));
+    assert.equal(existsSync(join(store, `${refused.digest}.acceptance.json`)), false);
+    assert.deepEqual([await executorNonce(), await balance(provider.address)], before, "acceptance did not pay either intent");
+
+    await stop(current.server);
+    current = await startProviderServer(RESTART_PORT);
+    proxy.upstream = url(RESTART_PORT);
+    assert.deepEqual(await post(current.port, "/accept", { intent: readJson(refused.file), requestId }), replies[1 - winner]);
+    assert.deepEqual(await post(current.port, "/accept", { intent: readJson(accepted.file), requestId }), replies[winner]);
+    assert.deepEqual([await executorNonce(), await balance(provider.address)], before);
+  });
+
+  test("a service side effect with no durable result remains unresolved after restart", async () => {
+    const intent = await signedIntent("unknown-work");
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    const uncertainStore = path("unknown-work-store");
+    const sideEffect = path("unknown-work-side-effect.txt");
+    let work = 0;
+    const service = async () => {
+      work += 1;
+      writeFileSync(sideEffect, `external work ${work}`);
+      throw new Error("process stopped after external work");
+    };
+    const makeServer = () => createProviderServer({
+      connection, account: provider, endpointHash: ENDPOINT_HASH, price: PRICE, storeDir: uncertainStore, service,
+    });
+    let server = await listen(makeServer(), 0);
+    try {
+      const accepted = await post(server.address().port, "/accept", { intent: readJson(intent.file), requestId: "req-unknown-work" });
+      assert.equal(accepted.status, 200);
+      assert.equal((await ok("submit", ["submit", "--intent", intent.file, "--execute"], EXECUTOR)).status, "paid");
+      const before = [await executorNonce(), await balance(provider.address)];
+      assert.deepEqual(await post(server.address().port, "/serve", { digest: intent.digest }), {
+        status: 500,
+        json: { error: `service outcome for digest ${intent.digest} is unknown; the provider must reconcile it before work can be retried` },
+      });
+      assert.equal(readFileSync(sideEffect, "utf8"), "external work 1");
+      assert.equal(existsSync(join(uncertainStore, `${intent.digest}.result.json`)), false);
+      const markerFile = join(uncertainStore, `${intent.digest}.started.json`);
+      const marker = readJson(markerFile);
+      assert.deepEqual(marker, { digest: intent.digest, requestId: "req-unknown-work" });
+
+      await stop(server);
+      server = await listen(makeServer(), 0);
+      assert.deepEqual(await post(server.address().port, "/serve", { digest: intent.digest }), {
+        status: 409,
+        json: { error: `service outcome for digest ${intent.digest} is unknown; the provider must reconcile it before work can be retried` },
+      });
+      assert.equal(work, 1, "the restarted provider did not repeat the side effect");
+      assert.deepEqual([await executorNonce(), await balance(provider.address)], before);
+
+      writeFileSync(markerFile, stableStringify({ ...marker, requestId: "wrong-request" }));
+      assert.equal((await post(server.address().port, "/serve", { digest: intent.digest })).status, 500);
+      assert.equal(work, 1, "a marker that disagrees with the acceptance also blocks work");
+    } finally {
+      await stop(server);
+      assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);
+    }
+  });
+
   test("a stored delivery is withheld when a reorg removes its payment", async () => {
     const intent = await signedIntent("reorg");
     await ok("request", acceptArgs(PROXY_URL, intent.file, "req-reorg", path("acceptance-reorg.json")));
@@ -841,7 +913,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         acceptArgs(PROXY_URL, g.file, "req-g", path("acceptance-g.json")),
         {},
         new RegExp(
-          `^the provider failed \\(HTTP 500\\): the provider failed on digest ${g.digest} and logged the error; the request can be retried; nothing is paid before acceptance, so this is retryable: run accept again with the same --request-id$`,
+          `^the provider failed \\(HTTP 500\\): the provider failed on digest ${g.digest} and logged the error; the request can be retried; nothing is paid before acceptance, so this is retryable: run accept again with the same signed intent and --request-id$`,
         ),
       );
       assert.equal(existsSync(path("acceptance-g.json")), false);
