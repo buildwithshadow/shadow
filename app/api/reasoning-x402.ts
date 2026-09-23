@@ -19,6 +19,7 @@ const ARC_CHAIN_ID = 5_042_002;
 const DEFAULT_USDC = "0x3600000000000000000000000000000000000000";
 const DEFAULT_PRICE_ATOMIC = "1000"; // 0.001 USDC, 6 decimals
 const MAX_AUTHORIZATION_SECONDS = 15 * 60;
+const BYTES32 = /^0x[a-fA-F0-9]{64}$/;
 
 const usdcEip3009Abi = parseAbi([
   "function authorizationState(address authorizer, bytes32 nonce) view returns (bool)",
@@ -118,6 +119,15 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
   // transaction confirmation cannot turn a paid request into a missing result.
   if (!kv) {
     res.status(503).json({ error: "reasoning store not configured" });
+    return;
+  }
+  // Availability is now checked on unauthenticated quote requests too, so
+  // refuse arbitrary KV keys before the lookup.
+  if (["hash", "tx"].some((name) => {
+    const value = readQueryParam(req, name);
+    return value !== null && !BYTES32.test(value);
+  })) {
+    res.status(400).json({ error: "hash and tx must be 32-byte hex values" });
     return;
   }
   let reasoning: Awaited<ReturnType<typeof loadReasoning>>;
@@ -296,7 +306,7 @@ async function loadReasoning(req: VercelLikeRequest, kv: KVConfig) {
     return { configured: true, packet: null, latestIntentHash: null };
   }
   const packet = await kvGet<ReasoningPacket>(kv, `reasoning:${targetHash}`);
-  if (!packet || packet.intentHash?.toLowerCase() !== targetHash.toLowerCase()) {
+  if (!packet || typeof packet.intentHash !== "string" || packet.intentHash.toLowerCase() !== targetHash.toLowerCase()) {
     return { configured: true, packet: null, latestIntentHash: targetHash };
   }
   return { configured: true, packet, latestIntentHash: targetHash };

@@ -41,6 +41,12 @@ test("x402 never advertises a charge for an expired or unavailable reasoning pac
     assert.equal(requests.includes(`reasoning:${hash}`), true);
     assert.equal(stale.headers["X-PAYMENT-RESPONSE"], undefined);
 
+    const count = requests.length;
+    const invalid = response();
+    await handler({ method: "GET", url: "/api/reasoning-x402?hash=not-a-digest" }, invalid);
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(requests.length, count, "malformed public requests never query KV");
+
     values.set(`reasoning:${hash}`, JSON.stringify(packet));
     const available = response();
     await handler({ method: "GET", url: "/api/reasoning-x402" }, available);
