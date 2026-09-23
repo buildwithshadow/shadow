@@ -112,6 +112,26 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
     return;
   }
 
+  // Resolve and hold the exact packet before advertising or settling a fee.
+  // The previous order could charge for a stale latest pointer, then return
+  // 404 after settlement. Use this snapshot for the response so expiry during
+  // transaction confirmation cannot turn a paid request into a missing result.
+  if (!kv) {
+    res.status(503).json({ error: "reasoning store not configured" });
+    return;
+  }
+  let reasoning: Awaited<ReturnType<typeof loadReasoning>>;
+  try {
+    reasoning = await loadReasoning(req, kv);
+  } catch {
+    res.status(503).json({ error: "reasoning store unavailable" });
+    return;
+  }
+  if (!reasoning.packet) {
+    res.status(404).json({ error: "reasoning not found", intentHash: reasoning.latestIntentHash });
+    return;
+  }
+
   const requirements = paymentRequirements(req, gate);
   const paymentHeader = readHeader(req, "x-payment");
   if (!paymentHeader) {
@@ -142,15 +162,7 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
     });
   }
 
-  try {
-    const response = await loadReasoning(req, kv);
-    res.status(200).json({ ...response, x402: settled });
-  } catch (error) {
-    res.status(404).json({
-      error: sanitizeError(error),
-      x402: settled,
-    });
-  }
+  res.status(200).json({ ...reasoning, x402: settled });
 }
 
 // Same hygiene as /api/state: upstream errors can embed the RPC URL
@@ -271,10 +283,7 @@ async function verifyAndSettle(paymentHeader: string, gate: X402Config) {
   };
 }
 
-async function loadReasoning(req: VercelLikeRequest, kv: KVConfig | null) {
-  if (!kv) {
-    return { configured: false, packet: null, latestIntentHash: null };
-  }
+async function loadReasoning(req: VercelLikeRequest, kv: KVConfig) {
   let targetHash = readQueryParam(req, "hash");
   const txParam = readQueryParam(req, "tx");
   if (!targetHash && txParam) {
@@ -287,8 +296,8 @@ async function loadReasoning(req: VercelLikeRequest, kv: KVConfig | null) {
     return { configured: true, packet: null, latestIntentHash: null };
   }
   const packet = await kvGet<ReasoningPacket>(kv, `reasoning:${targetHash}`);
-  if (!packet) {
-    throw new Error(`reasoning not found for ${targetHash}`);
+  if (!packet || packet.intentHash?.toLowerCase() !== targetHash.toLowerCase()) {
+    return { configured: true, packet: null, latestIntentHash: targetHash };
   }
   return { configured: true, packet, latestIntentHash: targetHash };
 }

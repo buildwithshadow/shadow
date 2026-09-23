@@ -5,6 +5,7 @@ on:
     paths:
       - ".github/workflows/float-self-serve.yml"
       - "app/api/float.ts"
+      - "app/api/reasoning-x402.ts"
       - "app/api/treasury.ts"
       - "app/floatV2Config.d.ts"
       - "app/floatV2Config.js"
@@ -29,6 +30,8 @@ on:
       - "app/scripts/rpc-read-queue*"
       - "examples/float-mainnet-provider-server/**"
       - "app/scripts/shadow-url-migration.test.mjs"
+      - "app/scripts/reasoning-x402-availability.test.mjs"
+      - "app/scripts/shadow-reasoning-service.test.mjs"
       - "app/shadowUrls.d.ts"
       - "app/shadowUrls.js"
       - "app/tsconfig.json"
@@ -101,6 +104,8 @@ jobs:
         run: node --test app/scripts/treasury-verify-live.test.mjs
       - name: Test domain migration and mandate identity compatibility
         run: node --test app/scripts/shadow-url-migration.test.mjs
+      - name: Test reasoning availability before payment and provider acceptance
+        run: node --test app/scripts/reasoning-x402-availability.test.mjs app/scripts/shadow-reasoning-service.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app
