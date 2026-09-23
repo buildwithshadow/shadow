@@ -2,7 +2,7 @@
 
 Status: proposed. The pinned values below await owner approval. Arc testnet deployment of `ShadowFloatMainnet` is not authorized, and nothing in this plan has been executed onchain. All results come from Foundry's local test EVM with a mock six-decimal USDC.
 
-Scope: the lifecycle test plan assigned in the 18 September 2026 accelerator roadmap (version 3, "First 48 hours", item 2). It covers the roadmap's "First technical experiment" and the pilot completion rule in [`MAINNET_PATH.md`](MAINNET_PATH.md) Phase 1: three spend-and-repay cycles on separate occasions, one genuine policy block with no provider transfer, and a final sponsor reserve reclaim. Contract source: `contracts/src/ShadowFloatMainnet.sol` at `2ebae7f`.
+Scope: lifecycle validation of the `ShadowFloatMainnet` candidate against its [`specification`](SHADOW_FLOAT_MAINNET_SPEC.md). Pilot evidence requires three spend-and-repay cycles on separate occasions, one genuine policy block with no provider transfer, and a final sponsor reserve reclaim. Contract source: `contracts/src/ShadowFloatMainnet.sol` at `2ebae7f`.
 
 ```sh
 forge test --root contracts --match-path 'test/ShadowFloatMainnet*.t.sol' -vv
@@ -79,9 +79,9 @@ The caps bound principal, not purchase count: 3 USDC cumulative principal per li
 
 Mutation checks against altered copies of the contract were informal, are not reproducible from the repository, and no result is claimed for them.
 
-## 3. Roadmap path mapping
+## 3. Lifecycle test mapping
 
-These are steps 1–7 of the roadmap's "complete useful path" (lines 100–108 of the 18 September version). The evidence column uses the rows of the roadmap's evidence table (lines 122–130).
+The table maps each lifecycle step to contract tests, expected state, and the evidence needed to validate a live run.
 
 | Step | Contract tests | Expected events and state | Evidence to capture |
 | --- | --- | --- | --- |
@@ -95,7 +95,7 @@ These are steps 1–7 of the roadmap's "complete useful path" (lines 100–108 o
 
 ## 4. Additional checks
 
-These are the checks the roadmap adds in lines 110–112.
+The following checks cover refusals, retries, repayment, and boundary conditions beyond the successful lifecycle.
 
 | Check | Contract tests | Expected result |
 | --- | --- | --- |

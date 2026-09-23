@@ -78,7 +78,7 @@ Checks:
 - Git: HEAD commit recorded. Each compiled source is unmodified against HEAD, with its sha256 and git blob id recorded.
 - Source lineage: the compiled sources are exactly the reviewed ones. `PINNED_SOURCE_BLOBS` in `app/scripts/float-mainnet-preflight.mjs` pins the git blob of `src/ShadowFloatMainnet.sol` and `src/interfaces/IERC20.sol` at `2ebae7f` (`PINNED_SOURCE_COMMIT`). A committed change to either file, or a new compiled source, fails here and in the manifest (`source.matchesPinnedLineage`), even though it is "unmodified vs HEAD".
 
-Changing the contract therefore requires consciously moving that pin. Per the roadmap, a material change needs review and pilot revalidation before the pin moves; update both constants in the same change as the reviewed source.
+Changing the contract therefore requires consciously moving that pin. A material change needs review and pilot revalidation before the pin moves; update both constants in the same change as the reviewed source.
 
 Items that stay `MANUAL` and need a human sign-off:
 

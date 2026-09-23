@@ -78,7 +78,7 @@ The protocol identifies a request by its **request id**, and the acceptance bind
 2. The agent sends its signed intent with `requestId: J` to `/accept`.
 3. After payment, the provider's `service` runs job `J` and returns its answer.
 
-Agree on this with the provider before the first pilot purchase, together with who investigates a delivery that stays unresolved and what remedy the provider actually offers (roadmap, "Independent pilot evidence and provider recovery").
+Agree on this with the provider before the first pilot purchase, together with who investigates a delivery that stays unresolved and what remedy the provider actually offers.
 
 Do not put secrets in `resultRef`: it goes into the signed receipt and into the evidence bundle.
 

@@ -2,7 +2,7 @@
 
 Status, 2026-09-18: the `ShadowFloatMainnet` candidate is **not deployed** on any network. These tools are tested end to end on a local chain only. The deployment values they were tested with are proposals pending owner approval. Nothing in this guide authorizes a deployment, a funded line or a public claim.
 
-These command-line tools let each pilot participant run their own part of the lifecycle with their own key. No Shadow engineer builds or signs a participant's transaction (roadmap, "Candidate participant tools"). They target the candidate contract only. They reject a V2 address, a V2 intent file, the wrong chain, and any contract that does not report the candidate's own EIP-712 name, version and `SpendIntent` typehash.
+These command-line tools let each pilot participant run their own part of the lifecycle with their own key. No Shadow engineer builds or signs a participant's transaction. They target the candidate contract only. They reject a V2 address, a V2 intent file, the wrong chain, and any contract that does not report the candidate's own EIP-712 name, version and `SpendIntent` typehash.
 
 ## Roles
 
@@ -98,7 +98,7 @@ The local digest must equal the contract's `hashSpendIntent`. `dueAt` defaults t
 node app/scripts/float-mainnet-intent.mjs verify --intent intent.json --signature <hex> --out intent.json --manifest $M
 ```
 
-That Circle's `circle wallet sign typed-data` works on Arc testnet and returns a signature the account validates for this digest is **not yet demonstrated**. It is the roadmap's two-day compatibility experiment.
+That Circle's `circle wallet sign typed-data` works on Arc testnet and returns a signature the account validates for this digest is **not yet demonstrated**. Live compatibility testing is still required.
 
 ### 5. Executor submits
 
@@ -255,7 +255,7 @@ Tested end to end on anvil through these CLIs, unless noted (`npm run float:main
 
 The end-to-end suites need Foundry's `anvil` and fail without it; set `FLOAT_E2E_OPTIONAL=1` to skip them instead.
 
-Not yet validated, and required by the roadmap before pilot claims:
+Not yet validated, and required before pilot claims:
 
 - signing with a real Circle Agent Wallet on Arc testnet;
 - a real provider adopting the acceptance and delivery protocol, including storing results by digest so that an interrupted request can be retried (tested only against the local stub and `--store`);
