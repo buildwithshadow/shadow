@@ -220,7 +220,9 @@ Also defer a generic agent wallet, provider marketplace, broad execution engine,
 
 Keep one shared weekly record: customer evidence, completed product actions, measured benefit, blockers, next action and owner. Use it to make decisions; avoid turning reporting or test volume into a substitute for use.
 
-## First 48 hours from this revision: September 18–20
+## Historical version 3 kickoff actions: September 18–20
+
+This section preserves the actions assigned in the September 18 roadmap. It is not a new 48-hour schedule or a completion report as of September 23. Carry any unfinished item into the current milestone work above and record its owner and status in the team's weekly evidence log.
 
 1. **Adedolapo + Isiaq:** agree the distinct-sponsor/operator hypothesis, identify ten relevant contacts, and request the first five qualified conversations. Ask how many purchases happen before revenue arrives.
 2. **Ridwan:** inventory the candidate tooling and unpublished work; prepare the pinned testnet deployment package, chain/token configuration, verification procedure and lifecycle test plan. Set cumulative and daily limits to support the intended three cycles without implying unlimited reuse. Surface deployment authorization and technical dependencies before execution; this roadmap does not itself deploy anything.
@@ -228,7 +230,7 @@ Keep one shared weekly record: customer evidence, completed product actions, mea
 4. **Adedolapo:** send or prepare the Week 1 reviewer brief, scope and candidate artifacts; agree budget, reviewer availability, target artifacts and time for remediation and re-review, or record the blocker. Outbound contact still follows the team’s normal authorization.
 5. **Adedolapo + Ridwan:** reconcile the public README, roadmap and product claims. Prepare the new roadmap as the current plan and archive the September 2 version. Remove stale implications that Gateway settlement or underwriting/scoring are mainnet commitments. Scope the default verifier honestly and investigate the reported retrieval failure. Publish through the repository’s normal review process.
 
-These are assigned next actions, not a claim they have been completed. Keep current evidence, review notes and participant permission together. No institutional-adoption claim without a qualifying commitment and permission; use “integration tester,” “prospective pilot participant” or “customer” according to the evidence.
+These were the original kickoff assignments, not a claim they have been completed. Keep current evidence, review notes and participant permission together. No institutional-adoption claim without a qualifying commitment and permission; use “integration tester,” “prospective pilot participant” or “customer” according to the evidence.
 
 ## Accelerator narrative
 
