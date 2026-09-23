@@ -169,8 +169,8 @@ describe("request client against the reference provider server", { skip: e2eSkip
   // its service and its chain client are wrapped to count signatures, service
   // runs and chain calls: failNextSign and failNextCall make the next one fail,
   // and hold, when set, is a promise the signer and the service wait for.
-  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store } = {}) {
-    const stats = { signed: 0, work: [], calls: [], failNextSign: false, failNextCall: null, failSignatureRpc: null, hold: null };
+  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService } = {}) {
+    const stats = { signed: 0, work: [], prepared: [], calls: [], failNextSign: false, failNextCall: null, failSignatureRpc: null, hold: null };
     const signer = {
       address: key.address,
       signTypedData: async (typed) => {
@@ -186,8 +186,14 @@ describe("request client against the reference provider server", { skip: e2eSkip
     const service = async (input) => {
       await stats.hold;
       stats.work.push(input.digest);
-      return exampleService(input);
+      return serviceImpl(input);
     };
+    if (typeof serviceImpl.prepare === "function") {
+      service.prepare = async (input) => {
+        stats.prepared.push(input.requestId);
+        return serviceImpl.prepare(input);
+      };
+    }
     const counted = new Proxy(connection.client, {
       get(target, name) {
         const value = Reflect.get(target, name);
@@ -456,6 +462,57 @@ describe("request client against the reference provider server", { skip: e2eSkip
     assert.deepEqual([repaid.after.state, repaid.after.principalOutstanding], ["OPEN", "0"]);
     const closed = await ok("sponsor", ["close", "--line-id", lineId, "--execute"], SPONSOR);
     assert.deepEqual([closed.amount, closed.state], ["1000000", "CLOSED"]);
+  });
+
+  test("a provider snapshots the real service result before acceptance, refuses unavailable work, and recovers the same paid result after restart", async () => {
+    const lineId = await openLine();
+    const unavailable = await signedIntent("prepared-unavailable");
+    const available = await signedIntent("prepared-available");
+    const requestId = keccak256(stringToBytes("reasoning-packet-available"));
+    const unavailableId = keccak256(stringToBytes("reasoning-packet-missing"));
+    const output = { result: `${JSON.stringify({ intentHash: requestId, decision: "skip", rationale: "bounded rehearsal" })}\n`, resultRef: `https://www.shadowbuild.xyz/api/reasoning?hash=${requestId}` };
+    const serviceImpl = async () => { throw new Error("prepared service must never run after payment"); };
+    serviceImpl.prepare = async ({ requestId: id }) => id === requestId ? output : null;
+    const isolatedStore = path("prepared-store");
+    let isolated = await startProviderServer(OTHER_PORT, { storeDir: isolatedStore, serviceImpl });
+    try {
+      const before = [await executorNonce(), await balance(provider.address)];
+      const missing = await post(OTHER_PORT, "/accept", { intent: readJson(unavailable.file), requestId: unavailableId });
+      assert.equal(missing.status, 422);
+      assert.match(missing.json.error, /unavailable; no acceptance was signed/);
+      assert.equal(existsSync(join(isolatedStore, `${unavailable.digest}.acceptance.json`)), false);
+      assert.deepEqual([await executorNonce(), await balance(provider.address)], before);
+
+      const accepted = await post(OTHER_PORT, "/accept", { intent: readJson(available.file), requestId });
+      assert.equal(accepted.status, 200);
+      assert.deepEqual([isolated.stats.prepared, isolated.stats.work], [[unavailableId, requestId], []]);
+      assert.equal(readJson(join(isolatedStore, `${available.digest}.prepared.json`)).result, Buffer.from(output.result).toString("base64"));
+      assert.deepEqual([await executorNonce(), await balance(provider.address)], before, "preparing and accepting never pays");
+      await stop(isolated.server);
+
+      // The source has disappeared; the signed acceptance still has its durable snapshot.
+      serviceImpl.prepare = async () => { throw new Error("upstream packet expired"); };
+      isolated = await startProviderServer(OTHER_PORT, { storeDir: isolatedStore, serviceImpl });
+      assert.deepEqual(await post(OTHER_PORT, "/accept", { intent: readJson(available.file), requestId }), accepted);
+      assert.deepEqual(isolated.stats.prepared, []);
+      const paid = await ok("submit", ["submit", "--intent", available.file, "--execute"], EXECUTOR);
+      assert.equal(paid.status, "paid");
+      const first = await post(OTHER_PORT, "/serve", { digest: available.digest });
+      assert.equal(first.status, 200);
+      assert.equal(Buffer.from(first.json.result, "base64").toString("utf8"), output.result);
+      assert.deepEqual(isolated.stats.work, [], "the stored snapshot, not a new service run, is delivered");
+      const second = await post(OTHER_PORT, "/serve", { digest: available.digest });
+      assert.deepEqual(second, first);
+      assert.equal((await balance(provider.address)) - before[1], PRINCIPAL);
+      await stop(isolated.server);
+      isolated = await startProviderServer(OTHER_PORT, { storeDir: isolatedStore, serviceImpl });
+      assert.deepEqual(await post(OTHER_PORT, "/serve", { digest: available.digest }), first);
+      assert.deepEqual(isolated.stats.work, []);
+    } finally {
+      await stop(isolated.server);
+      await ok("repay", ["--line-id", lineId, "--full", "--execute"], AGENT);
+      await ok("sponsor", ["close", "--line-id", lineId, "--execute"], SPONSOR);
+    }
   });
 
   test("a server run from env whose port is taken prints one JSON error line and exits 1", async () => {
