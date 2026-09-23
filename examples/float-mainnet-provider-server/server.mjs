@@ -79,6 +79,9 @@ async function jsonBody(request) {
 // from walletFromEnv, or a custom signer for an ERC-1271 provider). service is
 // called as service({ digest, requestId, acceptance }) at most once per stored
 // digest and returns { result: string | Uint8Array, resultRef?: string }.
+// An optional service.prepare({ digest, requestId }) resolves immutable content
+// before acceptance is signed. Its result is stored under the digest and used
+// after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
 export function createProviderServer({ connection, account, endpointHash, price, storeDir, service }) {
@@ -118,11 +121,35 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return stored;
   }
 
+  function outputRecord(digest, requestId, output) {
+    const result = output?.result;
+    if (typeof result !== "string" && !(result instanceof Uint8Array)) {
+      throw new Error("the service must return { result: string | Uint8Array, resultRef?: string }");
+    }
+    const resultRef = output.resultRef ?? null;
+    resultRefHashOf(resultRef);
+    return { digest, requestId, result: Buffer.from(result).toString("base64"), resultRef };
+  }
+
+  function checkedPrepared(digest, requestId) {
+    const prepared = readStored(fileOf(digest, "prepared"));
+    if (!prepared) return null;
+    if (prepared.digest !== digest || prepared.requestId !== requestId || typeof prepared.result !== "string" ||
+        Buffer.from(prepared.result, "base64").toString("base64") !== prepared.result) {
+      throw new HttpError(`the provider's prepared result for digest ${digest} disagrees with this request; the provider has to repair it`, 409);
+    }
+    resultRefHashOf(prepared.resultRef);
+    return prepared;
+  }
+
   // Returns the acceptance and the intent file acceptIntent checked for it
   // (null for a stored one).
   async function acceptOnce({ digest, struct, signature }, intent, requestId) {
     const stored = storedReceipt(digest, ACCEPTANCE_KIND);
     if (stored) {
+      if (typeof service.prepare === "function" && !checkedPrepared(digest, stored.requestId)) {
+        throw new HttpError(`prepared service result for digest ${digest} is missing; the provider must reconcile it before payment`, 409);
+      }
       bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
     }
@@ -142,8 +169,14 @@ export function createProviderServer({ connection, account, endpointHash, price,
     let signing = false;
     const signer = {
       address: account.address,
-      signTypedData: (typed) => {
+      signTypedData: async (typed) => {
         signing = true;
+        if (typeof service.prepare === "function" && !checkedPrepared(digest, requestId)) {
+          const output = await service.prepare({ digest, requestId });
+          if (output === null) throw new HttpError(`service request ${JSON.stringify(requestId)} is unavailable; no acceptance was signed`, 422);
+          const prepared = outputRecord(digest, requestId, output);
+          if (!storeOnce(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
+        }
         return account.signTypedData(typed);
       },
     };
@@ -192,6 +225,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
   // The service's output, stored before any delivery is signed over it, so a
   // crash after this point never runs the service again for the digest.
   async function produce(digest, acceptance) {
+    const prepared = checkedPrepared(digest, acceptance.requestId);
+    if (typeof service.prepare === "function" && !prepared) {
+      throw new HttpError(`prepared service result for digest ${digest} is missing; the provider must reconcile it before serving`, 409);
+    }
     const markerFile = fileOf(digest, "started");
     const marker = { digest, requestId: acceptance.requestId };
     if (!storeOnce(markerFile, marker)) {
@@ -202,14 +239,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       throw new HttpError(`service outcome for digest ${digest} is unknown; the provider must reconcile it before work can be retried`, 409);
     }
     try {
-      const output = await service({ digest, requestId: acceptance.requestId, acceptance });
-      const result = output?.result;
-      if (typeof result !== "string" && !(result instanceof Uint8Array)) {
-        throw new Error("the service must return { result: string | Uint8Array, resultRef?: string }");
-      }
-      const resultRef = output.resultRef ?? null;
-      resultRefHashOf(resultRef); // throws unless resultRef is null or a non-empty string
-      const record = { digest, requestId: acceptance.requestId, result: Buffer.from(result).toString("base64"), resultRef };
+      const record = prepared ?? outputRecord(digest, acceptance.requestId, await service({ digest, requestId: acceptance.requestId, acceptance }));
       const kept = storeOnce(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || typeof kept?.result !== "string") {
         throw new Error(`stored result for digest ${digest} is missing or disagrees with its acceptance`);
@@ -340,7 +370,11 @@ async function main() {
       `${account.address} has code, so its receipts are checked with ERC-1271; call createProviderServer with a custom account { address, signTypedData } that signs with the account's signer`,
     );
   }
-  const { default: service } = await import("./service.mjs");
+  const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
+  if (env.PROVIDER_SERVICE && env.PROVIDER_SERVICE !== "shadow-reasoning" && env.PROVIDER_SERVICE !== "example") {
+    throw new Error("PROVIDER_SERVICE must be example or shadow-reasoning");
+  }
+  const { default: service } = await import(serviceModule);
   const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
