@@ -2,7 +2,7 @@
 
 # Shadow accelerator roadmap
 
-**18 September 2026 — final team roadmap, version 3**
+**23 September 2026 — team roadmap, version 3.1; programme calendar aligned**
 
 Prepared for Iyanda Abdulqodir Adedolapo, Ridwan Nurudeen and Apata Isiaq. Incorporates the team’s research, Ridwan’s critique and Isiaq’s three-document review. This is the consolidated roadmap for team execution; earlier drafts remain historical records. Deployment, funding and release remain subject to the conditions below.
 
@@ -28,7 +28,7 @@ By the end of eight core working weeks, we want three outcomes:
 2. **A commercial reason to exist:** a named buyer demonstrates a requirement or operational improvement beyond its current wallet setup and agrees to a recurring product subscription or a conditional paid pilot with price, scope and activation conditions. One-off integration work is tracked separately.
 3. **An evidence-backed release decision:** an independently reviewed, operationally prepared mainnet candidate, or a precise remaining-blocker list with owners. Mainnet launch depends on readiness; it is not promised for a calendar date.
 
-The organizer's onboarding email describes nine weeks, while the application asks for eight-week goals. Use eight weeks for these core outcomes and reserve a ninth week, if scheduled, for demonstration, handover and follow-up. Align exact session dates with Encode's final timetable.
+Encode's confirmed programme runs from the September 21 kickoff to **Demo Day on November 9, 2026**. The team's submitted checkpoints target the complete testnet workflow by **October 12**, an independent pilot by **October 26**, and a reviewed mainnet launch-or-hold decision by **November 2**. These are delivery targets, not mandatory waiting periods: complete work and assess readiness earlier when the evidence supports it. November 2 is not the earliest permitted mainnet date.
 
 ## Starting position
 
@@ -63,16 +63,18 @@ Sponsors still prefund dedicated reserves. Avoid claiming lower capital requirem
 
 ## Eight-week work plan
 
-The calendar below is a proposed team schedule anchored to the announced kickoff week of September 21. Confirm workshop dates and programme duration against Encode’s final timetable. The weeks are working targets. Progress depends on the evidence in the final column, and unmet conditions change scope rather than being silently marked complete.
+The calendar below follows Encode's confirmed timetable and the three milestones submitted on September 22. Workstreams can overlap and finish early. Progress depends on the evidence in the final column, and unmet conditions change scope rather than being silently marked complete.
 
 | Period | Main work | Lead | Required result |
 | --- | --- | --- | --- |
 | Before kickoff: Sep 18–20 | Pin `ShadowFloatMainnet` source and build configuration; prepare a non-funding Arc testnet deployment and manifest; reconcile public claims; recruit reviewer and pilot participants. Deploy only within explicit deployment authorization. | Adedolapo + Ridwan; Isiaq recruits | Candidate deployment, verified source and configuration before the pilot begins; if delayed, make it a Week 1 blocker. Preserve V2 as historical proof. |
 | Weeks 1–2: Sep 21–Oct 4 | Agree reviewer scope, budget and capacity in Week 1 and hand over pinned artifacts. Inventory and adapt candidate participant tools and verification. Conduct five qualified conversations; run the two-day compatibility experiment; select one purchase–repayment workflow. | Adedolapo owns review; Ridwan compatibility; Isiaq discovery | Reviewer budget, availability, artifacts, remediation and re-review time agreed, or named blocker; documented candidate tools usable without engineer-built transactions; one willing sponsor/operator/provider combination, repayment source, loss owner and feasible payment path. |
-| Weeks 3–4: Oct 5–18 | Complete the first customer lifecycle on the candidate deployed to testnet; fix onboarding, authorization, provider acceptance and recovery blockers. | Ridwan + Adedolapo | Provider delivers the paid service; debt, repayment, refusal, retry and eligible reclaim are demonstrated. Label any assisted rehearsal. |
-| Weeks 5–6: Oct 19–Nov 1 | Reach three independent cycles on separate occasions; measure operational value; test a recurring product price; continue review remediation. | Isiaq + Adedolapo; Ridwan reliability | Three qualifying cycles, one policy refusal, debt clearance and sponsor reclaim, without Shadow operating participant transactions; priced commitment or documented rejection. |
-| Weeks 7–8: Nov 2–15 | Resolve review findings, validate the final candidate, rehearse operations, decide release readiness and prepare the demonstration. | Adedolapo + Ridwan; Isiaq customer evidence | Launch or hold decision with evidence; final-release demonstration and focused 90-day plan. No forced mainnet deadline. |
-| Optional Week 9: Nov 16–22 | Demonstration, handover and follow-up if this matches the final organizer schedule. | Whole team | Accurate evidence and next steps. |
+| Testnet milestone: by Oct 12 | Complete the full lifecycle on the candidate deployed to testnet; fix onboarding, authorization, provider acceptance and recovery blockers. | Ridwan + Adedolapo | USDC and Circle Wallets: funding, purchase, service delivery, repayment and eligible reclaim; spending-limit enforcement. Also demonstrate refusal and interrupted-payment recovery. Label any assisted rehearsal and the actual wallet product tested. |
+| Independent pilot milestone: by Oct 26 | Reach three independent cycles on separate occasions; document participant feedback, measure operational value, test a recurring product price and continue review remediation. | Isiaq + Adedolapo; Ridwan reliability | External sponsor, agent operator and provider complete three purchase-and-repayment cycles using USDC and Circle Wallets. Record one policy refusal, debt clearance and sponsor reclaim without Shadow operating participant transactions; priced commitment or documented rejection. |
+| Mainnet readiness milestone: by Nov 2 | Resolve review findings, validate the final candidate, rehearse operations and decide release readiness. Start a controlled launch earlier if every release condition is met. | Adedolapo + Ridwan; Isiaq customer evidence | Reviewed USDC and Circle Wallets release candidate; operational checks passed; limited launch if ready, or a recorded hold decision with remaining blockers. |
+| Demo preparation: Nov 3–8; Demo Day: Nov 9 | Present the completed workflow, customer evidence and release decision; prepare a focused 90-day plan. | Whole team | Accurate demonstration of the verified release and explicit next steps. |
+
+The near-term push is to prove the candidate lifecycle and recovery before the September 25 grant update. A controlled mainnet release before that date is an uncommitted stretch, not a replacement for the release conditions below. Assess the earliest feasible launch from completed evidence; neither the grant deadline nor another team's launch establishes Shadow's readiness.
 
 The first independent qualifying cycle counts toward the three; an assisted rehearsal does not. Complete reclaim as part of validation rather than delaying it for presentation. A later demonstration can use a newly authorized testnet line or a clearly identified recording of the completed lifecycle.
 
@@ -168,6 +170,8 @@ Track revenue, support effort, infrastructure cost and resulting margin separate
 
 ## Mainnet release conditions
 
+These conditions govern the earliest release, including any attempt before the November 2 checkpoint. Reaching them early permits an earlier release decision; calendar acceleration does not waive them.
+
 A limited real-value pilot can proceed only after:
 
 - the independent testnet pilot has completed three qualifying cycles on separate occasions, one recorded policy refusal, debt clearance and sponsor reclaim on the reviewed candidate lineage, with assistance and control documented;
@@ -216,7 +220,9 @@ Also defer a generic agent wallet, provider marketplace, broad execution engine,
 
 Keep one shared weekly record: customer evidence, completed product actions, measured benefit, blockers, next action and owner. Use it to make decisions; avoid turning reporting or test volume into a substitute for use.
 
-## First 48 hours from this revision: September 18–20
+## Historical version 3 kickoff actions: September 18–20
+
+This section preserves the actions assigned in the September 18 roadmap. It is not a new 48-hour schedule or a completion report as of September 23. Carry any unfinished item into the current milestone work above and record its owner and status in the team's weekly evidence log.
 
 1. **Adedolapo + Isiaq:** agree the distinct-sponsor/operator hypothesis, identify ten relevant contacts, and request the first five qualified conversations. Ask how many purchases happen before revenue arrives.
 2. **Ridwan:** inventory the candidate tooling and unpublished work; prepare the pinned testnet deployment package, chain/token configuration, verification procedure and lifecycle test plan. Set cumulative and daily limits to support the intended three cycles without implying unlimited reuse. Surface deployment authorization and technical dependencies before execution; this roadmap does not itself deploy anything.
@@ -224,7 +230,7 @@ Keep one shared weekly record: customer evidence, completed product actions, mea
 4. **Adedolapo:** send or prepare the Week 1 reviewer brief, scope and candidate artifacts; agree budget, reviewer availability, target artifacts and time for remediation and re-review, or record the blocker. Outbound contact still follows the team’s normal authorization.
 5. **Adedolapo + Ridwan:** reconcile the public README, roadmap and product claims. Prepare the new roadmap as the current plan and archive the September 2 version. Remove stale implications that Gateway settlement or underwriting/scoring are mainnet commitments. Scope the default verifier honestly and investigate the reported retrieval failure. Publish through the repository’s normal review process.
 
-These are assigned next actions, not a claim they have been completed. Keep current evidence, review notes and participant permission together. No institutional-adoption claim without a qualifying commitment and permission; use “integration tester,” “prospective pilot participant” or “customer” according to the evidence.
+These were the original kickoff assignments, not a claim they have been completed. Keep current evidence, review notes and participant permission together. No institutional-adoption claim without a qualifying commitment and permission; use “integration tester,” “prospective pilot participant” or “customer” according to the evidence.
 
 ## Accelerator narrative
 
@@ -248,5 +254,7 @@ This plan incorporates Nurudeen's `SHADOW-VS-ARC-PORTAL-for-qdee.md`, Apata's tw
 ## Document history
 
 This final version incorporates Ridwan’s candidate-lineage correction and Isiaq’s tooling, repayment-limit, release-gate and pilot-evidence refinements. It retains the initial focus, recurring commercial test and subsequent Path B expansion.
+
+The September 23 calendar correction, owned by Adedolapo, aligns this roadmap with the team's September 22 milestone submission and Encode's confirmed November 9 Demo Day. It replaces the provisional November 2–15 delivery window and optional November 16–22 demonstration week. Scope, evidence requirements and release conditions are unchanged; the checkpoint dates do not require waiting to ship ready work.
 
 Earlier documents remain unchanged: the September 2 roadmap, September 17 proposal and revision 2, and both teammate reviews. Milestones remain open until supported by evidence. Changes to scope or dates should record the reason, owner and effect on the release conditions.
