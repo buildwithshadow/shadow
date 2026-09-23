@@ -18,6 +18,10 @@ on:
       - "app/package.json"
       - "app/pnpm-lock.yaml"
       - "app/src/main.tsx"
+      - "app/src/CircleWalletDiagnostic.tsx"
+      - "app/src/walletCandidateProbePayload.ts"
+      - "app/src/walletDiagnosticPayload.ts"
+      - "app/src/circleWalletDiagnostic.css"
       - "app/src/styles.css"
       - "app/scripts/lepton-readiness.test.mjs"
       - "app/scripts/historical-reads.test.mjs"
@@ -29,6 +33,8 @@ on:
       - "app/scripts/rpc-read-queue*"
       - "examples/float-mainnet-provider-server/**"
       - "app/scripts/shadow-url-migration.test.mjs"
+      - "app/scripts/circle-candidate-probe.test.mjs"
+      - "app/scripts/circle-wallet-diagnostic.test.ts"
       - "app/shadowUrls.d.ts"
       - "app/shadowUrls.js"
       - "app/tsconfig.json"
@@ -101,6 +107,8 @@ jobs:
         run: node --test app/scripts/treasury-verify-live.test.mjs
       - name: Test domain migration and mandate identity compatibility
         run: node --test app/scripts/shadow-url-migration.test.mjs
+      - name: Test Circle wallet diagnostic and candidate no-spend probe payload
+        run: node --test app/scripts/circle-wallet-diagnostic.test.ts app/scripts/circle-candidate-probe.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app
