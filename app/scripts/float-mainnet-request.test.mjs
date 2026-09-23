@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import fs, { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
-import { createServer } from "node:http";
+import { createServer, request as httpRequest } from "node:http";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,12 +78,28 @@ function stop(server) {
 }
 
 async function send(port, method, route, body) {
-  const response = await fetch(`${url(port)}${route}`, {
-    method,
-    headers: { "content-type": "application/json" },
-    body: body === undefined ? undefined : JSON.stringify(body),
+  // These direct probes cross server restarts. A fresh socket avoids reusing
+  // an idle fetch connection that belonged to the server we just stopped.
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(`${url(port)}${route}`, {
+      method,
+      agent: false,
+      headers: { "content-type": "application/json" },
+    }, (response) => {
+      const chunks = [];
+      response.on("data", (chunk) => chunks.push(chunk));
+      response.on("error", reject);
+      response.on("end", () => {
+        try {
+          resolve({ status: response.statusCode, json: JSON.parse(Buffer.concat(chunks).toString("utf8")) });
+        } catch (error) {
+          reject(error);
+        }
+      });
+    });
+    request.on("error", reject);
+    request.end(body === undefined ? undefined : JSON.stringify(body));
   });
-  return { status: response.status, json: await response.json() };
 }
 const post = (port, route, body) => send(port, "POST", route, body);
 
