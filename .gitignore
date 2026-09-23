@@ -35,3 +35,7 @@ app/.gitignore
 
 # Local-only external builder manifest (real builder handles + rationales).
 app/scripts/external-agents.json
+
+# Internal team roadmaps, including archived copies, stay outside the public repo.
+/docs/ROADMAP.md
+/docs/archive/ROADMAP*.md

@@ -2,7 +2,7 @@
 
 Status, 2026-09-19: the `ShadowFloatMainnet` candidate is **not deployed** on any network. The monitor and reconciliation tool below are tested end to end on a local chain only, and none of the procedures in this runbook has been rehearsed by the team. Nothing here authorizes a deployment, a funded line, a governance transaction or a public claim.
 
-This runbook covers the monitoring and operating-procedure parts of the roadmap's mainnet release conditions for the candidate. [`PILOT_OPERATIONS.md`](PILOT_OPERATIONS.md) is the runbook for the deployed V2 `ShadowFloat` and does not apply to the candidate. Participant commands are described in [`SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md`](SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md); the contract is `contracts/src/ShadowFloatMainnet.sol`.
+This runbook covers monitoring and operating procedures for the candidate. [`PILOT_OPERATIONS.md`](PILOT_OPERATIONS.md) is the runbook for the deployed V2 `ShadowFloat` and does not apply to the candidate. Participant commands are described in [`SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md`](SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md); the contract is `contracts/src/ShadowFloatMainnet.sol`.
 
 ## Operating rules
 

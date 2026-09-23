@@ -1,6 +1,6 @@
 # Shadow Float Mainnet Path
 
-**Plan of record:** [`ROADMAP.md`](ROADMAP.md) (final roadmap, version 3, 18 September 2026) takes precedence where this document differs. In particular, the independent pilot is planned on the `ShadowFloatMainnet` candidate deployed to Arc testnet, not on V2, because V2 evidence cannot substitute for candidate validation; Phase 1's "No V2 redeploy is required" no longer describes the pilot. The rest of this document is kept as written on 21 August 2026.
+**Current candidate requirements:** use the [`specification`](SHADOW_FLOAT_MAINNET_SPEC.md), [`pilot test plan`](SHADOW_FLOAT_MAINNET_PILOT_TEST_PLAN.md), and [`Arc testnet deployment runbook`](SHADOW_FLOAT_MAINNET_TESTNET_DEPLOYMENT.md) for the `ShadowFloatMainnet` candidate. Candidate validation must use that contract on Arc testnet; V2 evidence cannot substitute for it. The historical Phase 1 statement "No V2 redeploy is required" does not describe candidate validation. The rest of this document is kept as written on 21 August 2026.
 
 Shadow Float's current product is a sponsor-backed USDC spending line for autonomous agents on Arc testnet. A sponsor can open a line without Shadow owner approval, the agent signs each bounded spend, `ShadowFloat` pays the approved provider directly, debt opens onchain, and repayment restores capacity.
 

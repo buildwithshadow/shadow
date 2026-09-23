@@ -20,7 +20,7 @@ Chain: Arc Testnet, chain id `5042002`
 
 ## Mainnet Candidate
 
-`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is the mainnet-candidate contract, a separate generation from the testnet V2 contract described below. It is not deployed and not audited, and its Arc testnet deployment is pending authorization. It admits approved sponsors only, allows one outstanding draw per line, excludes automatic scoring, keeps protocol fees at zero and requires no Gateway behavior. The plan of record is [`docs/ROADMAP.md`](docs/ROADMAP.md).
+`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is the mainnet-candidate contract, a separate generation from the testnet V2 contract described below. It is not deployed and not audited, and its Arc testnet deployment is pending authorization. It admits approved sponsors only, allows one outstanding draw per line, excludes automatic scoring, keeps protocol fees at zero and requires no Gateway behavior. The public implementation requirements are in the specification and supporting technical documents below.
 
 - Specification: [`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md)
 - Threat model: [`docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md`](docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md)
@@ -205,7 +205,7 @@ Arc's agentic workflow lane combines identity, settlement, and programmable cont
 
 Shadow uses Arc USDC as the settlement asset. The historical V1 path binds x402/EIP-3009 settlement hashes into Float receipts. V2 removes the blind operator-bind gap by verifying the agent intent in the contract and paying the provider directly from reserved USDC.
 
-Circle Gateway is documented as additive settlement plumbing over recorded Desk activity: two Desk PAY cycles totaling `0.002` USDC were settled through Gateway batching on Jul 2, 2026 and are served from `/api/settlements` under `deskRecords`. This is not the V2 provider payment path and is not counted as external traction; it shows how sub-cent Desk economics can batch through Circle tooling. Details: [`docs/GATEWAY.md`](docs/GATEWAY.md). Gateway settlement is not part of the mainnet candidate either: the candidate's specification requires no Gateway behavior from the core contract ([`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md), section 8), and the roadmap treats Gateway support as a separate design decision.
+Circle Gateway is documented as additive settlement plumbing over recorded Desk activity: two Desk PAY cycles totaling `0.002` USDC were settled through Gateway batching on Jul 2, 2026 and are served from `/api/settlements` under `deskRecords`. This is not the V2 provider payment path and is not counted as external traction; it shows how sub-cent Desk economics can batch through Circle tooling. Details: [`docs/GATEWAY.md`](docs/GATEWAY.md). Gateway settlement is not part of the mainnet candidate either: the candidate's specification requires no Gateway behavior from the core contract ([`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md), section 8).
 
 Circle CCTP V2 is load-bearing, not a footnote. On Jul 5, 2026 a dollar burned on Ethereum Sepolia was minted natively on Arc and locked as the reserve behind a live Float sponsored line, which an autonomous agent then drew against to pay a provider and repaid in full (score `7500 -> 8250`, limit `0.025 -> 0.05` USDC, status `REPAID`). Remove the CCTP hop and that reserve does not exist on Arc. The six-transaction chain (burn `0x05c3731e` -> Iris attestation -> Arc mint `0xca5825f8` -> `openSponsoredLine` `0x8c3a5781` -> draw `0xa5dee9bb` -> repay `0x41e203d3`) plus a self-serve `/api/cctp-funding` acknowledgement route are in [`docs/CCTP.md`](docs/CCTP.md). This is testnet V2 funding history: the mainnet candidate's specification requires no CCTP behavior from the core contract (spec, section 8).
 
@@ -324,5 +324,4 @@ Supporting M1 contracts are documented in [`docs/MANDATE_M1.md`](docs/MANDATE_M1
 - Mainnet invariant and test matrix: [`docs/SHADOW_FLOAT_MAINNET_TEST_MATRIX.md`](docs/SHADOW_FLOAT_MAINNET_TEST_MATRIX.md)
 - Self-serve pilot operations: [`docs/PILOT_OPERATIONS.md`](docs/PILOT_OPERATIONS.md)
 - Economics: [`docs/ECONOMICS.md`](docs/ECONOMICS.md)
-- Roadmap: [`docs/ROADMAP.md`](docs/ROADMAP.md)
 - Forum FeeRouter canary: [`docs/FORUM_FEEROUTER_CANARY.md`](docs/FORUM_FEEROUTER_CANARY.md)
