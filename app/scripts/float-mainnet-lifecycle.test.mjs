@@ -13,6 +13,7 @@ import {
   erc20Abi,
   getAddress,
   http,
+  parseEventLogs,
 } from "viem";
 
 import { floatAbi } from "./float-mainnet-config.mjs";
@@ -27,6 +28,7 @@ import { structFromMessage } from "./float-mainnet-intent.mjs";
 const PORT = 18563;
 const PROXY_PORT = 18565;
 const FLAKY_PORT = 18573;
+const REPAY_PROXY_PORT = 18574;
 const RPC = `http://127.0.0.1:${PORT}`;
 const PROXY = `http://127.0.0.1:${PROXY_PORT}`;
 const ENDPOINT = "https://provider.example/api/answer";
@@ -244,7 +246,7 @@ describe("pilot lifecycle through the participant CLIs", { skip: e2eSkip }, () =
     assert.equal((await balance(provider.address)) - providerBefore, PRINCIPAL);
   });
 
-  test("a DRAWN line refuses a new draw; repay --full reopens it; receipt finds the payment", async () => {
+  test("a DRAWN line refuses a new draw; uncertain repayments are reconciled before --full reopens it", async () => {
     await fails("intent", buildArgs(PRINCIPAL, path("x.json")), {}, /outstanding debt \(250000\); repay in full first/);
     const drawn = await lineStatus();
     assert.deepEqual([drawn.state, drawn.principalOutstanding, drawn.availableReserve], ["DRAWN", "250000", "750000"]);
@@ -269,8 +271,66 @@ describe("pilot lifecycle through the participant CLIs", { skip: e2eSkip }, () =
     assert.equal(await client.getTransactionCount({ address: agent.address }), sentBefore + 2);
     assert.equal((await readFloat("getLine", [seen.lineId])).principalOutstanding, PRINCIPAL - 100_000n);
 
+    // The RPC relays an approval normally, then relays the repayment but tells
+    // the agent that its send timed out. The known hash, not the line balance
+    // alone, determines whether this particular repayment landed.
+    let sends = 0;
+    const proxy = createServer(async (request, response) => {
+      let body = "";
+      for await (const chunk of request) body += chunk;
+      const call = JSON.parse(body);
+      const upstream = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body });
+      const result = await upstream.text();
+      response.setHeader("content-type", "application/json");
+      if (call.method === "eth_sendRawTransaction" && ++sends === 2) {
+        return response.end(JSON.stringify({ jsonrpc: "2.0", id: call.id, error: { code: -32000, message: "upstream timed out after relay" } }));
+      }
+      response.end(result);
+    });
+    await new Promise((resolve) => proxy.listen(REPAY_PROXY_PORT, "127.0.0.1", resolve));
+    const payerBefore = await balance(agent.address);
+    const floatBefore = await balance(float);
+    const providerBefore = await balance(provider.address);
+    let interrupted;
+    try {
+      interrupted = await cli("repay", ["--line-id", seen.lineId, "--amount", "50000", "--execute"], {
+        ...AGENT,
+        ARC_RPC_URL: `http://127.0.0.1:${REPAY_PROXY_PORT}`,
+      });
+    } finally {
+      proxy.close();
+    }
+    assert.equal(sends, 2, "approval and repayment should each have been submitted once");
+    assert.equal(interrupted.status, 1, JSON.stringify(interrupted.json, null, 2));
+    const unknown = interrupted.json;
+    assert.deepEqual([unknown.ok, unknown.status, unknown.txHashes.length], [false, "unknown", 2]);
+    assert.equal(unknown.txHash, unknown.txHashes[1]);
+    assert.match(unknown.error.message, /repay transaction .* is unknown .*upstream timed out after relay/s);
+
+    const approvalReceipt = await client.getTransactionReceipt({ hash: unknown.txHashes[0] });
+    const repayReceipt = await client.getTransactionReceipt({ hash: unknown.txHash });
+    assert.deepEqual(
+      [approvalReceipt.status, getAddress(approvalReceipt.to), repayReceipt.status, getAddress(repayReceipt.to)],
+      ["success", usdc, "success", float],
+    );
+    const repaymentEvents = parseEventLogs({
+      abi: floatAbi,
+      logs: repayReceipt.logs.filter((log) => getAddress(log.address) === float),
+    });
+    assert.deepEqual(repaymentEvents.map(({ eventName, args }) => ({ eventName, args })), [{
+      eventName: "Repaid",
+      args: { lineId: seen.lineId, payer: agent.address, amount: 50_000n, principalRemaining: 100_000n },
+    }]);
+    assert.equal(payerBefore - (await balance(agent.address)), 50_000n);
+    assert.equal((await balance(float)) - floatBefore, 50_000n);
+    assert.equal(await balance(provider.address), providerBefore);
+    const recovered = await lineStatus();
+    assert.deepEqual([recovered.state, recovered.principalOutstanding, recovered.availableReserve], ["DRAWN", "100000", "900000"]);
+
+    // Once the specific hash is accounted for, --full reads only the remaining
+    // principal. Repeating --amount 50000 here would duplicate the repayment.
     const repaid = await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
-    assert.equal(repaid.amount, (PRINCIPAL - 100_000n).toString());
+    assert.equal(repaid.amount, "100000");
     assert.deepEqual(repaid.after, { state: "OPEN", principalOutstanding: "0", availableReserve: "1000000" });
     assert.equal((await lineStatus()).state, "OPEN");
 
