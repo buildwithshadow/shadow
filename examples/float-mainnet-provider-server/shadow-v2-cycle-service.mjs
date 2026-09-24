@@ -72,8 +72,20 @@ function checkedCycle(payment, repayment, paymentTx, repaymentTx) {
 }
 
 function comparable(receipt) {
-  return JSON.stringify({ status: receipt.status, blockNumber: receipt.blockNumber.toString(), blockHash: receipt.blockHash,
+  return JSON.stringify({ transactionHash: receipt.transactionHash?.toLowerCase(), status: receipt.status,
+    blockNumber: receipt.blockNumber.toString(), blockHash: receipt.blockHash,
     logs: receipt.logs.map(({ address, data, topics }) => ({ address: address.toLowerCase(), data, topics })) });
+}
+
+export async function verifyCanonicalBlocks(clients, receipts) {
+  await Promise.all(clients.map(async (client) => {
+    const head = await client.getBlockNumber();
+    for (const receipt of receipts) {
+      if (head < receipt.blockNumber + 20n) throw new Error("V2 report receipt has fewer than 20 confirmations");
+      const block = await client.getBlock({ blockNumber: receipt.blockNumber });
+      if (block.hash !== receipt.blockHash) throw new Error("V2 report receipt block is no longer canonical");
+    }
+  }));
 }
 
 export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } = {}) {
@@ -99,6 +111,9 @@ export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } =
       if (comparable(reads[0][i]) !== comparable(reads[1][i])) throw new Error("independent RPC receipts disagree");
     }
     const report = checkedCycle(reads[0][0], reads[0][1], paymentHash, repaymentHash);
+    // A prepared result is retained after acceptance, so reject shallow or
+    // orphaned receipts before freezing their block hashes under the digest.
+    await verifyCanonicalBlocks(rpcClients, reads[0]);
     return { result: `${JSON.stringify(report)}\n`, resultRef: `https://explorer.testnet.arc.io/tx/${paymentHash}` };
   };
   return service;
