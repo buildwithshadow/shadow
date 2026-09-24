@@ -34,8 +34,9 @@ node examples/float-mainnet-provider-server/server.mjs --manifest $M
 | `PROVIDER_ENDPOINT` | The exact endpoint string the sponsor approved for this provider. It is hashed as UTF-8 and compared with the intent's `endpointHash`. |
 | `PROVIDER_PRICE` | The lowest principal accepted, in atomic USDC. |
 | `PROVIDER_STORE_DIR` | Where request bindings, service starts, acceptances, results and deliveries are kept. It needs a filesystem with hard links. |
-| `PROVIDER_SERVICE` | `example` (default echo) or `shadow-reasoning` for Shadow's founder-run packet rehearsal. |
+| `PROVIDER_SERVICE` | `example` (default echo), `shadow-reasoning`, or `shadow-v2-cycle` for a read-only founder rehearsal report. |
 | `SHADOW_REASONING_BASE_URL` | Origin for `shadow-reasoning`, default `https://www.shadowbuild.xyz`. HTTPS is required except for loopback tests. |
+| `SHADOW_V2_PAYMENT_TX`, `SHADOW_V2_REPAYMENT_TX` | Required distinct Arc testnet transaction hashes for `shadow-v2-cycle`. The payment hash is the provider request ID. |
 | `PORT`, `HOST` | Where to listen. The defaults are `8080` and `127.0.0.1`. Put a TLS reverse proxy in front before exposing it. |
 
 On start, the server prints one JSON line on stdout: `listening`, `provider`, `float`, `chainId`, `endpoint`, `endpointHash`, `price` and `store`. If a variable is missing or malformed, the chain or the Float does not check out, the key is invalid or has code, or the port cannot be listened on (in use, for example), it prints one line `{"ok":false,"error":...}` on stderr and exits 1. Error messages redact URLs, so an RPC API key in `ARC_RPC_URL` does not appear in them.
@@ -89,6 +90,12 @@ Do not put secrets in `resultRef`: it goes into the signed receipt and into the 
 Set `PROVIDER_SERVICE=shadow-reasoning` and use a **specific 32-byte reasoning intent hash** as the provider `requestId`. The adapter reads `/api/reasoning?hash=<requestId>` from the fixed Shadow origin before signing acceptance. It does not call `/api/reasoning-x402`: the candidate contract's direct provider payment is the one payment for this service. If the packet does not exist, `/accept` returns `422` and signs nothing; an upstream outage returns a retryable `500`. A packet with another intent hash is refused.
 
 The server durably stores the returned packet bytes under the candidate spend digest before signing acceptance. After payment it serves that snapshot, even if the source packet has expired, and signs the delivery over the exact stored bytes. A lost acknowledgement or process restart returns the same result without another service fetch or charge. The packet is keyed by its **reasoning intent hash**, which is a lookup key rather than a hash of the packet bytes. The provider's delivery receipt hashes the actual returned bytes. Keep `PROVIDER_STORE_DIR` persistent and private; losing its prepared files after acceptance requires manual reconciliation.
+
+### Shadow V2 cycle-report rehearsal
+
+Set `PROVIDER_SERVICE=shadow-v2-cycle`, `SHADOW_V2_PAYMENT_TX` and `SHADOW_V2_REPAYMENT_TX` for an existing Arc testnet V2 paid-and-repaid pair. Use the payment transaction hash as the provider `requestId`. Before acceptance, the service reads both receipts from the official Arc RPC and a second Arc RPC, checks their agreement, decodes the V2 provider-payment, debt-opened and repayment events, and verifies the matching USDC transfers and debt restoration. A wrong request ID is refused before a chain read; missing or conflicting chain evidence prevents acceptance. The report bytes are snapshotted under the candidate spend digest, then delivered only after that **separate** candidate payment is observed. Recovery returns the same bytes and delivery receipt.
+
+This is a founder-operated engineering rehearsal against historical public data. The V2 payment in the report is the subject of the report, not payment for the new report. It does not demonstrate a new customer, new V2 transaction, mainnet use, or candidate lifecycle on its own. The payment and repayment request hashes differ, so the report states its linkage and duplicate-charge limits explicitly. Do not expose a private cycle through this service: paid results are publicly retrievable by digest.
 
 **ERC-1271 providers.** A provider address with code has its receipts checked with ERC-1271. Import `createProviderServer` from `server.mjs` and pass a custom account `{ address, signTypedData }` that signs with the account's signer. The kit's checks still run. After the account rotates its signer, a digest accepted before the rotation and not yet delivered cannot be delivered: `deliverResult` checks the acceptance's signature at the latest block.
 

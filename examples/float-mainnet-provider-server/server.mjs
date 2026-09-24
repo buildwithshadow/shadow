@@ -370,11 +370,17 @@ async function main() {
       `${account.address} has code, so its receipts are checked with ERC-1271; call createProviderServer with a custom account { address, signTypedData } that signs with the account's signer`,
     );
   }
-  const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
-  if (env.PROVIDER_SERVICE && env.PROVIDER_SERVICE !== "shadow-reasoning" && env.PROVIDER_SERVICE !== "example") {
-    throw new Error("PROVIDER_SERVICE must be example or shadow-reasoning");
+  if (env.PROVIDER_SERVICE && !["example", "shadow-reasoning", "shadow-v2-cycle"].includes(env.PROVIDER_SERVICE)) {
+    throw new Error("PROVIDER_SERVICE must be example, shadow-reasoning or shadow-v2-cycle");
   }
-  const { default: service } = await import(serviceModule);
+  let service;
+  if (env.PROVIDER_SERVICE === "shadow-v2-cycle") {
+    const { createShadowV2CycleService } = await import("./shadow-v2-cycle-service.mjs");
+    service = createShadowV2CycleService({ paymentTx: env.SHADOW_V2_PAYMENT_TX, repaymentTx: env.SHADOW_V2_REPAYMENT_TX });
+  } else {
+    const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
+    ({ default: service } = await import(serviceModule));
+  }
   const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
