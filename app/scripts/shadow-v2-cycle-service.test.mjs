@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { createShadowV2CycleService, verifyCanonicalBlocks } from "../../examples/float-mainnet-provider-server/shadow-v2-cycle-service.mjs";
+import { assertNoInterveningDebtChange, createShadowV2CycleService, verifyCanonicalBlocks } from "../../examples/float-mainnet-provider-server/shadow-v2-cycle-service.mjs";
 
 const paymentTx = `0x${"a".repeat(64)}`;
 const repaymentTx = `0x${"b".repeat(64)}`;
@@ -46,4 +46,19 @@ test("the report cannot freeze a shallow or orphaned receipt", async () => {
   await assert.rejects(verifyCanonicalBlocks([client(119n, blockHash), client(120n, blockHash)], [receipt]), /fewer than 20 confirmations/);
   await assert.rejects(verifyCanonicalBlocks([client(120n, blockHash), client(120n, `0x${"2".repeat(64)}`)], [receipt]), /no longer canonical/);
   await assert.doesNotReject(verifyCanonicalBlocks([client(120n, blockHash), client(121n, blockHash)], [receipt]));
+});
+
+test("a same-sized intervening debt cycle cannot be represented as one restored debt", () => {
+  const report = { agent: `0x${"1".repeat(40)}`, payment: { tx: paymentTx, debtOpenedReceiptHash: `0x${"c".repeat(64)}` },
+    repayment: { tx: repaymentTx, receiptHash: `0x${"d".repeat(64)}` } };
+  const log = (transactionHash, receiptHash, receiptType, debtBefore, debtAfter) => ({
+    transactionHash, receiptHash, receiptType, agent: report.agent, debtBefore, debtAfter,
+    creditBefore: debtAfter, creditAfter: debtBefore, logIndex: 1, removed: false,
+  });
+  const start = log(paymentTx, report.payment.debtOpenedReceiptHash, 5, "0", "1000");
+  const end = log(repaymentTx, report.repayment.receiptHash, 6, "1000", "0");
+  assert.doesNotThrow(() => assertNoInterveningDebtChange([start, end], report));
+  const earlierRepayment = log(`0x${"e".repeat(64)}`, `0x${"f".repeat(64)}`, 6, "1000", "0");
+  const laterPayment = log(`0x${"3".repeat(64)}`, `0x${"4".repeat(64)}`, 5, "0", "1000");
+  assert.throws(() => assertNoInterveningDebtChange([start, earlierRepayment, laterPayment, end], report), /intervened/);
 });

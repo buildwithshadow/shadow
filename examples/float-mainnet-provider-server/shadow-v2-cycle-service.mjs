@@ -66,8 +66,9 @@ function checkedCycle(payment, repayment, paymentTx, repaymentTx) {
       requestHash: repaid.requestHash, receiptHash: repaid.receiptHash,
       debtBeforeUSDC: formatUnits(repaid.debtBeforeUSDC, 6), debtAfterUSDC: formatUnits(repaid.debtAfterUSDC, 6),
     },
-    checks: { twoRpcReceiptsMatch: true, providerTransferMatches: true, repaymentTransferMatches: true, debtRestored: true },
-    limits: `Payment and repayment request hashes ${paid.requestHash === repaid.requestHash ? "match" : "differ"}. This pair is linked by agent, amount and sequential debt/credit state; it cannot prove the global absence of duplicate charges.`,
+    checks: { twoRpcReceiptsMatch: true, providerTransferMatches: true, repaymentTransferMatches: true, debtRestored: true,
+      noInterveningAgentDebtOrCreditChange: true },
+    limits: `Payment and repayment request hashes ${paid.requestHash === repaid.requestHash ? "match" : "differ"}. This pair is linked by agent, amount and an uninterrupted debt/credit transition in the inspected interval; it cannot prove the global absence of duplicate charges.`,
   };
 }
 
@@ -86,6 +87,45 @@ export async function verifyCanonicalBlocks(clients, receipts) {
       if (block.hash !== receipt.blockHash) throw new Error("V2 report receipt block is no longer canonical");
     }
   }));
+}
+
+function normalizedFloatLogs(logs) {
+  return logs.map((log) => ({
+    transactionHash: log.transactionHash?.toLowerCase(), blockNumber: log.blockNumber?.toString(),
+    logIndex: log.logIndex, receiptHash: log.args?.receiptHash?.toLowerCase(),
+    receiptType: log.args?.receiptType, agent: log.args?.agent?.toLowerCase(),
+    creditBefore: log.args?.creditBeforeUSDC?.toString(), creditAfter: log.args?.creditAfterUSDC?.toString(),
+    debtBefore: log.args?.debtBeforeUSDC?.toString(), debtAfter: log.args?.debtAfterUSDC?.toString(),
+    removed: log.removed === true,
+  })).sort((a, b) => Number(BigInt(a.blockNumber) - BigInt(b.blockNumber)) || a.logIndex - b.logIndex);
+}
+
+export function assertNoInterveningDebtChange(logs, report) {
+  if (logs.some((log) => log.removed || log.logIndex === null || log.logIndex === undefined)) {
+    throw new Error("V2 interval logs are incomplete or removed");
+  }
+  const positions = (tx, receiptHash, type) => logs.flatMap((log, index) =>
+    log.transactionHash === tx && log.receiptHash === receiptHash && log.receiptType === type ? [index] : []);
+  const starts = positions(report.payment.tx, report.payment.debtOpenedReceiptHash.toLowerCase(), 5);
+  const ends = positions(report.repayment.tx, report.repayment.receiptHash.toLowerCase(), 6);
+  if (starts.length !== 1 || ends.length !== 1 || starts[0] >= ends[0]) {
+    throw new Error("V2 debt interval boundaries are missing or out of order");
+  }
+  const agent = report.agent.toLowerCase();
+  if (logs.slice(starts[0] + 1, ends[0]).some((log) => log.agent === agent &&
+      (log.debtBefore !== log.debtAfter || log.creditBefore !== log.creditAfter))) {
+    throw new Error("another V2 debt or credit change intervened between payment and repayment");
+  }
+}
+
+async function verifyDebtInterval(clients, payment, repayment, report) {
+  if (repayment.blockNumber - payment.blockNumber > 5_000n) throw new Error("V2 debt interval exceeds the bounded scan range");
+  const results = await Promise.all(clients.map((client) => client.getLogs({
+    address: FLOAT, event: floatReceipt, fromBlock: payment.blockNumber, toBlock: repayment.blockNumber,
+  })));
+  const logs = results.map(normalizedFloatLogs);
+  if (JSON.stringify(logs[0]) !== JSON.stringify(logs[1])) throw new Error("independent RPC V2 interval logs disagree");
+  assertNoInterveningDebtChange(logs[0], report);
 }
 
 export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } = {}) {
@@ -111,6 +151,7 @@ export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } =
       if (comparable(reads[0][i]) !== comparable(reads[1][i])) throw new Error("independent RPC receipts disagree");
     }
     const report = checkedCycle(reads[0][0], reads[0][1], paymentHash, repaymentHash);
+    await verifyDebtInterval(rpcClients, reads[0][0], reads[0][1], report);
     // A prepared result is retained after acceptance, so reject shallow or
     // orphaned receipts before freezing their block hashes under the digest.
     await verifyCanonicalBlocks(rpcClients, reads[0]);
