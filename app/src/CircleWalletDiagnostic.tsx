@@ -8,6 +8,7 @@ import {
   DIAGNOSTIC_CHAIN_ID, DIAGNOSTIC_RP_ID, DIAGNOSTIC_WALLET, WALLET_DIAGNOSTIC,
 } from "./walletDiagnosticPayload";
 import { candidateProbe } from "./walletCandidateProbePayload";
+import { parseBoundedCircleIntent } from "./walletPayableIntent";
 import "./circleWalletDiagnostic.css";
 
 type CircleAccount = Awaited<ReturnType<typeof toCircleSmartAccount>>;
@@ -30,6 +31,13 @@ export function CircleWalletDiagnostic() {
   const [candidateEvidence, setCandidateEvidence] = useState("");
   const [candidateStatus, setCandidateStatus] = useState("Log in with the existing passkey to check a deployed candidate.");
   const [candidateError, setCandidateError] = useState("");
+  const [payableSource, setPayableSource] = useState("");
+  const [payableError, setPayableError] = useState("");
+  const [payableStatus, setPayableStatus] = useState("Load a fresh, unsigned candidate intent before signing.");
+  const [payableAcknowledged, setPayableAcknowledged] = useState(false);
+  const payable = payableSource && candidatePayload
+    ? (() => { try { return parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract); } catch { return null; } })()
+    : null;
   const clientKey = (import.meta.env.VITE_CIRCLE_CLIENT_KEY || "").trim();
   const clientUrl = (import.meta.env.VITE_CIRCLE_CLIENT_URL || "").trim();
   const configured = Boolean(clientKey && clientUrl);
@@ -40,7 +48,7 @@ export function CircleWalletDiagnostic() {
   }, []);
 
   async function login() {
-    setBusy(true); setError(""); setEvidence(""); setCandidateEvidence(""); setCandidateError(""); setReady(false); account.current = null;
+    setBusy(true); setError(""); setEvidence(""); setCandidateEvidence(""); setCandidateError(""); setPayableError(""); setReady(false); account.current = null;
     setStatus("Waiting for your existing Circle passkey.");
     setCandidateStatus("Waiting for the existing Circle passkey.");
     try {
@@ -149,8 +157,70 @@ export function CircleWalletDiagnostic() {
     } finally { setBusy(false); }
   }
 
+  async function loadPayableIntent(file: File | undefined) {
+    setPayableSource(""); setPayableError(""); setPayableAcknowledged(false);
+    if (!file) return;
+    try {
+      if (file.size > 64_000) throw new Error("Intent file is too large.");
+      const source = await file.text();
+      if (!candidatePayload) throw new Error("Candidate contract is not configured.");
+      parseBoundedCircleIntent(source, candidatePayload.typedData.domain.verifyingContract);
+      setPayableSource(source);
+      setPayableStatus("Check the exact testnet recipient, amount and expiry below before signing.");
+    } catch (cause) {
+      setPayableError(cause instanceof Error ? cause.message : "Intent file could not be checked.");
+      setPayableStatus("No payable intent loaded.");
+    }
+  }
+
+  async function signPayableIntent() {
+    const currentAccount = account.current;
+    if (!currentAccount || !candidatePayload || !payableSource || !payableAcknowledged || busy) return;
+    setBusy(true); setPayableError("");
+    try {
+      const intent = parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract);
+      const [chainId, walletCode, candidateCode, onchainDigest] = await Promise.all([
+        client.getChainId(), client.getCode({ address: DIAGNOSTIC_WALLET }),
+        client.getCode({ address: intent.candidate }),
+        client.readContract({ address: intent.candidate, abi: candidateAbi, functionName: "hashSpendIntent", args: [intent.typedData.message] }),
+      ]);
+      assertDiagnosticContext(DIAGNOSTIC_RP_ID, chainId, walletCode);
+      if (!candidateCode || candidateCode === "0x") throw new Error("Candidate contract is not deployed.");
+      if (onchainDigest.toLowerCase() !== intent.digest.toLowerCase()) throw new Error("Candidate contract returned a different intent hash.");
+      setPayableStatus("Confirm this bounded Arc testnet purchase authorization with your passkey.");
+      const signature = await currentAccount.signTypedData(intent.typedData);
+      const blockNumber = await client.getBlockNumber();
+      const [block, result] = await Promise.all([
+        client.getBlock({ blockNumber }),
+        client.readContract({ address: DIAGNOSTIC_WALLET, abi: signatureAbi, functionName: "isValidSignature",
+          args: [intent.digest, signature], account: intent.candidate, blockNumber }),
+      ]);
+      assertDiagnosticSignature(result as Hex);
+      if (intent.signatureExpiry <= block.timestamp) throw new Error("The signature expired before verification. Build a fresh intent.");
+      const evidence = JSON.stringify({
+        kind: "shadow-circle-modular-wallet-testnet-intent-signature",
+        wallet: DIAGNOSTIC_WALLET, candidate: intent.candidate, digest: intent.digest, signature,
+        chainId, blockNumber: blockNumber.toString(), verifiedAt: new Date().toISOString(),
+        erc1271Result: result, scope: "Signature verified for one bounded Arc testnet intent. No purchase transaction was sent by this page.",
+      }, null, 2);
+      const url = URL.createObjectURL(new Blob([evidence], { type: "application/json" }));
+      const download = document.createElement("a");
+      download.href = url;
+      download.download = `shadow-circle-testnet-signature-${intent.digest.slice(2, 10)}.json`;
+      download.click();
+      window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
+      setPayableStatus("Signature verified and downloaded. This page sent no transaction; give the saved file only to your test executor.");
+    } catch (cause) {
+      setPayableError(cause instanceof DOMException && cause.name === "NotAllowedError"
+        ? "Passkey signing was cancelled or timed out. No transaction was sent."
+        : cause instanceof Error ? cause.message : "The testnet intent could not be signed. No transaction was sent.");
+      setPayableStatus("The payable intent has not been handed to the executor.");
+    } finally { setBusy(false); }
+  }
+
   function reset() {
     account.current = null; setReady(false); setEvidence(""); setCandidateEvidence(""); setCandidateError(""); setError("");
+    setPayableSource(""); setPayableError(""); setPayableAcknowledged(false);
     setStatus("Disconnected. The in-memory wallet session has been cleared.");
     setCandidateStatus("Disconnected. Log in again to check a deployed candidate.");
   }
@@ -190,6 +260,30 @@ export function CircleWalletDiagnostic() {
         <label htmlFor="wallet-candidate-evidence">Public no-spend signature evidence</label>
         <textarea id="wallet-candidate-evidence" readOnly value={candidateEvidence} rows={14} />
       </div>}
+    </section>}
+    {candidatePayload && <section aria-labelledby="wallet-payable-intent">
+      <h2 id="wallet-payable-intent">Bounded testnet purchase authorization</h2>
+      <p>Load a fresh Shadow candidate intent prepared for your existing Circle wallet. This page signs and verifies it, then downloads the signature. It does not submit a payment. The named executor can use that signature before it expires to pay the named provider from the sponsor's testnet USDC reserve.</p>
+      <label htmlFor="wallet-payable-file">Unsigned intent JSON</label>
+      <input id="wallet-payable-file" type="file" accept=".json,application/json" disabled={busy}
+        onChange={(event) => void loadPayableIntent(event.target.files?.[0])} aria-describedby="wallet-payable-status" />
+      {payable && <dl>
+        <dt>Network and contract</dt><dd>Arc testnet · {payable.candidate}</dd>
+        <dt>Agent wallet</dt><dd>{DIAGNOSTIC_WALLET}</dd>
+        <dt>Sponsor</dt><dd>{payable.sponsor}</dd>
+        <dt>Provider to be paid</dt><dd>{payable.provider}</dd>
+        <dt>Maximum provider payment</dt><dd>{(Number(payable.principal) / 1_000_000).toFixed(6)} testnet USDC</dd>
+        <dt>Authorization expires</dt><dd>{new Date(Number(payable.signatureExpiry) * 1000).toLocaleString()}</dd>
+        <dt>Intent digest</dt><dd>{payable.digest}</dd>
+      </dl>}
+      {payable && <label className="walletDiagnosticConfirm">
+        <input type="checkbox" checked={payableAcknowledged} onChange={(event) => setPayableAcknowledged(event.target.checked)} />
+        <span>I checked the testnet contract, provider, amount and expiry. I understand this signature can authorize that one provider payment.</span>
+      </label>}
+      <button type="button" onClick={() => void signPayableIntent()} disabled={busy || !ready || !payable || !payableAcknowledged}
+        aria-describedby="wallet-payable-status">Sign bounded testnet intent</button>
+      <p id="wallet-payable-status" role="status" aria-live="polite">{payableStatus}</p>
+      {payableError && <p className="walletDiagnosticError" role="alert">{payableError}</p>}
     </section>}
     {evidence && <section aria-labelledby="wallet-check-result">
       <h2 id="wallet-check-result">Verified diagnostic evidence</h2>
