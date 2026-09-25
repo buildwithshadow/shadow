@@ -18,6 +18,16 @@ const candidateStateAbi = parseAbi([
   "function receiptStatus(bytes32) view returns (uint8)",
   "function nonceUsed(bytes32,uint256) view returns (bool)",
   "function nonceCancelled(bytes32,uint256) view returns (bool)",
+  "function spendsPaused() view returns (bool)",
+  "function sponsorAllowed(address) view returns (bool)",
+  "function activeLineId(address,address) view returns (bytes32)",
+  "function currentTermsHash(bytes32,address) view returns (bytes32)",
+  "function totalCommittedCapital() view returns (uint256)",
+  "function effectiveLimits() view returns (uint256 protocolReserve,uint256 lineReserve,uint256 lineSpend,uint256 perSpend,uint256 dailySpend)",
+  "function minimumRepaymentWindow() view returns (uint64)",
+  "function lines(bytes32) view returns (address sponsor,address agent,uint64 epoch,uint64 expiry,uint64 maximumRepaymentWindow,uint64 day,uint64 termsVersion,uint8 state,uint256 reserveCap,uint256 availableReserve,uint256 principalOutstanding,uint256 recoveryAvailable,uint256 lineSpendCap,uint256 dailySpendCap,uint256 cumulativePrincipalPaid,uint256 spentToday,uint256 dueAt)",
+  "function providerPolicies(bytes32,address) view returns (bytes32 endpointHash,uint64 expiry,uint64 day,bool active,uint256 perSpendCap,uint256 dailySpendCap,uint256 spentToday)",
+  "function executeSpend((address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor) intent,bytes signature) returns (bool paid,uint8 reason)",
 ]);
 const candidateAddress = (import.meta.env.VITE_SHADOW_FLOAT_MAINNET_CANDIDATE || "").trim();
 const candidatePayload = isAddress(candidateAddress) ? candidateProbe(candidateAddress) : null;
@@ -184,20 +194,57 @@ export function CircleWalletDiagnostic() {
     setBusy(true); setPayableError("");
     try {
       const intent = parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract);
-      const [chainId, walletCode, candidateCode, onchainDigest, receiptStatus, nonceUsed, nonceCancelled] = await Promise.all([
+      const [chainId, walletCode, candidateCode, onchainDigest, receiptStatus, nonceUsed, nonceCancelled,
+        liveBlock, paused, sponsorAllowed, activeLineId, termsHash, committed, limits, minimumWindow, line, policy] = await Promise.all([
         client.getChainId(), client.getCode({ address: DIAGNOSTIC_WALLET }),
         client.getCode({ address: intent.candidate }),
         client.readContract({ address: intent.candidate, abi: candidateAbi, functionName: "hashSpendIntent", args: [intent.typedData.message] }),
         client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "receiptStatus", args: [intent.digest] }),
         client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "nonceUsed", args: [intent.lineId, intent.typedData.message.nonce] }),
         client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "nonceCancelled", args: [intent.lineId, intent.typedData.message.nonce] }),
+        client.getBlock(),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "spendsPaused" }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "sponsorAllowed", args: [intent.sponsor] }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "activeLineId", args: [intent.sponsor, DIAGNOSTIC_WALLET] }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "currentTermsHash", args: [intent.lineId, intent.provider] }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "totalCommittedCapital" }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "effectiveLimits" }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "minimumRepaymentWindow" }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "lines", args: [intent.lineId] }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "providerPolicies", args: [intent.lineId, intent.provider] }),
       ]);
       assertDiagnosticContext(DIAGNOSTIC_RP_ID, chainId, walletCode);
       if (!candidateCode || candidateCode === "0x") throw new Error("Candidate contract is not deployed.");
       if (onchainDigest.toLowerCase() !== intent.digest.toLowerCase()) throw new Error("Candidate contract returned a different intent hash.");
       if (receiptStatus !== 0 || nonceUsed || nonceCancelled) throw new Error("This intent is already used, cancelled or has a receipt. Build a fresh one.");
+      const message = intent.typedData.message;
+      const amount = intent.principal;
+      const day = liveBlock.timestamp / 86_400n;
+      const lineSpent = line[5] === day ? line[15] : 0n;
+      const providerSpent = policy[2] === day ? policy[6] : 0n;
+      if (paused || !sponsorAllowed || activeLineId.toLowerCase() !== intent.lineId.toLowerCase() ||
+          line[0].toLowerCase() !== intent.sponsor.toLowerCase() || line[1].toLowerCase() !== DIAGNOSTIC_WALLET.toLowerCase() ||
+          line[2] !== message.lineEpoch || line[7] !== 1 || termsHash.toLowerCase() !== message.termsHash.toLowerCase() ||
+          liveBlock.timestamp > line[3] || liveBlock.timestamp > policy[1] || !policy[3] ||
+          policy[0].toLowerCase() !== message.endpointHash.toLowerCase() ||
+          message.signatureExpiry <= liveBlock.timestamp || message.dueAt < liveBlock.timestamp + minimumWindow ||
+          message.dueAt > liveBlock.timestamp + line[4] || message.dueAt > line[3] ||
+          committed > limits[0] || line[8] > limits[1] || amount > line[9] ||
+          amount > limits[2] || line[14] + amount > line[12] || line[14] + amount > limits[2] ||
+          amount > policy[4] || amount > limits[3] ||
+          lineSpent + amount > line[13] || lineSpent + amount > limits[4] ||
+          providerSpent + amount > policy[5]) {
+        throw new Error("Live candidate state predicts a blocked or invalid spend. Refresh the line and build a new intent before signing.");
+      }
       setPayableStatus("Confirm this bounded Arc testnet purchase authorization with your passkey.");
       const signature = await currentAccount.signTypedData(intent.typedData);
+      const simulation = await client.simulateContract({
+        address: intent.candidate, abi: candidateStateAbi, functionName: "executeSpend",
+        args: [message, signature], account: intent.executor,
+      });
+      if (!simulation.result[0] || simulation.result[1] !== 0) {
+        throw new Error("The signed purchase did not simulate a paid provider outcome. No signature was downloaded.");
+      }
       const blockNumber = await client.getBlockNumber();
       const [block, result] = await Promise.all([
         client.getBlock({ blockNumber }),
