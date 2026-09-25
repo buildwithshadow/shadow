@@ -46,7 +46,7 @@ function sameAddress(actual: Address, expected: string, label: string): void {
   if (actual.toLowerCase() !== expected.toLowerCase()) throw new Error(`${label} is outside this bounded test.`);
 }
 
-export function parseBoundedCircleIntent(source: string, candidateAddress: string, nowSeconds: bigint = BigInt(Math.floor(Date.now() / 1000))) {
+export function parseBoundedCircleIntent(source: string, candidateAddress: string, nowSeconds: bigint | null) {
   if (source.length > 64_000) throw new Error("Intent file is too large.");
   if (!isAddress(candidateAddress)) throw new Error("Candidate contract is not configured.");
   let parsed: unknown;
@@ -93,7 +93,7 @@ export function parseBoundedCircleIntent(source: string, candidateAddress: strin
   if (lineEpoch === 0n || principal === 0n || principal > MAX_TEST_PRINCIPAL || maximumTotalDebt < principal || maximumTotalDebt > MAX_TEST_PRINCIPAL) {
     throw new Error("Intent amount or line epoch is outside this bounded test.");
   }
-  if (signatureExpiry <= nowSeconds + 60n || signatureExpiry > nowSeconds + 1_200n || dueAt <= nowSeconds || dueAt > nowSeconds + 7n * 86_400n) {
+  if (nowSeconds !== null && (signatureExpiry <= nowSeconds + 60n || signatureExpiry > nowSeconds + 1_200n || dueAt <= nowSeconds || dueAt > nowSeconds + 7n * 86_400n)) {
     throw new Error("Intent expiry or repayment time is outside this bounded test.");
   }
   const typedData = {

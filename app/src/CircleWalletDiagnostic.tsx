@@ -51,7 +51,7 @@ export function CircleWalletDiagnostic() {
   const [payableStatus, setPayableStatus] = useState("Load a fresh, unsigned candidate intent before signing.");
   const [payableAcknowledged, setPayableAcknowledged] = useState(false);
   const payable = payableSource && candidatePayload
-    ? (() => { try { return parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract); } catch { return null; } })()
+    ? (() => { try { return parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract, null); } catch { return null; } })()
     : null;
   const clientKey = (import.meta.env.VITE_CIRCLE_CLIENT_KEY || "").trim();
   const clientUrl = (import.meta.env.VITE_CIRCLE_CLIENT_URL || "").trim();
@@ -179,7 +179,7 @@ export function CircleWalletDiagnostic() {
       if (file.size > 64_000) throw new Error("Intent file is too large.");
       const source = await file.text();
       if (!candidatePayload) throw new Error("Candidate contract is not configured.");
-      parseBoundedCircleIntent(source, candidatePayload.typedData.domain.verifyingContract);
+      parseBoundedCircleIntent(source, candidatePayload.typedData.domain.verifyingContract, null);
       setPayableSource(source);
       setPayableStatus("Check the exact testnet recipient, amount and expiry below before signing.");
     } catch (cause) {
@@ -193,7 +193,7 @@ export function CircleWalletDiagnostic() {
     if (!currentAccount || !candidatePayload || !payableSource || !payableAcknowledged || busy) return;
     setBusy(true); setPayableError("");
     try {
-      const intent = parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract);
+      const intent = parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract, null);
       const [chainId, walletCode, candidateCode, onchainDigest, receiptStatus, nonceUsed, nonceCancelled,
         liveBlock, paused, sponsorAllowed, activeLineId, termsHash, committed, limits, minimumWindow, line, policy] = await Promise.all([
         client.getChainId(), client.getCode({ address: DIAGNOSTIC_WALLET }),

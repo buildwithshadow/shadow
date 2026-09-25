@@ -82,3 +82,10 @@ test("chain time rejects a long authorization despite a fast browser clock", () 
   assert.doesNotThrow(() => parseBoundedCircleIntent(source, candidate, now + 700n));
   assert.throws(() => parseBoundedCircleIntent(source, candidate, now), /outside this bounded test/);
 });
+
+test("a slow browser clock cannot reject a valid intent before Arc time is read", () => {
+  const source = JSON.stringify(fixture(x => { x.message.signatureExpiry = String(now + 900n); }));
+  assert.doesNotThrow(() => parseBoundedCircleIntent(source, candidate, null));
+  assert.doesNotThrow(() => parseBoundedCircleIntent(source, candidate, now));
+  assert.throws(() => parseBoundedCircleIntent(source, candidate, now - 600n), /outside this bounded test/);
+});
