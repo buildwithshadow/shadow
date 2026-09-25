@@ -1,0 +1,416 @@
+{
+  "assertions": [
+    {
+      "detail": "identical",
+      "id": "rpc.observationsIdenticalAcrossRpcs",
+      "status": "PASS"
+    },
+    {
+      "detail": "5042002 / 5042002 (expected 5042002)",
+      "id": "chain.idMatchesConfig",
+      "status": "PASS"
+    },
+    {
+      "detail": "success",
+      "id": "deploy.receiptSucceeded",
+      "status": "PASS"
+    },
+    {
+      "detail": "0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8 (expected 0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8)",
+      "id": "deploy.senderIsExpectedDeployer",
+      "status": "PASS"
+    },
+    {
+      "detail": "to=null",
+      "id": "deploy.plainCreateTransaction",
+      "status": "PASS"
+    },
+    {
+      "detail": "0xFeDb5c8c29792d49947492F357f21dc8405F08fc (expected 0xFeDb5c8c29792d49947492F357f21dc8405F08fc)",
+      "id": "deploy.receiptContractAddressMatches",
+      "status": "PASS"
+    },
+    {
+      "detail": "0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8 nonce 6096",
+      "id": "deploy.addressDerivesFromDeployerNonce",
+      "status": "PASS"
+    },
+    {
+      "detail": "16436 input bytes (expected 16436)",
+      "id": "deploy.inputIsArtifactCreationCodePlusConstructorArgs",
+      "status": "PASS"
+    },
+    {
+      "detail": "14674 bytes on-chain, 14674 in artifact",
+      "id": "code.runtimeLengthMatchesArtifact",
+      "status": "PASS"
+    },
+    {
+      "detail": "0x4bc1796c8c0e2af6ecc00464e5e80143b7ccfa477df90defef2239763edce736 vs 0x4bc1796c8c0e2af6ecc00464e5e80143b7ccfa477df90defef2239763edce736",
+      "id": "code.maskedRuntimeMatchesArtifact",
+      "status": "PASS"
+    },
+    {
+      "detail": "10 immutables",
+      "id": "code.immutableSlotsInternallyConsistent",
+      "status": "PASS"
+    },
+    {
+      "detail": "10 decoded words",
+      "id": "code.immutableValuesMatchConfig",
+      "status": "PASS"
+    },
+    {
+      "detail": "0x3600000000000000000000000000000000000000 (expected 0x3600000000000000000000000000000000000000)",
+      "id": "immutable.usdc",
+      "status": "PASS"
+    },
+    {
+      "detail": "5042002 (expected 5042002)",
+      "id": "immutable.deploymentChainId",
+      "status": "PASS"
+    },
+    {
+      "detail": "3600 (expected 3600)",
+      "id": "immutable.minimumRepaymentWindow",
+      "status": "PASS"
+    },
+    {
+      "detail": "604800 (expected 604800)",
+      "id": "immutable.maximumRepaymentWindow",
+      "status": "PASS"
+    },
+    {
+      "detail": "172800 (expected 172800)",
+      "id": "immutable.governanceDelay",
+      "status": "PASS"
+    },
+    {
+      "detail": "50000000 (expected 50000000)",
+      "id": "immutable.maximumProtocolReserve",
+      "status": "PASS"
+    },
+    {
+      "detail": "10000000 (expected 10000000)",
+      "id": "immutable.maximumLineReserve",
+      "status": "PASS"
+    },
+    {
+      "detail": "10000000 (expected 10000000)",
+      "id": "immutable.maximumLineSpend",
+      "status": "PASS"
+    },
+    {
+      "detail": "2000000 (expected 2000000)",
+      "id": "immutable.maximumPerSpend",
+      "status": "PASS"
+    },
+    {
+      "detail": "4000000 (expected 4000000)",
+      "id": "immutable.maximumDailySpend",
+      "status": "PASS"
+    },
+    {
+      "detail": "{\"dailySpend\":\"2000000\",\"lineReserve\":\"5000000\",\"lineSpend\":\"5000000\",\"perSpend\":\"1000000\",\"protocolReserve\":\"25000000\"} (expected {\"dailySpend\":\"2000000\",\"lineReserve\":\"5000000\",\"lineSpend\":\"5000000\",\"perSpend\":\"1000000\",\"protocolReserve\":\"25000000\"})",
+      "id": "state.effectiveLimitsEqualInitialConfig",
+      "status": "PASS"
+    },
+    {
+      "detail": "0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8 (expected deployer 0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8)",
+      "id": "state.ownerIsDeployer",
+      "status": "PASS"
+    },
+    {
+      "detail": "0x0000000000000000000000000000000000000000 (expected 0x0000000000000000000000000000000000000000)",
+      "id": "state.pendingOwnerMatchesConfig",
+      "status": "PASS"
+    },
+    {
+      "detail": "false",
+      "id": "state.openingsNotPaused",
+      "status": "PASS"
+    },
+    {
+      "detail": "false",
+      "id": "state.spendsNotPaused",
+      "status": "PASS"
+    },
+    {
+      "detail": "committed=0 obligations=0",
+      "id": "state.totalsZero",
+      "status": "PASS"
+    },
+    {
+      "detail": "balance=0",
+      "id": "state.floatUsdcBalanceZero",
+      "status": "PASS"
+    },
+    {
+      "detail": "0 OwnershipProposed(deployer, proposed owner)",
+      "id": "events.onlyExpectedEventsSinceDeploy",
+      "status": "PASS"
+    },
+    {
+      "detail": "false",
+      "id": "usdc.notPaused",
+      "status": "PASS"
+    },
+    {
+      "detail": "false",
+      "id": "usdc.floatNotBlacklisted",
+      "status": "PASS"
+    },
+    {
+      "detail": "ShadowFloatMainnet scope gate PASS: 14674 runtime bytes, 74 ABI/event names",
+      "id": "scope.zeroFeeAbiGate",
+      "status": "PASS"
+    },
+    {
+      "detail": "contracts/src/ShadowFloatMainnet.sol, contracts/src/interfaces/IERC20.sol",
+      "id": "source.artifactBuiltFromWorkingTree",
+      "status": "PASS"
+    },
+    {
+      "detail": "HEAD 8515ca0ba552d2ce40579f46e54969aa1a912da1",
+      "id": "source.unmodifiedVsHead",
+      "status": "PASS"
+    },
+    {
+      "detail": "pinned at 2ebae7f63f6bdeed7ec9ad522f680af7b91b62ec",
+      "id": "source.matchesPinnedLineage",
+      "status": "PASS"
+    },
+    {
+      "detail": "{\"settings\":{\"evmVersion\":\"cancun\",\"metadata\":{\"appendCBOR\":false,\"bytecodeHash\":\"none\"},\"optimizer\":{\"enabled\":true,\"runs\":1},\"viaIR\":true},\"version\":\"0.8.24+commit.e11b9ed9\"}",
+      "id": "artifact.compilerSettings",
+      "status": "PASS"
+    },
+    {
+      "detail": "14674 <= 18432",
+      "id": "artifact.runtimeWithinSizeLimit",
+      "status": "PASS"
+    }
+  ],
+  "bytecode": {
+    "artifactRuntimeMaskedKeccak256": "0x4bc1796c8c0e2af6ecc00464e5e80143b7ccfa477df90defef2239763edce736",
+    "immutables": [
+      {
+        "astId": "10879",
+        "consistent": true,
+        "offsets": [
+          7451,
+          11957,
+          12794
+        ],
+        "value": "0x0000000000000000000000003600000000000000000000000000000000000000"
+      },
+      {
+        "astId": "10881",
+        "consistent": true,
+        "offsets": [
+          2207
+        ],
+        "value": "0x00000000000000000000000000000000000000000000000000000000004cef52"
+      },
+      {
+        "astId": "10883",
+        "consistent": true,
+        "offsets": [
+          4197,
+          7255,
+          7383,
+          11229
+        ],
+        "value": "0x0000000000000000000000000000000000000000000000000000000000000e10"
+      },
+      {
+        "astId": "10885",
+        "consistent": true,
+        "offsets": [
+          4144,
+          7214,
+          7995
+        ],
+        "value": "0x0000000000000000000000000000000000000000000000000000000000093a80"
+      },
+      {
+        "astId": "10887",
+        "consistent": true,
+        "offsets": [
+          3037,
+          8810
+        ],
+        "value": "0x000000000000000000000000000000000000000000000000000000000002a300"
+      },
+      {
+        "astId": "10889",
+        "consistent": true,
+        "offsets": [
+          8160,
+          12703
+        ],
+        "value": "0x0000000000000000000000000000000000000000000000000000000002faf080"
+      },
+      {
+        "astId": "10891",
+        "consistent": true,
+        "offsets": [
+          1419,
+          12666
+        ],
+        "value": "0x0000000000000000000000000000000000000000000000000000000000989680"
+      },
+      {
+        "astId": "10893",
+        "consistent": true,
+        "offsets": [
+          5478,
+          12629
+        ],
+        "value": "0x0000000000000000000000000000000000000000000000000000000000989680"
+      },
+      {
+        "astId": "10895",
+        "consistent": true,
+        "offsets": [
+          8065,
+          12592
+        ],
+        "value": "0x00000000000000000000000000000000000000000000000000000000001e8480"
+      },
+      {
+        "astId": "10897",
+        "consistent": true,
+        "offsets": [
+          2149,
+          12556
+        ],
+        "value": "0x00000000000000000000000000000000000000000000000000000000003d0900"
+      }
+    ],
+    "onchainRuntimeKeccak256": "0x5d56518ac900ce9d973912c891fd278d9ead5861d934eaa0df5dc5558774a249",
+    "onchainRuntimeMaskedKeccak256": "0x4bc1796c8c0e2af6ecc00464e5e80143b7ccfa477df90defef2239763edce736",
+    "runtimeBytes": 14674
+  },
+  "chainId": "5042002",
+  "compiler": {
+    "settings": {
+      "evmVersion": "cancun",
+      "metadata": {
+        "appendCBOR": false,
+        "bytecodeHash": "none"
+      },
+      "optimizer": {
+        "enabled": true,
+        "runs": 1
+      },
+      "viaIR": true
+    },
+    "version": "0.8.24+commit.e11b9ed9"
+  },
+  "config": {
+    "expectedChainId": "5042002",
+    "expectedDeployer": "0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8",
+    "governanceDelay": "172800",
+    "initial": {
+      "dailySpend": "2000000",
+      "lineReserve": "5000000",
+      "lineSpend": "5000000",
+      "perSpend": "1000000",
+      "protocolReserve": "25000000"
+    },
+    "maxima": {
+      "dailySpend": "4000000",
+      "lineReserve": "10000000",
+      "lineSpend": "10000000",
+      "perSpend": "2000000",
+      "protocolReserve": "50000000"
+    },
+    "maximumRepaymentWindow": "604800",
+    "minimumRepaymentWindow": "3600",
+    "proposedOwner": null,
+    "usdc": "0x3600000000000000000000000000000000000000"
+  },
+  "constructorArgs": "0x000000000000000000000000360000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000004cef520000000000000000000000000000000000000000000000000000000002faf0800000000000000000000000000000000000000000000000000000000000989680000000000000000000000000000000000000000000000000000000000098968000000000000000000000000000000000000000000000000000000000001e848000000000000000000000000000000000000000000000000000000000003d090000000000000000000000000000000000000000000000000000000000017d784000000000000000000000000000000000000000000000000000000000004c4b4000000000000000000000000000000000000000000000000000000000004c4b4000000000000000000000000000000000000000000000000000000000000f424000000000000000000000000000000000000000000000000000000000001e84800000000000000000000000000000000000000000000000000000000000000e100000000000000000000000000000000000000000000000000000000000093a80000000000000000000000000000000000000000000000000000000000002a300",
+  "contract": {
+    "address": "0xFeDb5c8c29792d49947492F357f21dc8405F08fc",
+    "name": "ShadowFloatMainnet",
+    "source": "contracts/src/ShadowFloatMainnet.sol:ShadowFloatMainnet"
+  },
+  "deployment": {
+    "blockHash": "0x32640b74827abcd91a7062ce803b2cb7461a641a053a56792cbeb8eb5d38ba9c",
+    "blockNumber": "63817119",
+    "blockTimestamp": "1790281400",
+    "deployer": "0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8",
+    "nonce": 6096,
+    "txHash": "0xd762494be4d99e87a6dfff14fc44186738819a31972f5eb373ebd76b6b5fa63b"
+  },
+  "events": [],
+  "observedAt": {
+    "blockHash": "0x32640b74827abcd91a7062ce803b2cb7461a641a053a56792cbeb8eb5d38ba9c",
+    "blockNumber": "63817119"
+  },
+  "ok": true,
+  "pinnedLineage": {
+    "blobs": {
+      "contracts/src/ShadowFloatMainnet.sol": "27964464803f73c7f451ad12e85a2bce5c6c4691",
+      "contracts/src/interfaces/IERC20.sol": "20179c34a546c745efaa371ee2984e8dbcac60e4"
+    },
+    "commit": "2ebae7f63f6bdeed7ec9ad522f680af7b91b62ec"
+  },
+  "schema": "shadow-float-mainnet-release-manifest/v1",
+  "scopeGate": "ShadowFloatMainnet scope gate PASS: 14674 runtime bytes, 74 ABI/event names",
+  "source": {
+    "commit": "8515ca0ba552d2ce40579f46e54969aa1a912da1",
+    "files": {
+      "contracts/src/ShadowFloatMainnet.sol": {
+        "artifactMatchesWorkingTree": true,
+        "gitBlob": "27964464803f73c7f451ad12e85a2bce5c6c4691",
+        "modifiedVsHead": false,
+        "sha256": "3cec521efd73d7b8f0f45adf2c53b6980148cc577588095bcca3bdf7b847aa9b"
+      },
+      "contracts/src/interfaces/IERC20.sol": {
+        "artifactMatchesWorkingTree": true,
+        "gitBlob": "20179c34a546c745efaa371ee2984e8dbcac60e4",
+        "modifiedVsHead": false,
+        "sha256": "463a4dab6f4354327c3fdad21a041b193e58b2dce3bec662983cf8c2e5393e6b"
+      }
+    }
+  },
+  "state": {
+    "deploymentChainId": "5042002",
+    "effectiveLimits": {
+      "dailySpend": "2000000",
+      "lineReserve": "5000000",
+      "lineSpend": "5000000",
+      "perSpend": "1000000",
+      "protocolReserve": "25000000"
+    },
+    "floatUsdcBalance": "0",
+    "governanceDelay": "172800",
+    "maximumDailySpend": "4000000",
+    "maximumLineReserve": "10000000",
+    "maximumLineSpend": "10000000",
+    "maximumPerSpend": "2000000",
+    "maximumProtocolReserve": "50000000",
+    "maximumRepaymentWindow": "604800",
+    "minimumRepaymentWindow": "3600",
+    "openingsPaused": false,
+    "owner": "0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8",
+    "pendingOwner": "0x0000000000000000000000000000000000000000",
+    "spendsPaused": false,
+    "totalCommittedCapital": "0",
+    "totalSponsorObligations": "0",
+    "usdc": "0x3600000000000000000000000000000000000000"
+  },
+  "usdcRestrictions": {
+    "floatBlacklisted": {
+      "exposed": true,
+      "value": false
+    },
+    "paused": {
+      "exposed": true,
+      "value": false
+    }
+  }
+}
