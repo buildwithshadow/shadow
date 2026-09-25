@@ -122,3 +122,11 @@ export function parseBoundedCircleIntent(source: string, candidateAddress: strin
   }
   return { typedData, digest, candidate, principal, maximumTotalDebt, provider, sponsor, executor, signatureExpiry, dueAt, lineId };
 }
+
+export function signedCircleIntentJson(source: string, signature: Hex): string {
+  if (!isHex(signature, { strict: true }) || signature.length <= 2 || signature.length % 2 !== 0) {
+    throw new Error("Verified signature is malformed.");
+  }
+  const file = JSON.parse(source) as JsonRecord;
+  return JSON.stringify({ ...file, signature }, null, 2);
+}

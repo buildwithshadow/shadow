@@ -8,7 +8,7 @@ import {
   DIAGNOSTIC_CHAIN_ID, DIAGNOSTIC_RP_ID, DIAGNOSTIC_WALLET, WALLET_DIAGNOSTIC,
 } from "./walletDiagnosticPayload";
 import { candidateProbe } from "./walletCandidateProbePayload";
-import { parseBoundedCircleIntent } from "./walletPayableIntent";
+import { parseBoundedCircleIntent, signedCircleIntentJson } from "./walletPayableIntent";
 import "./circleWalletDiagnostic.css";
 
 type CircleAccount = Awaited<ReturnType<typeof toCircleSmartAccount>>;
@@ -253,19 +253,16 @@ export function CircleWalletDiagnostic() {
       ]);
       assertDiagnosticSignature(result as Hex);
       if (intent.signatureExpiry <= block.timestamp) throw new Error("The signature expired before verification. Build a fresh intent.");
-      const evidence = JSON.stringify({
-        kind: "shadow-circle-modular-wallet-testnet-intent-signature",
-        wallet: DIAGNOSTIC_WALLET, candidate: intent.candidate, digest: intent.digest, signature,
-        chainId, blockNumber: blockNumber.toString(), verifiedAt: new Date().toISOString(),
-        erc1271Result: result, scope: "Signature verified for one bounded Arc testnet intent. No purchase transaction was sent by this page.",
-      }, null, 2);
-      const url = URL.createObjectURL(new Blob([evidence], { type: "application/json" }));
+      // Preserve the CLI's signed-intent format so its preflight and submit
+      // commands can validate the exact original payload and signature.
+      const signedIntent = signedCircleIntentJson(payableSource, signature);
+      const url = URL.createObjectURL(new Blob([signedIntent], { type: "application/json" }));
       const download = document.createElement("a");
       download.href = url;
-      download.download = `shadow-circle-testnet-signature-${intent.digest.slice(2, 10)}.json`;
+      download.download = `shadow-circle-testnet-signed-intent-${intent.digest.slice(2, 10)}.json`;
       download.click();
       window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
-      setPayableStatus("Signature verified and downloaded. This page sent no transaction; give the saved file only to your test executor.");
+      setPayableStatus(`Signature verified at block ${blockNumber} (ERC-1271 ${result}) and signed intent downloaded. This page sent no transaction; give the saved file only to your test executor.`);
     } catch (cause) {
       setPayableError(cause instanceof DOMException && cause.name === "NotAllowedError"
         ? "Passkey signing was cancelled or timed out. No transaction was sent."

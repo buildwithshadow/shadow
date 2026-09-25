@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { hashTypedData } from "viem";
-import { parseBoundedCircleIntent, MAX_TEST_PRINCIPAL, TEST_PROVIDER } from "../src/walletPayableIntent.ts";
+import { parseBoundedCircleIntent, signedCircleIntentJson, MAX_TEST_PRINCIPAL, TEST_PROVIDER } from "../src/walletPayableIntent.ts";
+import { intentFile, structFromMessage, validateIntentFile } from "./float-mainnet-intent.mjs";
 import { DIAGNOSTIC_WALLET } from "../src/walletDiagnosticPayload.ts";
 import { CANDIDATE_SPEND_INTENT_TYPES } from "../src/walletCandidateProbePayload.ts";
 
@@ -56,4 +57,13 @@ test("rejects conflicting file fields or a pre-existing signature", () => {
   const signed = fixture();
   signed.signature = "0xdeadbeef";
   assert.throws(() => parseBoundedCircleIntent(JSON.stringify(signed), candidate, now), /already contains a signature/);
+});
+
+test("downloaded signed intent is directly accepted by the executor parser", () => {
+  const unsigned = JSON.stringify(intentFile({ chainId: 5042002n, verifyingContract: candidate, struct: structFromMessage(message) }));
+  parseBoundedCircleIntent(unsigned, candidate, now);
+  const signed = JSON.parse(signedCircleIntentJson(unsigned, "0x1234"));
+  const accepted = validateIntentFile(signed, { chainId: 5042002n, address: candidate });
+  assert.equal(accepted.digest, signed.digest);
+  assert.equal(accepted.signature, "0x1234");
 });
