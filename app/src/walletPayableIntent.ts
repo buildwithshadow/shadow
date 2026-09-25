@@ -130,3 +130,15 @@ export function signedCircleIntentJson(source: string, signature: Hex): string {
   const file = JSON.parse(source) as JsonRecord;
   return JSON.stringify({ ...file, signature }, null, 2);
 }
+
+export function assertCircleIntentWindow(
+  message: { signatureExpiry: bigint; dueAt: bigint },
+  providerExpiry: bigint,
+  minimumRepaymentWindow: bigint,
+  now: bigint,
+): void {
+  if (message.signatureExpiry <= now || providerExpiry < message.signatureExpiry ||
+      message.dueAt < message.signatureExpiry + minimumRepaymentWindow) {
+    throw new Error("Provider approval and repayment timing must cover the full signature lifetime. Build a fresh intent.");
+  }
+}

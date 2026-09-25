@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { hashTypedData } from "viem";
-import { parseBoundedCircleIntent, signedCircleIntentJson, MAX_TEST_PRINCIPAL, TEST_PROVIDER } from "../src/walletPayableIntent.ts";
+import { assertCircleIntentWindow, parseBoundedCircleIntent, signedCircleIntentJson, MAX_TEST_PRINCIPAL, TEST_PROVIDER } from "../src/walletPayableIntent.ts";
 import { intentFile, structFromMessage, validateIntentFile } from "./float-mainnet-intent.mjs";
 import { DIAGNOSTIC_WALLET } from "../src/walletDiagnosticPayload.ts";
 import { CANDIDATE_SPEND_INTENT_TYPES } from "../src/walletCandidateProbePayload.ts";
@@ -66,4 +66,12 @@ test("downloaded signed intent is directly accepted by the executor parser", () 
   const accepted = validateIntentFile(signed, { chainId: 5042002n, address: candidate });
   assert.equal(accepted.digest, signed.digest);
   assert.equal(accepted.signature, "0x1234");
+});
+
+test("payable window stays valid until the signature expires", () => {
+  const signedUntil = now + 900n;
+  const minimumWindow = 3600n;
+  assert.doesNotThrow(() => assertCircleIntentWindow({ signatureExpiry: signedUntil, dueAt: signedUntil + minimumWindow }, signedUntil, minimumWindow, now));
+  assert.throws(() => assertCircleIntentWindow({ signatureExpiry: signedUntil, dueAt: signedUntil + minimumWindow }, signedUntil - 1n, minimumWindow, now), /full signature lifetime/);
+  assert.throws(() => assertCircleIntentWindow({ signatureExpiry: signedUntil, dueAt: signedUntil + minimumWindow - 1n }, signedUntil, minimumWindow, now), /full signature lifetime/);
 });

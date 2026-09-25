@@ -8,7 +8,7 @@ import {
   DIAGNOSTIC_CHAIN_ID, DIAGNOSTIC_RP_ID, DIAGNOSTIC_WALLET, WALLET_DIAGNOSTIC,
 } from "./walletDiagnosticPayload";
 import { candidateProbe } from "./walletCandidateProbePayload";
-import { parseBoundedCircleIntent, signedCircleIntentJson } from "./walletPayableIntent";
+import { assertCircleIntentWindow, parseBoundedCircleIntent, signedCircleIntentJson } from "./walletPayableIntent";
 import "./circleWalletDiagnostic.css";
 
 type CircleAccount = Awaited<ReturnType<typeof toCircleSmartAccount>>;
@@ -222,12 +222,12 @@ export function CircleWalletDiagnostic() {
       const day = liveBlock.timestamp / 86_400n;
       const lineSpent = line[5] === day ? line[15] : 0n;
       const providerSpent = policy[2] === day ? policy[6] : 0n;
+      assertCircleIntentWindow(message, policy[1], minimumWindow, liveBlock.timestamp);
       if (paused || !sponsorAllowed || activeLineId.toLowerCase() !== intent.lineId.toLowerCase() ||
           line[0].toLowerCase() !== intent.sponsor.toLowerCase() || line[1].toLowerCase() !== DIAGNOSTIC_WALLET.toLowerCase() ||
           line[2] !== message.lineEpoch || line[7] !== 1 || termsHash.toLowerCase() !== message.termsHash.toLowerCase() ||
-          liveBlock.timestamp > line[3] || liveBlock.timestamp > policy[1] || !policy[3] ||
+          liveBlock.timestamp > line[3] || !policy[3] ||
           policy[0].toLowerCase() !== message.endpointHash.toLowerCase() ||
-          message.signatureExpiry <= liveBlock.timestamp || message.dueAt < liveBlock.timestamp + minimumWindow ||
           message.dueAt > liveBlock.timestamp + line[4] || message.dueAt > line[3] ||
           committed > limits[0] || line[8] > limits[1] || amount > line[9] ||
           amount > limits[2] || line[14] + amount > line[12] || line[14] + amount > limits[2] ||
