@@ -75,3 +75,10 @@ test("payable window stays valid until the signature expires", () => {
   assert.throws(() => assertCircleIntentWindow({ signatureExpiry: signedUntil, dueAt: signedUntil + minimumWindow }, signedUntil - 1n, minimumWindow, now), /full signature lifetime/);
   assert.throws(() => assertCircleIntentWindow({ signatureExpiry: signedUntil, dueAt: signedUntil + minimumWindow - 1n }, signedUntil, minimumWindow, now), /full signature lifetime/);
 });
+
+test("chain time rejects a long authorization despite a fast browser clock", () => {
+  const longTtl = fixture(x => { x.message.signatureExpiry = String(now + 1_800n); });
+  const source = JSON.stringify(longTtl);
+  assert.doesNotThrow(() => parseBoundedCircleIntent(source, candidate, now + 700n));
+  assert.throws(() => parseBoundedCircleIntent(source, candidate, now), /outside this bounded test/);
+});

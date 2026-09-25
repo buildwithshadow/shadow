@@ -217,6 +217,9 @@ export function CircleWalletDiagnostic() {
       if (!candidateCode || candidateCode === "0x") throw new Error("Candidate contract is not deployed.");
       if (onchainDigest.toLowerCase() !== intent.digest.toLowerCase()) throw new Error("Candidate contract returned a different intent hash.");
       if (receiptStatus !== 0 || nonceUsed || nonceCancelled) throw new Error("This intent is already used, cancelled or has a receipt. Build a fresh one.");
+      // The browser clock is only useful for early display. Arc's block time
+      // controls the real 20-minute authorization bound before passkey signing.
+      parseBoundedCircleIntent(payableSource, intent.candidate, liveBlock.timestamp);
       const message = intent.typedData.message;
       const amount = intent.principal;
       const day = liveBlock.timestamp / 86_400n;
