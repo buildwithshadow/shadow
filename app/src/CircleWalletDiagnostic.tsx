@@ -255,7 +255,9 @@ export function CircleWalletDiagnostic() {
           args: [intent.digest, signature], account: intent.candidate, blockNumber }),
       ]);
       assertDiagnosticSignature(result as Hex);
-      if (intent.signatureExpiry <= block.timestamp) throw new Error("The signature expired before verification. Build a fresh intent.");
+      // Phone approval may take time. Keep the same minimum handoff window
+      // after signing that was required before the passkey prompt.
+      parseBoundedCircleIntent(payableSource, intent.candidate, block.timestamp);
       // Preserve the CLI's signed-intent format so its preflight and submit
       // commands can validate the exact original payload and signature.
       const signedIntent = signedCircleIntentJson(payableSource, signature);

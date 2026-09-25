@@ -102,3 +102,9 @@ test("a slow browser clock cannot reject a valid intent before Arc time is read"
   assert.doesNotThrow(() => parseBoundedCircleIntent(source, candidate, now));
   assert.throws(() => parseBoundedCircleIntent(source, candidate, now - 600n), /outside this bounded test/);
 });
+
+test("a signed intent must still have more than 60 seconds for handoff", () => {
+  const source = JSON.stringify(fixture());
+  assert.doesNotThrow(() => parseBoundedCircleIntent(source, candidate, now + 839n));
+  assert.throws(() => parseBoundedCircleIntent(source, candidate, now + 840n), /outside this bounded test/);
+});
