@@ -68,6 +68,19 @@ test("downloaded signed intent is directly accepted by the executor parser", () 
   assert.equal(accepted.signature, "0x1234");
 });
 
+test("download canonicalizes equivalent display data for the executor", () => {
+  const nonCanonical = structuredClone(intentFile({ chainId: 5042002n, verifyingContract: candidate, struct: structFromMessage(message) }));
+  nonCanonical.typedData.types.ExtraType = [{ name: "unused", type: "uint256" }];
+  nonCanonical.externalSignerTypedData = JSON.stringify(JSON.parse(nonCanonical.externalSignerTypedData), null, 2);
+  const source = JSON.stringify(nonCanonical);
+  parseBoundedCircleIntent(source, candidate, now);
+  const signed = JSON.parse(signedCircleIntentJson(source, "0x1234"));
+  const accepted = validateIntentFile(signed, { chainId: 5042002n, address: candidate });
+  assert.equal(accepted.digest, signed.digest);
+  assert.equal(signed.externalSignerTypedData, undefined);
+  assert.deepEqual(Object.keys(signed.typedData.types), ["SpendIntent"]);
+});
+
 test("payable window stays valid until the signature expires", () => {
   const signedUntil = now + 900n;
   const minimumWindow = 3600n;

@@ -127,8 +127,29 @@ export function signedCircleIntentJson(source: string, signature: Hex): string {
   if (!isHex(signature, { strict: true }) || signature.length <= 2 || signature.length % 2 !== 0) {
     throw new Error("Verified signature is malformed.");
   }
-  const file = JSON.parse(source) as JsonRecord;
-  return JSON.stringify({ ...file, signature }, null, 2);
+  const file = record(JSON.parse(source), "Intent file");
+  const intent = parseBoundedCircleIntent(source, address(file.verifyingContract, "Candidate contract"), null);
+  const message = Object.fromEntries(CANDIDATE_SPEND_INTENT_TYPES.SpendIntent.map(({ name, type }) => {
+    const value = intent.typedData.message[name];
+    return [name, type === "address" ? getAddress(value as string)
+      : type === "bytes32" ? (value as string).toLowerCase() : (value as bigint).toString()];
+  }));
+  // Rebuild the documented executor format from the verified signer payload.
+  // The executor does not need the external-signing display string, whose
+  // serialization may differ without changing the EIP-712 digest.
+  return JSON.stringify({
+    kind: "ShadowFloatMainnet.SpendIntent",
+    chainId: String(DIAGNOSTIC_CHAIN_ID),
+    verifyingContract: intent.candidate,
+    typedData: {
+      domain: { name: "ShadowFloatMainnet", version: "1", chainId: String(DIAGNOSTIC_CHAIN_ID), verifyingContract: intent.candidate },
+      types: CANDIDATE_SPEND_INTENT_TYPES,
+      primaryType: "SpendIntent",
+      message,
+    },
+    digest: intent.digest,
+    signature,
+  }, null, 2);
 }
 
 export function assertCircleIntentWindow(
