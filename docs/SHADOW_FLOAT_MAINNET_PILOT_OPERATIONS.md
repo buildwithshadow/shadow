@@ -1,6 +1,6 @@
 # Shadow Float Mainnet Candidate: Pilot Operations
 
-Status, 2026-09-19: the `ShadowFloatMainnet` candidate is **not deployed** on any network. The monitor and reconciliation tool below are tested end to end on a local chain only, and none of the procedures in this runbook has been rehearsed by the team. Nothing here authorizes a deployment, a funded line, a governance transaction or a public claim.
+Status, 2026-09-25: the `ShadowFloatMainnet` candidate is deployed on Arc testnet at `0xFeDb5c8c29792d49947492F357f21dc8405F08fc`, with a pinned [deployment manifest](../contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json). Founder-operated testnet purchase, refusal, repayment, uncertain-response and reclaim drills have run. The full monitor, containment and incident procedures below have not been rehearsed as an independent pilot or cleared for mainnet. The manifest captures deployment-block state; inspect current state before operating. Nothing in this runbook authorizes a real-value deployment or a participant transaction.
 
 This runbook covers monitoring and operating procedures for the candidate. [`PILOT_OPERATIONS.md`](PILOT_OPERATIONS.md) is the runbook for the deployed V2 `ShadowFloat` and does not apply to the candidate. Participant commands are described in [`SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md`](SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md); the contract is `contracts/src/ShadowFloatMainnet.sol`.
 
@@ -16,7 +16,7 @@ From the contract's access checks:
 
 | Actor | May | May not |
 | --- | --- | --- |
-| Owner (the Safe) | `setOperator`, `setSponsorAllowed`, set either pause to true or false, `reduceCap` (immediate), `proposeCapIncrease`, `activateCapIncrease` (from `activateAt`), `cancelCapIncrease`, `proposeOwner` | Move, withdraw or redirect a line's reserve; default, close or claim a sponsor's line |
+| Owner (currently a founder EOA on Arc testnet; a Safe is intended for release) | `setOperator`, `setSponsorAllowed`, set either pause to true or false, `reduceCap` (immediate), `proposeCapIncrease`, `activateCapIncrease` (from `activateAt`), `cancelCapIncrease`, `proposeOwner` | Move, withdraw or redirect a line's reserve; default, close or claim a sponsor's line |
 | Operator | Set `openingsPaused` or `spendsPaused` to **true**; `cancelCapIncrease`; submit intents like any executor | Unpause, change caps, allowlists, operators or ownership |
 | Sponsor | Open, `set-provider-policy`, `update-terms`, `close` a debt-free `OPEN` line, `declare-default` from `dueAt`, `claim-defaulted` | Act on another sponsor's line; default before `dueAt` |
 | Agent | Sign intents; `cancel-nonce` | Move reserve or change terms |
@@ -27,8 +27,8 @@ The committed tools cover the owner's allowlist and pause actions (`float-mainne
 ## Running the monitor
 
 ```bash
-export ARC_RPC_URL=...  FLOAT_MAINNET_EXPECTED_CHAIN_ID=...
-M=<the reviewed release manifest>
+export ARC_RPC_URL=https://rpc.testnet.arc.network FLOAT_MAINNET_EXPECTED_CHAIN_ID=5042002
+M=contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json
 node app/scripts/float-mainnet-indexer.mjs index --out index.json --resume --manifest $M
 node app/scripts/float-mainnet-monitor.mjs check --index index.json --manifest $M > check.json
 node app/scripts/float-mainnet-monitor.mjs reconcile --index index.json --manifest $M > reconcile.json

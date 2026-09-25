@@ -1,6 +1,6 @@
 # Shadow Float Mainnet Candidate: Participant Tools
 
-Status, 2026-09-18: the `ShadowFloatMainnet` candidate is **not deployed** on any network. These tools are tested end to end on a local chain only. The deployment values they were tested with are proposals pending owner approval. Nothing in this guide authorizes a deployment, a funded line or a public claim.
+Status, 2026-09-25: the `ShadowFloatMainnet` candidate is deployed on **Arc testnet only** at `0xFeDb5c8c29792d49947492F357f21dc8405F08fc`. Its [deployment manifest](../contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json) records the contract, chain, USDC, source and deployment block; it is a pinned deployment snapshot, so read current line and owner state from the chain. Founder-operated testnet purchases, repayment, refusal and reclaim have succeeded, including one purchase signed by a Circle Modular Wallet. The candidate has no independent pilot or independent security review and is not deployed on Arc mainnet. The examples below do not authorize another person's funds or imply that an external provider has agreed to a pilot.
 
 These command-line tools let each pilot participant run their own part of the lifecycle with their own key. No Shadow engineer builds or signs a participant's transaction. They target the candidate contract only. They reject a V2 address, a V2 intent file, the wrong chain, and any contract that does not report the candidate's own EIP-712 name, version and `SpendIntent` typehash.
 
@@ -26,7 +26,7 @@ export ARC_RPC_URL=https://rpc.testnet.arc.io
 export FLOAT_MAINNET_EXPECTED_CHAIN_ID=5042002
 ```
 
-Name the deployment with the release manifest from `docs/SHADOW_FLOAT_MAINNET_TESTNET_DEPLOYMENT.md` §5: `--manifest float-mainnet-arc-testnet.manifest.json` on every command. A manifest is used only if it passed (`ok: true`), is for the expected chain, and its recorded runtime code hash equals the code at the address. It also gives log lookups a lower bound. `FLOAT_MAINNET_ADDRESS=<address>` works without a manifest, with the generation checks only.
+From the repository root, set `M=contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json` and pass `--manifest "$M"` on every command below. The manifest is used only if it passed (`ok: true`), is for the expected chain, and its recorded runtime code hash equals the code at the address. It also gives log lookups a lower bound. `FLOAT_MAINNET_ADDRESS=<address>` works without a manifest, with the generation checks only. The manifest's owner and balance fields describe its deployment block, not current state; check live state before any action. See the [deployment runbook](SHADOW_FLOAT_MAINNET_TESTNET_DEPLOYMENT.md) for how this record was produced.
 
 ## Conventions
 
@@ -42,11 +42,13 @@ The shell variables below (`$SPONSOR`, `$AGENT`, `$PROVIDER`, `$EXECUTOR`, `$LIN
 
 ### 1. Owner allowlists the sponsor
 
+On the current Arc testnet deployment the owner is the founder-controlled EOA `0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8`, not a Safe. A new sponsor cannot independently open a line until this owner has explicitly allowed that address and the transaction is confirmed. Ask the pilot coordinator for that action before funding or signing anything. `$OWNER` below is the current owner address read from the contract; a later Safe owner would submit the same calldata through the Safe.
+
 ```bash
-node app/scripts/float-mainnet-owner.mjs allow-sponsor --sponsor $SPONSOR --calldata --from $SAFE --manifest $M
+node app/scripts/float-mainnet-owner.mjs allow-sponsor --sponsor $SPONSOR --calldata --from $OWNER --manifest $M
 ```
 
-The printed call goes into the Safe. With `FLOAT_OWNER_PRIVATE_KEY` set, `--execute` sends it directly. `pause --what openings|spends` can also be sent by an operator; `unpause` is owner-only.
+The printed call is for the owner wallet to review and submit. With `FLOAT_OWNER_PRIVATE_KEY` set, `--execute` sends it directly. `pause --what openings|spends` can also be sent by an operator; `unpause` is owner-only. Do not treat printed calldata as an executed allowlist change.
 
 ### 2. Sponsor opens and funds the line
 
@@ -92,13 +94,13 @@ node app/scripts/float-mainnet-intent.mjs verify --intent intent.json --manifest
 
 The local digest must equal the contract's `hashSpendIntent`. `dueAt` defaults to the latest value that keeps the intent executable until its signature expires (`--signature-ttl`, 900 s by default). Before any signature is accepted, `sign` and `verify` check again that the intent is still fresh: same epoch, same terms hash, line open, nonce unused, signature not expired.
 
-**Smart-account agents (for example a Circle Agent Wallet).** The contract checks an ERC-1271 signature only when the agent address already has code. An undeployed smart account always fails, so deploy it before submitting. Sign the file's `externalSignerTypedData` (eth_signTypedData_v4 JSON) with the wallet, then attach the signature:
+**Smart-account agents.** The contract checks an ERC-1271 signature only when the agent address already has code. An undeployed smart account always fails, so deploy it before submitting. Sign the file's `externalSignerTypedData` (eth_signTypedData_v4 JSON) with the wallet, then attach the signature:
 
 ```bash
 node app/scripts/float-mainnet-intent.mjs verify --intent intent.json --signature <hex> --out intent.json --manifest $M
 ```
 
-That Circle's `circle wallet sign typed-data` works on Arc testnet and returns a signature the account validates for this digest is **not yet demonstrated**. Live compatibility testing is still required.
+An existing Circle **Modular Wallet** signed an exact payable candidate intent with a passkey on Arc testnet; the contract validated its ERC-1271 signature and paid the provider [once](https://explorer.testnet.arc.io/tx/0x97168b40dd9fd66f83c815637fb75bfe2952ee46bdec8661351a626d39ea4bc3) in a founder-operated rehearsal. This is not verification that the wallet is registered as a Circle Agent Wallet, or that another participant's wallet and signing method work. Check the actual account type and deployed code before relying on this path.
 
 ### 5. Executor submits
 

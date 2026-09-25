@@ -169,6 +169,9 @@ export async function readHistoricalProofInput(readers, { deadlineAt = Date.now(
     } catch (error) {
       const errors = error instanceof AggregateError ? error.errors : [error];
       failures.push(...errors.map((entry) => entry?.message || String(entry)));
+      // A timeout can fire slightly before Date.now() reaches deadlineAt.
+      // Once the parent deadline has fired, never start a later fallback.
+      if (!(error instanceof AggregateError) && error?.message === "historical proof deadline exceeded") break;
     }
   }
   return { input: null, source: `unavailable (${failures.join("; ")})` };
