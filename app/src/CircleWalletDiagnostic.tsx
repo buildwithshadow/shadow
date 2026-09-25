@@ -14,6 +14,11 @@ import "./circleWalletDiagnostic.css";
 type CircleAccount = Awaited<ReturnType<typeof toCircleSmartAccount>>;
 const signatureAbi = parseAbi(["function isValidSignature(bytes32 hash, bytes signature) view returns (bytes4)"]);
 const candidateAbi = parseAbi(["function hashSpendIntent((address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor) intent) view returns (bytes32)"]);
+const candidateStateAbi = parseAbi([
+  "function receiptStatus(bytes32) view returns (uint8)",
+  "function nonceUsed(bytes32,uint256) view returns (bool)",
+  "function nonceCancelled(bytes32,uint256) view returns (bool)",
+]);
 const candidateAddress = (import.meta.env.VITE_SHADOW_FLOAT_MAINNET_CANDIDATE || "").trim();
 const candidatePayload = isAddress(candidateAddress) ? candidateProbe(candidateAddress) : null;
 const client = createPublicClient({
@@ -179,14 +184,18 @@ export function CircleWalletDiagnostic() {
     setBusy(true); setPayableError("");
     try {
       const intent = parseBoundedCircleIntent(payableSource, candidatePayload.typedData.domain.verifyingContract);
-      const [chainId, walletCode, candidateCode, onchainDigest] = await Promise.all([
+      const [chainId, walletCode, candidateCode, onchainDigest, receiptStatus, nonceUsed, nonceCancelled] = await Promise.all([
         client.getChainId(), client.getCode({ address: DIAGNOSTIC_WALLET }),
         client.getCode({ address: intent.candidate }),
         client.readContract({ address: intent.candidate, abi: candidateAbi, functionName: "hashSpendIntent", args: [intent.typedData.message] }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "receiptStatus", args: [intent.digest] }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "nonceUsed", args: [intent.lineId, intent.typedData.message.nonce] }),
+        client.readContract({ address: intent.candidate, abi: candidateStateAbi, functionName: "nonceCancelled", args: [intent.lineId, intent.typedData.message.nonce] }),
       ]);
       assertDiagnosticContext(DIAGNOSTIC_RP_ID, chainId, walletCode);
       if (!candidateCode || candidateCode === "0x") throw new Error("Candidate contract is not deployed.");
       if (onchainDigest.toLowerCase() !== intent.digest.toLowerCase()) throw new Error("Candidate contract returned a different intent hash.");
+      if (receiptStatus !== 0 || nonceUsed || nonceCancelled) throw new Error("This intent is already used, cancelled or has a receipt. Build a fresh one.");
       setPayableStatus("Confirm this bounded Arc testnet purchase authorization with your passkey.");
       const signature = await currentAccount.signTypedData(intent.typedData);
       const blockNumber = await client.getBlockNumber();
