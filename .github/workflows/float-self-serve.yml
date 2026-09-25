@@ -21,6 +21,7 @@ on:
       - "app/src/main.tsx"
       - "app/src/CircleWalletDiagnostic.tsx"
       - "app/src/walletCandidateProbePayload.ts"
+      - "app/src/walletPayableIntent.ts"
       - "app/src/walletDiagnosticPayload.ts"
       - "app/src/circleWalletDiagnostic.css"
       - "app/src/styles.css"
@@ -35,6 +36,7 @@ on:
       - "examples/float-mainnet-provider-server/**"
       - "app/scripts/shadow-url-migration.test.mjs"
       - "app/scripts/circle-candidate-probe.test.mjs"
+      - "app/scripts/circle-payable-intent.test.mjs"
       - "app/scripts/circle-wallet-diagnostic.test.ts"
       - "app/scripts/reasoning-x402-availability.test.mjs"
       - "app/scripts/shadow-reasoning-service.test.mjs"
@@ -110,8 +112,8 @@ jobs:
         run: node --test app/scripts/treasury-verify-live.test.mjs
       - name: Test domain migration and mandate identity compatibility
         run: node --test app/scripts/shadow-url-migration.test.mjs
-      - name: Test Circle wallet diagnostic and candidate no-spend probe payload
-        run: node --test app/scripts/circle-wallet-diagnostic.test.ts app/scripts/circle-candidate-probe.test.mjs
+      - name: Test Circle wallet diagnostic and bounded candidate signing payloads
+        run: node --test app/scripts/circle-wallet-diagnostic.test.ts app/scripts/circle-candidate-probe.test.mjs app/scripts/circle-payable-intent.test.mjs
       - name: Test reasoning availability before payment and provider acceptance
         run: node --test app/scripts/reasoning-x402-availability.test.mjs app/scripts/shadow-reasoning-service.test.mjs
       - name: Typecheck app and API

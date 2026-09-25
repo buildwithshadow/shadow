@@ -17,5 +17,8 @@
 .walletDiagnostic :focus-visible { outline: 3px solid var(--accent); outline-offset: 4px; }
 .walletDiagnostic pre, .walletDiagnostic textarea { width: 100%; padding: 16px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface); color: var(--ink); font: .85rem/1.65 var(--mono); white-space: pre-wrap; overflow-wrap: anywhere; }
 .walletDiagnostic textarea { display: block; resize: vertical; margin-top: 8px; }
+.walletDiagnostic input[type="file"] { display: block; width: 100%; min-height: 44px; margin: 8px 0 16px; color: var(--ink); font: inherit; }
+.walletDiagnosticConfirm { display: flex; align-items: flex-start; gap: 12px; margin: 16px 0; }
+.walletDiagnosticConfirm input { flex: none; width: 20px; height: 20px; margin: 3px 0 0; accent-color: var(--accent); }
 .walletDiagnosticError { border-left: 3px solid var(--block); padding: 12px 16px; background: var(--block-soft); }
 @media (max-width: 480px) { .walletDiagnosticActions { flex-direction: column; } .walletDiagnostic button { width: 100%; } }
