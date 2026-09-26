@@ -95,14 +95,20 @@ export async function verifyCandidate(client: CandidateReadClient): Promise<void
   if (await client.getChainId() !== CANDIDATE_FUNDING.chainId) throw new Error('This workflow only supports Arc testnet.')
   const code = await client.getCode({ address: CANDIDATE_FUNDING.address })
   if (!code || keccak256(code) !== CANDIDATE_FUNDING.runtimeHash) throw new Error('The deployed contract does not match the verified Shadow testnet candidate.')
-  const [name, version, type, chainId, usdc, decimals] = await Promise.all([
-    read(client, 'NAME_HASH'), read(client, 'VERSION_HASH'), read(client, 'SPEND_INTENT_TYPEHASH'), read(client, 'deploymentChainId'), read(client, 'usdc'), tokenRead(client, 'decimals'),
-  ])
+  // The browser transport serializes requests. Start each read only after the
+  // preceding one succeeds, so an RPC failure leaves no stale batch queued.
+  const name = await read(client, 'NAME_HASH')
+  const version = await read(client, 'VERSION_HASH')
+  const type = await read(client, 'SPEND_INTENT_TYPEHASH')
+  const chainId = await read(client, 'deploymentChainId')
+  const usdc = await read(client, 'usdc')
+  const decimals = await tokenRead(client, 'decimals')
   if (name !== keccak256(stringToHex('ShadowFloatMainnet')) || version !== keccak256(stringToHex('1')) || type !== keccak256(stringToHex(typeString)) || BigInt(chainId) !== BigInt(CANDIDATE_FUNDING.chainId) || !same(usdc, CANDIDATE_FUNDING.usdc) || Number(decimals) !== 6) throw new Error('Candidate identity or USDC configuration is inconsistent. Writes are disabled.')
 }
 
 async function lineAt(client: CandidateReadClient, lineId: Hash, block: { number: bigint; timestamp: bigint }): Promise<CandidateLine> {
-  const [raw, spendsPaused] = await Promise.all([read(client, 'getLine', [lineId], block.number), read(client, 'spendsPaused', [], block.number)])
+  const raw = await read(client, 'getLine', [lineId], block.number)
+  const spendsPaused = await read(client, 'spendsPaused', [], block.number)
   const state = Number(raw.state)
   if (!Number.isInteger(state) || state <= 0 || state >= states.length) throw new Error('No candidate funding line exists with this ID.')
   const sponsor = address(raw.sponsor)
@@ -124,11 +130,17 @@ export async function readCandidateSnapshot(client: CandidateReadClient, input: 
   await verifyCandidate(client)
   const block = await client.getBlock()
   const at = (name: string, args: readonly unknown[] = []) => read(client, name, args, block.number)
-  const [allowed, openingsPaused, spendsPaused, limits, committed, minimum, maximum, balance, allowance, activeLineId, epoch] = await Promise.all([
-    at('sponsorAllowed', [sponsor]), at('openingsPaused'), at('spendsPaused'), at('effectiveLimits'), at('totalCommittedCapital'), at('minimumRepaymentWindow'), at('maximumRepaymentWindow'),
-    tokenRead(client, 'balanceOf', [sponsor], block.number), tokenRead(client, 'allowance', [sponsor, CANDIDATE_FUNDING.address], block.number),
-    agent ? at('activeLineId', [sponsor, agent]) : zeroHash, agent ? at('nextLineEpoch', [sponsor, agent]) : 0n,
-  ])
+  const allowed = await at('sponsorAllowed', [sponsor])
+  const openingsPaused = await at('openingsPaused')
+  const spendsPaused = await at('spendsPaused')
+  const limits = await at('effectiveLimits')
+  const committed = await at('totalCommittedCapital')
+  const minimum = await at('minimumRepaymentWindow')
+  const maximum = await at('maximumRepaymentWindow')
+  const balance = await tokenRead(client, 'balanceOf', [sponsor], block.number)
+  const allowance = await tokenRead(client, 'allowance', [sponsor, CANDIDATE_FUNDING.address], block.number)
+  const activeLineId = agent ? await at('activeLineId', [sponsor, agent]) : zeroHash
+  const epoch = agent ? await at('nextLineEpoch', [sponsor, agent]) : 0n
   return {
     sponsor, observedBlock: block.number, observedTimestamp: block.timestamp, sponsorAllowed: Boolean(allowed), openingsPaused: Boolean(openingsPaused), spendsPaused: Boolean(spendsPaused),
     limits: { protocolReserve: BigInt(limits[0]), lineReserve: BigInt(limits[1]), lineSpend: BigInt(limits[2]), perSpend: BigInt(limits[3]), dailySpend: BigInt(limits[4]) },
@@ -182,7 +194,8 @@ export async function prepareCandidateRepay(client: CandidateReadClient, rawAcco
   const line = await readCandidateLine(client, rawLineId)
   if (!['DRAWN', 'DEFAULTED'].includes(line.stateName) || line.principalOutstanding <= 0n) throw new Error('This line has no outstanding debt to repay.')
   if (line.principalOutstanding > CANDIDATE_FUNDING.maxReserve) throw new Error('This repayment exceeds the browser testnet limit.')
-  const [balance, allowance] = await Promise.all([tokenRead(client, 'balanceOf', [account], line.observedBlock), tokenRead(client, 'allowance', [account, CANDIDATE_FUNDING.address], line.observedBlock)])
+  const balance = await tokenRead(client, 'balanceOf', [account], line.observedBlock)
+  const allowance = await tokenRead(client, 'allowance', [account, CANDIDATE_FUNDING.address], line.observedBlock)
   if (BigInt(balance) < line.principalOutstanding) throw new Error('This wallet does not have enough testnet USDC to repay the debt.')
   if (BigInt(allowance) < line.principalOutstanding) return approval(account, line.principalOutstanding, line.observedBlock, 'repay')
   return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'repay', args: [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: line.stateName === 'DEFAULTED' ? 'Repay this debt into sponsor recovery. The defaulted line stays closed to new purchases.' : 'Repay the displayed debt in full. Repayment restores reserve but does not reset the total purchase limit.' }
@@ -267,8 +280,9 @@ function stage(session: CandidateSession, pending: CandidatePending) {
   try { session.onStage?.(pending) } catch { /* recovery remains authoritative */ }
 }
 async function walletMatches(session: CandidateSession) {
-  const [chainId, accounts] = await Promise.all([session.walletClient.getChainId(), session.walletClient.getAddresses()])
+  const chainId = await session.walletClient.getChainId()
   if (chainId !== CANDIDATE_FUNDING.chainId) throw new Error('Switch the connected wallet to Arc testnet before confirming.')
+  const accounts = await session.walletClient.getAddresses()
   if (!accounts[0] || !same(accounts[0], session.account)) throw new Error('The selected wallet account changed. Refresh the action before signing.')
 }
 
@@ -294,7 +308,8 @@ export async function executeCandidateCall(session: CandidateSession, prepared: 
       if (!prepared.lineFingerprint || fingerprint(current) !== prepared.lineFingerprint) throw new Error('The line or debt changed. Refresh and review the current amount before confirming.')
     }
     await client.simulateContract({ address: prepared.to, abi: call.abi, functionName: call.functionName, args: call.args, account: session.account })
-    const [block, nonce] = await Promise.all([client.getBlock(), client.getTransactionCount({ address: session.account, blockTag: 'pending' })])
+    const block = await client.getBlock()
+    const nonce = await client.getTransactionCount({ address: session.account, blockTag: 'pending' })
     await walletMatches(session)
     // Persist before opening the wallet: a provider can broadcast successfully
     // and lose its response without ever returning a transaction hash.
@@ -352,7 +367,8 @@ export async function reconcileCandidatePending(client: CandidateReadClient, raw
   if (!txHash) return unknown('Open your wallet activity, copy this action’s transaction hash, and check it here. Do not submit the action again while its outcome is unknown.')
   try {
     await verifyCandidate(client)
-    const [transaction, receipt] = await Promise.all([client.getTransaction({ hash: txHash }), client.getTransactionReceipt({ hash: txHash })])
+    const transaction = await client.getTransaction({ hash: txHash })
+    const receipt = await client.getTransactionReceipt({ hash: txHash })
     if (!same(transaction.from, pending.account) || Number(transaction.nonce) !== pending.nonce || (transaction.chainId != null && Number(transaction.chainId) !== CANDIDATE_FUNDING.chainId)) return unknown('This transaction is not from the saved wallet and nonce. The original action is still unresolved.')
     if (!receipt.blockHash || receipt.blockNumber < BigInt(pending.fromBlock) || !same(receipt.transactionHash, txHash) || !same(transaction.hash, txHash)) return unknown('The transaction receipt does not match the saved action’s chain history.')
     // A receipt on an orphaned block must not unlock a replacement payment.

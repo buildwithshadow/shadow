@@ -41,7 +41,7 @@ function fixture() {
     chainId: CANDIDATE_FUNDING.chainId, code: deployedCode, accountCode: '0x', selected: sponsor, walletChain: CANDIDATE_FUNDING.chainId,
     sponsorAllowed: true, openingsPaused: false, spendsPaused: false, allowance: 1_000_000n, balance: 10_000_000n, activeLineId: zeroHash,
     limits: [25_000_000n, 5_000_000n, 5_000_000n, 1_000_000n, 2_000_000n], totalCommittedCapital: 0n, epoch: 0n,
-    block: { number: 100n, timestamp: 1_800_000_000n, hash: blockHash }, nonce: 7, sends: 0, simulation: 0, transactions: new Map(), receipts: new Map(),
+    block: { number: 100n, timestamp: 1_800_000_000n, hash: blockHash }, nonce: 7, sends: 0, simulation: 0, transactions: new Map(), receipts: new Map(), readCalls: [],
     line: { sponsor, agent, epoch: 1n, expiry: 1_800_604_800n, maximumRepaymentWindow: 86_400n, day: 0n, termsVersion: 1n, state: 1, reserveCap: 100_000n, availableReserve: 100_000n, principalOutstanding: 0n, recoveryAvailable: 0n, lineSpendCap: 150_000n, dailySpendCap: 100_000n, cumulativePrincipalPaid: 0n, spentToday: 0n, dueAt: 0n },
   }
   const client = {
@@ -50,6 +50,8 @@ function fixture() {
     async getBlock() { return state.block },
     async getTransactionCount() { return state.nonce },
     async readContract({ functionName }: any) {
+      state.readCalls.push(functionName)
+      if (state.failRead === functionName) throw new Error(`RPC unavailable during ${functionName}`)
       switch (functionName) {
         case 'NAME_HASH': return keccak256(stringToHex('ShadowFloatMainnet'))
         case 'VERSION_HASH': return keccak256(stringToHex('1'))
@@ -106,6 +108,30 @@ test('wrong RPC chain and mismatched deployed generation fail before wallet acce
   f.state.chainId = CANDIDATE_FUNDING.chainId; f.state.code = '0x6000'
   await assert.rejects(() => verifyCandidate(f.client), /verified Shadow/)
   assert.equal(f.state.sends, 0)
+})
+
+test('identity read failure queues no later reads and a fresh retry succeeds', async () => {
+  const f = fixture()
+  f.state.failRead = 'VERSION_HASH'
+  await assert.rejects(() => verifyCandidate(f.client), /RPC unavailable during VERSION_HASH/)
+  assert.deepEqual(f.state.readCalls, ['NAME_HASH', 'VERSION_HASH'])
+  f.state.failRead = null
+  f.state.readCalls = []
+  await verifyCandidate(f.client)
+  assert.deepEqual(f.state.readCalls, ['NAME_HASH', 'VERSION_HASH', 'SPEND_INTENT_TYPEHASH', 'deploymentChainId', 'usdc', 'decimals'])
+})
+
+test('snapshot read failure stops before later state reads and a fresh retry starts cleanly', async () => {
+  const f = fixture()
+  f.state.failRead = 'openingsPaused'
+  await assert.rejects(() => readCandidateSnapshot(f.client, { sponsor, agent }), /RPC unavailable during openingsPaused/)
+  assert.deepEqual(f.state.readCalls, ['NAME_HASH', 'VERSION_HASH', 'SPEND_INTENT_TYPEHASH', 'deploymentChainId', 'usdc', 'decimals', 'sponsorAllowed', 'openingsPaused'])
+  f.state.failRead = null
+  f.state.readCalls = []
+  const snapshot = await readCandidateSnapshot(f.client, { sponsor, agent })
+  assert.equal(snapshot.sponsorAllowed, true)
+  assert.equal(snapshot.balance, 10_000_000n)
+  assert.deepEqual(f.state.readCalls, ['NAME_HASH', 'VERSION_HASH', 'SPEND_INTENT_TYPEHASH', 'deploymentChainId', 'usdc', 'decimals', 'sponsorAllowed', 'openingsPaused', 'spendsPaused', 'effectiveLimits', 'totalCommittedCapital', 'minimumRepaymentWindow', 'maximumRepaymentWindow', 'balanceOf', 'allowance', 'activeLineId', 'nextLineEpoch'])
 })
 
 test('opening uses exact endpoint bytes and a reserve approval only when allowance is short', async () => {
