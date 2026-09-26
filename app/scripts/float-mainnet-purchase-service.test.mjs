@@ -66,23 +66,26 @@ test("concurrent submissions, lost acknowledgement, restart and recovery pay onc
   assert.equal(f.calls.send, 1);
   f.setPayment("unknown");
   assert.equal((await f.call(`${path}/recover`, {})).error, "reconciliation_required");
-  assert.equal(f.calls.recover, 2, "changed payment must not serve a cached result");
+  assert.equal(f.calls.recover, 1, "changed payment must not serve a cached result");
 });
 
 test("unknown attempt holds new purchases across restart and never resends", async (t) => {
   const f = await fixture(t);
+  f.adapter.status = async () => ({ payment: "unknown", txHash: `0x${"12".repeat(32)}` });
   f.adapter.send = async () => { f.calls.send++; throw new Error("transport interrupted"); };
   const p = await f.call("/v1/purchases", { requestId: "unknown" });
   const prepared = await f.call("/v1/purchases", { requestId: "prepared-earlier" });
   const path = `/v1/purchases/${p.id}`;
-  assert.equal((await f.call(`${path}/submit`, { signature: "0xab" })).payment, "unknown");
+  const pending = await f.call(`${path}/submit`, { signature: "0xab" });
+  assert.equal(pending.payment, "unknown");
+  assert.equal(pending.transactionHash, `0x${"12".repeat(32)}`);
   await f.restart();
   assert.equal((await f.call(`${path}/submit`, { signature: "0xab" })).payment, "unknown");
   assert.equal((await f.call("/v1/purchases", { requestId: "replacement" })).error, "original_payment_unresolved");
   assert.equal((await f.call(`/v1/purchases/${prepared.id}/submit`, { signature: "0xab" })).error, "original_payment_unresolved");
   assert.equal((await f.call(`${path}/recover`, {})).error, "payment_not_confirmed");
   assert.equal(f.calls.send, 1);
-  f.setPayment("paid");
+  f.adapter.status = async () => ({ payment: "paid", txHash: pending.transactionHash });
   assert.equal((await f.call(path)).payment, "paid");
 });
 
@@ -113,6 +116,14 @@ test("provider result failure preserves paid debt and supports later result-only
   assert.equal(status.payment, "paid"); assert.equal(status.delivery, "pending");
   f.adapter.recover = recover;
   assert.equal((await f.call(`${path}/recover`, {})).delivery, "available");
+  await f.restart();
+  f.adapter.recover = async () => { throw new Error("provider went offline after delivery"); };
+  assert.equal((await f.call(`${path}/recover`, {})).result.bytes, "aGVsbG8=");
+  const cachedPath = join(f.directory, `${p.id}.result.json`);
+  const cached = JSON.parse(readFileSync(cachedPath));
+  cached.result.bytes = "dGFtcGVyZWQ=";
+  writeFileSync(cachedPath, JSON.stringify(cached));
+  assert.equal((await f.call(`${path}/recover`, {})).status, 503);
   assert.equal(f.calls.send, 1);
 });
 

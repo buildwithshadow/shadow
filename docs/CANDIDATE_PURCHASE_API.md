@@ -71,6 +71,12 @@ Payment states are `not_submitted`, `unknown`, `paid`, `blocked`, or `reverted`.
 yet a delivered service: call `recover` to retrieve it. Delivery states are
 `not_requested`, `pending`, and `available`.
 
+Pending transaction hashes remain visible during reconciliation; their presence
+does not mean payment is confirmed or authorize a resend. Once recovery succeeds,
+the verified result and signed delivery receipt are persisted before availability
+is reported. Later recovery serves that saved copy after fresh payment checks,
+including after a service restart or provider outage.
+
 The recovered `result` contains `encoding: "base64"`, exact `bytes`, `resultHash`
 and a verified signed `delivery` receipt. Treat result content as untrusted data;
 do not inject it as HTML. The reference provider serves results by digest, so use
@@ -180,4 +186,7 @@ debt accounting and result delivery. It loses the payment acknowledgement,
 restarts the service, retries, and checks one provider credit, one ledger entry,
 one service job and no second executor transaction. It also checks invalid
 signatures, stale monitoring, gross-budget exhaustion and configuration changes.
+Pending-ledger observations preserve their transaction hash without passing the
+submission-eligibility check. Saved results and delivery receipts remain usable
+with the provider offline, and corrupt cached bytes are refused.
 All test keys are public deterministic Anvil fixtures; no live funds are used.

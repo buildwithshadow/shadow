@@ -6,7 +6,8 @@ import { test } from "node:test";
 import { createPublicClient, createWalletClient, defineChain, erc20Abi, getAddress, http, keccak256, stringToHex } from "viem";
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
 import { connectCandidate, eip712Domain, floatAbi, SPEND_INTENT_TYPES } from "./float-mainnet-config.mjs";
-import { structFromMessage } from "./float-mainnet-intent.mjs";
+import { intentFile, structFromMessage } from "./float-mainnet-intent.mjs";
+import { initializeExecutionSession, withExecutionSession } from "./float-mainnet-session.mjs";
 import { account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
 import { loadContext, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
 import { createPurchaseAdapter, loadPurchaseConfiguration, purchaseCatalog } from "./float-mainnet-purchase-adapter.mjs";
@@ -129,11 +130,33 @@ test("real HTTP purchase, signed provider acceptance, monitored testnet payment 
   const result = await call(`${route}/recover`, {});
   assert.equal(result.ok, true, JSON.stringify(result));
   assert.equal(Buffer.from(result.result.bytes, "base64").toString(), "answer for real-http-job");
-  assert.equal((await call(`${route}/recover`, {})).result.resultHash, result.result.resultHash);
+  providerServer.closeAllConnections();
+  await new Promise((resolve) => providerServer.close(resolve));
+  providerServer = undefined;
+  await service.close(); await start();
+  assert.deepEqual((await call(`${route}/recover`, {})).result, result.result, "durable bytes and signed receipt survive provider outage and API restart");
   assert.equal(jobs, 1); assert.equal(sends, 1);
   assert.equal(await client.getTransactionCount({ address: executor.address }), nonce);
   assert.equal(JSON.parse(readFileSync(path("ledger/ledger.json"))).entries.length, 1);
   assert.equal((await call("/v1/purchases", { requestId: "over-budget" })).httpStatus, 503);
+  assert.equal(await client.getTransactionCount({ address: executor.address }), nonce);
+  // Separate local fixture models interruption after beforeSend persisted a
+  // hash but before broadcast. It must be observable, never eligible to resend.
+  writeFileSync(path("pending-session.json"), JSON.stringify({ ...policy, sessionId: "local-pending-observation", ledgerDirectory: "./pending-ledger" }));
+  await initializeExecutionSession(path("pending-session.json"), connection);
+  const pendingStruct = { ...struct, nonce: struct.nonce + 1n };
+  const pendingIntent = intentFile({ chainId: CHAIN, verifyingContract: float, struct: pendingStruct });
+  const pendingHash = `0x${"ab".repeat(32)}`;
+  await withExecutionSession(path("pending-session.json"), connection, async (ledger) => {
+    ledger.reserve(pendingStruct, pendingIntent.digest);
+    ledger.beforeSend(pendingIntent.digest, pendingHash);
+    assert.throws(() => ledger.check(pendingStruct, pendingIntent.digest), /unresolved attempt/);
+    assert.equal(ledger.recorded(pendingIntent.digest).txHash, pendingHash);
+  });
+  writeFileSync(path("pending-config.json"), JSON.stringify({ ...spec, session: "pending-session.json", storeDir: "pending-purchases" }));
+  const pendingAdapter = await createPurchaseAdapter(loadPurchaseConfiguration(path("pending-config.json")), env);
+  const observed = await pendingAdapter.status({ intent: pendingIntent });
+  assert.equal(observed.payment, "pending"); assert.equal(observed.txHash, pendingHash);
   assert.equal(await client.getTransactionCount({ address: executor.address }), nonce);
   // Mutating pinned config is not an implicit new enrollment or budget reset.
   writeFileSync(path("config.json"), JSON.stringify({ ...spec, principal: "1" }));

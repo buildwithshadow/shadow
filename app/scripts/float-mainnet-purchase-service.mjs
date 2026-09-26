@@ -88,8 +88,9 @@ export function createPurchaseService({ directory, binding, token, origins, cata
       exactBody(body, []);
       await reconcile(r);
       if (r.payment !== "paid") problem(409, "payment_not_confirmed");
-      const result = await adapter.recover(r); // same digest; no payment capability
+      const result = r.delivered ? store.readResult(r) : await adapter.recover(r); // same digest; no payment capability
       await reconcile(r); // do not deliver a result against a changed payment
+      if (!r.delivered) r.resultChecksum = store.saveResult(r, result);
       r.delivered = true;
       store.put(r);
       return { ...view(r), result };

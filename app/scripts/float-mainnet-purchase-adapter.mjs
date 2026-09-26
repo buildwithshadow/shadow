@@ -4,7 +4,7 @@ import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { privateKeyToAccount } from "viem/accounts";
 import { connectCandidate, readDeployment } from "./float-mainnet-config.mjs";
-import { readSessionPolicy, withExecutionSession } from "./float-mainnet-session.mjs";
+import { assertSessionIntent, readSessionPolicy, withExecutionSession } from "./float-mainnet-session.mjs";
 import { validateIntentFile } from "./float-mainnet-intent.mjs";
 import { assertHealthySpendMonitor } from "./float-mainnet-monitor-spend-guard.mjs";
 import { atomicJson, checksum } from "./float-mainnet-purchase-store.mjs";
@@ -116,7 +116,10 @@ export async function createPurchaseAdapter(config, env = process.env) {
       const { struct, digest } = validateIntentFile(r.intent, connection);
       return withExecutionSession(spec.session, connection, async (ledger) => {
         const report = await ledger.reconcile();
-        const entry = ledger.check(struct, digest); // pending and changed outcomes hold
+        assertSessionIntent(ledger.policy, connection, struct);
+        // Status is observational, not permission to submit: a pending entry's
+        // durable hash must remain visible while check() still forbids resend.
+        const entry = ledger.recorded(digest);
         return { payment: entry?.status ?? "unknown", txHash: entry?.txHash, observedAt: report.observedAt };
       });
     },

@@ -44,8 +44,25 @@ export function openPurchaseStore(directory, binding) {
     }
     let records = body.records;
     let expected = actual;
+    const resultPath = (record) => {
+      if (!/^[a-f0-9]{32}$/.test(record.id)) throw new Error("invalid purchase result id");
+      return join(directory, `${record.id}.result.json`);
+    };
     return {
       all: () => structuredClone(records),
+      saveResult(record, result) {
+        const body = { kind: "Shadow.PurchaseResult.v1", binding, id: record.id, digest: record.intent.digest, result };
+        const value = checksum(body);
+        atomicJson(resultPath(record), { ...body, checksum: value });
+        return value;
+      },
+      readResult(record) {
+        const path = resultPath(record);
+        regular(path);
+        const { checksum: actual, ...body } = JSON.parse(readFileSync(path, "utf8"));
+        if (actual !== record.resultChecksum || checksum(body) !== actual || body.kind !== "Shadow.PurchaseResult.v1" || body.binding !== binding || body.id !== record.id || body.digest !== record.intent.digest) throw new Error("stored purchase result is corrupt or mismatched");
+        return body.result;
+      },
       put(record) {
         regular(path);
         const { checksum: current, ...currentBody } = JSON.parse(readFileSync(path, "utf8"));
