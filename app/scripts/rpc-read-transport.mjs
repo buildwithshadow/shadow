@@ -5,7 +5,7 @@ import { createRpcReadQueue } from "./rpc-read-queue.mjs";
 // transport. The queue owns retries, so neither inner nor outer viem layers
 // may add another retry loop. Browser-safe for read-only participant clients.
 const READ_METHODS = new Set([
-  "eth_chainId", "eth_blockNumber", "eth_call", "eth_getCode", "eth_getBalance",
+  "eth_chainId", "eth_blockNumber", "eth_call", "eth_getCode", "eth_getBalance", "eth_getStorageAt",
   "eth_getBlockByNumber", "eth_getBlockByHash", "eth_getLogs",
   "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getTransactionCount",
   "eth_estimateGas", "eth_gasPrice", "eth_feeHistory", "eth_maxPriorityFeePerGas",
