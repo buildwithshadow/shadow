@@ -48,6 +48,7 @@ import {
   uintFlag,
 } from "./float-mainnet-cli.mjs";
 import { errorMessage, isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
+import { inspectSessionIntent, requireNamedMainnetExecutor } from "./float-mainnet-session.mjs";
 
 // Agent-side SpendIntent tool for the ShadowFloatMainnet candidate.
 //
@@ -432,6 +433,7 @@ async function build(values) {
   const executor = values.executor === undefined ? zeroAddress : addressFlag(values, "executor");
 
   const connection = await connect(values);
+  requireNamedMainnetExecutor(connection, { executor });
   const block = await latestBlock(connection);
   const now = block.timestamp;
   const at = (functionName, args) => read(connection, functionName, args, block.number);
@@ -481,6 +483,7 @@ async function build(values) {
     executor,
   };
   const file = intentFile({ chainId: connection.chainId, verifyingContract: connection.address, struct });
+  await inspectSessionIntent(values, connection, struct, file.digest);
   const onchainDigest = await at("hashSpendIntent", [struct]);
   if (onchainDigest !== file.digest) {
     throw new Error(`local EIP-712 digest ${file.digest} differs from the contract's hashSpendIntent ${onchainDigest}; refusing to emit this intent`);
@@ -497,6 +500,7 @@ async function sign(values) {
   const path = required(values, "intent");
   const connection = await connect(values);
   const { struct, digest } = readIntentFile(path, connection);
+  await inspectSessionIntent(values, connection, struct, digest);
   const { account } = walletFromEnv(connection, "FLOAT_AGENT_PRIVATE_KEY");
   if (account.address !== struct.agent) {
     throw new Error(`FLOAT_AGENT_PRIVATE_KEY belongs to ${account.address}, not the intent's agent ${struct.agent}`);
@@ -533,6 +537,7 @@ async function verify(values) {
   const flagSignature = values.signature === undefined ? null : parseSignature("--signature", values.signature);
   const connection = await connect(values);
   const { struct, digest, signature: fileSignature } = readIntentFile(path, connection);
+  await inspectSessionIntent(values, connection, struct, digest);
   const signature = flagSignature ?? fileSignature;
   if (values.out !== undefined && signature === null) throw new UsageError("--out attaches a signature; pass --signature <hex>");
 
@@ -576,22 +581,24 @@ const COMMANDS = {
       nonce: { type: "string" },
       "signature-ttl": { type: "string" },
       executor: { type: "string" },
+      session: { type: "string" },
       "allow-block": { type: "boolean" },
       out: { type: "string" },
     },
     run: build,
   },
-  sign: { options: { intent: { type: "string" }, out: { type: "string" }, "allow-block": { type: "boolean" } }, run: sign },
-  verify: { options: { intent: { type: "string" }, signature: { type: "string" }, out: { type: "string" } }, run: verify },
+  sign: { options: { intent: { type: "string" }, session: { type: "string" }, out: { type: "string" }, "allow-block": { type: "boolean" } }, run: sign },
+  verify: { options: { intent: { type: "string" }, session: { type: "string" }, signature: { type: "string" }, out: { type: "string" } }, run: verify },
 };
 const TOOL = "node app/scripts/float-mainnet-intent.mjs";
 const USAGE = [
-  `${TOOL} build --agent <addr> --sponsor <addr> --provider <addr> (--endpoint <s> | --endpoint-hash <bytes32>) --principal <n> [--max-total-debt <n>] [--due-in <seconds>] [--nonce <n>] [--signature-ttl <seconds>] [--executor <addr>] [--allow-block] [--out <path>] [--manifest <path>]`,
-  `${TOOL} sign --intent <path> [--out <path>] [--allow-block] [--manifest <path>]   (FLOAT_AGENT_PRIVATE_KEY; EOA agents only)`,
-  `${TOOL} verify --intent <path> [--signature <hex>] [--out <path>] [--manifest <path>]`,
+  `${TOOL} build --agent <addr> --sponsor <addr> --provider <addr> (--endpoint <s> | --endpoint-hash <bytes32>) --principal <n> [--max-total-debt <n>] [--due-in <seconds>] [--nonce <n>] [--signature-ttl <seconds>] [--executor <addr>] [--session <policy.json>] [--allow-block] [--out <path>] [--manifest <path>]`,
+  `${TOOL} sign --intent <path> [--session <policy.json>] [--out <path>] [--allow-block] [--manifest <path>]   (FLOAT_AGENT_PRIVATE_KEY; EOA agents only)`,
+  `${TOOL} verify --intent <path> [--session <policy.json>] [--signature <hex>] [--out <path>] [--manifest <path>]`,
   `Amounts are atomic USDC. --signature-ttl defaults to ${DEFAULT_SIGNATURE_TTL}s; dueAt defaults to the latest value that keeps the intent executable until its signature expires.`,
   "build and sign refuse an intent the contract would record as SpendBlocked (nonce used, provider not paid), or whose signature outlives the provider policy's expiry, unless --allow-block; verify reports predictedOutcome.",
   "Smart-account agents: sign the file's externalSignerTypedData (eth_signTypedData_v4) or digest, then attach it with verify --signature <hex> --out <path>.",
+  "Arc mainnet requires an explicit nonzero --executor and --session <policy.json> for build/sign/verify. Initialize that same durable session with float-mainnet-submit.mjs init-session first; preparation checks its exact parties and remaining capacity without reserving a new attempt. Testnet can opt in.",
 ];
 
 if (isEntrypoint(import.meta)) runCli(COMMANDS, USAGE);
