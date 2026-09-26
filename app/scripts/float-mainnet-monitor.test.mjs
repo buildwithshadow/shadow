@@ -10,6 +10,7 @@ import { floatAbi } from "./float-mainnet-config.mjs";
 import { CHAIN_ID, account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
 import { CAP_KINDS, lineMismatches, reconcileState } from "./float-mainnet-monitor.mjs";
 import { stableStringify } from "./float-mainnet-preflight.mjs";
+import { collectSnapshot, loadContext, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
 
 // The pilot monitor and reconciliation, driven like a scheduled job next to a
 // pilot run through the participant CLIs. The test itself only deploys, funds,
@@ -437,6 +438,51 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     const one = await monitor(["check", "--line-id", seen.lineB]);
     assert.deepEqual([one.discovery.lines, one.lines.map((line) => line.lineId)], [2, [seen.lineB]]);
     await reconciles({ balance: "2000000", totalSponsorObligations: "2000000", totalCommittedCapital: "2000000", surplus: "0" });
+  });
+
+  test("snapshot covers unused sponsors, accounting and direct signed executor at one canonical block", async () => {
+    const saved = await testClient.snapshot();
+    try {
+      await ownerCall("setSponsorAllowed", [account(8).address, true]);
+      const paid = await purchase(agentA, AGENT_A, "snapshot-purchase");
+      const snapshot = await monitor(["snapshot", "--executor-from-block", deployBlock.toString()]);
+      const reconciled = await monitor(["reconcile"]);
+      assert.deepEqual(snapshot.observedAt, reconciled.observedAt);
+      assert.equal(snapshot.identity.chainId, CHAIN_ID.toString());
+      assert.equal(snapshot.identity.address, float);
+      assert.equal(snapshot.identity.usdc, usdc);
+      assert.equal(snapshot.identity.runtimeCodeHash, keccak256(await client.getCode({ address: float })));
+      assert.deepEqual(snapshot.sponsors.map((entry) => entry.sponsor).sort(), [sponsor.address, account(8).address].sort());
+      assert.ok(snapshot.sponsors.every((entry) => entry.allowed && entry.set.length === 1));
+      assert.equal(snapshot.accounting.balance, reconciled.balance);
+      assert.deepEqual(snapshot.accounting.checks, reconciled.checks);
+      assert.equal(snapshot.accounting.ok, true);
+      assert.deepEqual(snapshot.discovery.scanned, { fromBlock: deployBlock.toString(), toBlock: snapshot.observedAt.blockNumber });
+      assert.equal(snapshot.lines[0].providers[0].perSpendCap, "1000000");
+      assert.equal(snapshot.executionAudit.executions.length, 1);
+      assert.equal(getAddress(snapshot.executionAudit.executions[0].sender), executor.address);
+      assert.equal(snapshot.executionAudit.executions[0].executor, executor.address);
+      assert.equal(snapshot.executionAudit.executions[0].digest, paid.digest);
+      assert.equal(snapshot.executionAudit.fromBlock, deployBlock.toString());
+      assert.equal(snapshot.executionAudit.toBlock, snapshot.observedAt.blockNumber);
+      // The actual runner must hold on an unused unauthorized sponsor even
+      // though the legacy check and the same-block accounting both exit green.
+      const baseline = {
+        schemaVersion: 1, identity: { ...snapshot.identity, deployBlock: deployBlock.toString() },
+        owner: owner.address, operators: [], sponsors: [sponsor.address],
+        effectiveLimits: snapshot.contract.effectiveLimits,
+        pauses: { openingsPaused: false, spendsPaused: false },
+        lines: snapshot.lines.map((line) => ({ ...Object.fromEntries(["lineId", "sponsor", "agent", "epoch", "reserveCap", "lineSpendCap", "dailySpendCap", "maximumRepaymentWindow", "termsVersion", "expiry"].map((key) => [key, line[key]])), allowedStates: ["OPEN", "DRAWN"], providers: line.providers.map((policy) => Object.fromEntries(["provider", "active", "endpointHash", "expiry", "perSpendCap", "dailySpendCap"].map((key) => [key, policy[key]]))) })),
+        executor: { address: executor.address, fromBlock: deployBlock.toString() },
+        policy: { intervalMs: 1000, runTimeoutMs: 15000, maxHeartbeatAgeMs: 20000, maxBlockAgeSeconds: 120, maxIndexLagSeconds: 120, warnBeforeSeconds: 3600, requireIndex: false },
+      };
+      writeFileSync(path("runner-baseline.json"), JSON.stringify(baseline));
+      const context = loadContext({ baselinePath: path("runner-baseline.json"), manifestPath: manifest, stateDir: path("runner-state") });
+      const result = await runMonitorOnce(context, { collect: (ctx) => collectSnapshot(ctx, { rpcUrl: RPC }), now: () => Number(snapshot.observedAt.timestamp) * 1000 });
+      assert.equal(result.hold, true);
+      assert.ok(result.alerts.some((entry) => entry.code === "SPONSOR_DRIFT"));
+      assert.deepEqual(result.observedAt, snapshot.observedAt);
+    } finally { await testClient.revert({ id: saved }); }
   });
 
   test("failed read-only CLI batches stop at the failed read and a fresh retry keeps canonical accounting", async () => {
