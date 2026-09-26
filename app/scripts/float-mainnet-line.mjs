@@ -41,7 +41,7 @@ async function status(values) {
     );
   }
 
-  const connection = await connect(values);
+  const connection = await connect(values, { readOnly: true });
   const fromBlock = fromBlockArg ?? connection.deployBlock;
   const block = await latestBlock(connection);
   const at = (functionName, args) => read(connection, functionName, args, block.number);
@@ -129,7 +129,7 @@ async function status(values) {
 async function receipt(values) {
   const digest = bytes32Flag(values, "digest");
   const fromBlockArg = fromBlockFlag(values);
-  const connection = await connect(values);
+  const connection = await connect(values, { readOnly: true });
   const block = await latestBlock(connection);
   const receiptStatus = RECEIPT_STATUSES[Number(await read(connection, "receiptStatus", [digest], block.number))];
   const result = { ok: true, observedAt: { blockNumber: block.number, timestamp: block.timestamp }, digest, receiptStatus };
