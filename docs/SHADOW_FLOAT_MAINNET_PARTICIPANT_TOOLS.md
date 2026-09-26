@@ -9,6 +9,7 @@ These command-line tools let each pilot participant run their own part of the li
 | Role | Tool | Key (env, read only by commands that sign, never printed) |
 | --- | --- | --- |
 | Owner (a Safe in production) | `float-mainnet-owner.mjs` | `FLOAT_OWNER_PRIVATE_KEY`, or none with `--calldata --from <safe>` |
+| Emergency operator (pause and cancel cap increase only) | `float-mainnet-owner.mjs` | Its own key in `FLOAT_OWNER_PRIVATE_KEY`, or none with `--calldata --from <operator>` |
 | Sponsor | `float-mainnet-sponsor.mjs` | `FLOAT_SPONSOR_PRIVATE_KEY` |
 | Agent | `float-mainnet-intent.mjs`, `float-mainnet-cancel-nonce.mjs` | `FLOAT_AGENT_PRIVATE_KEY` (EOA agents), or an external signer for smart-account agents |
 | Executor (relayer) | `float-mainnet-submit.mjs` | `FLOAT_EXECUTOR_PRIVATE_KEY`, or none with `--calldata --from <executor>` |
@@ -49,6 +50,31 @@ node app/scripts/float-mainnet-owner.mjs allow-sponsor --sponsor $SPONSOR --call
 ```
 
 The printed call is for the owner wallet to review and submit. With `FLOAT_OWNER_PRIVATE_KEY` set, `--execute` sends it directly. `pause --what openings|spends` can also be sent by an operator; `unpause` is owner-only. Do not treat printed calldata as an executed allowlist change.
+
+#### Owner and emergency controls
+
+Use named caps, in atomic USDC: `protocol-reserve`, `line-reserve`, `line-spend`, `per-spend`, or `daily-spend`. The owner can lower an effective cap immediately. A reduction also cancels any queued increase of that cap; a zero value is invalid, so use the pause commands to stop new risk. Lowering caps does not withdraw funds, cancel existing debt or disable repayment and eligible exits.
+
+```bash
+node app/scripts/float-mainnet-owner.mjs allow-operator --operator $OPERATOR --calldata --from $OWNER --manifest $M
+node app/scripts/float-mainnet-owner.mjs reduce-cap --cap per-spend --value 500000 --calldata --from $OWNER --manifest $M
+node app/scripts/float-mainnet-owner.mjs cancel-cap-increase --cap per-spend --calldata --from $OPERATOR --manifest $M
+node app/scripts/float-mainnet-owner.mjs disallow-operator --operator $OPERATOR --calldata --from $OWNER --manifest $M
+```
+
+These are separate call examples, not a batch to submit blindly. `500000` means 0.50 USDC; choose the intended limit before preparing a call. Every command checks the caller's current onchain role and simulates the call. `cancel-cap-increase` requires an existing proposal and permits either the owner or a currently enabled operator, even after its activation time if it has not been activated. Operators cannot lower caps, grant roles or unpause. The owner can revoke an operator immediately.
+
+Ownership changes use two separate confirmations:
+
+```bash
+node app/scripts/float-mainnet-owner.mjs propose-owner --owner $NEXT_OWNER --calldata --from $OWNER --manifest $M
+# Submit the proposal and confirm pendingOwner() before preparing acceptance.
+node app/scripts/float-mainnet-owner.mjs accept-owner --calldata --from $NEXT_OWNER --manifest $M
+```
+
+The proposal leaves the current owner in control. Only the exact nonzero `pendingOwner()` can accept; once acceptance is confirmed, the former owner loses owner powers. Ownership transfer does not remove any independently granted operator role: explicitly revoke unused operators and verify current state. These tools accept the contract's address-based roles; they do not prove that a proposed address is a Safe or that its signers, threshold and recovery configuration are suitable. Verify those separately before transferring ownership.
+
+All commands retain default dry-run and explicit `--execute` behavior. Dry runs and prepared calldata are observations at preparation time, not executed changes. Verify transaction receipts and current state afterward. Scheduling and activating cap increases are not exposed by this CLI; those existing contract calls remain separately reviewed governor operations. There is no command that bypasses their governance delay or immutable ceilings.
 
 ### 2. Sponsor opens and funds the line
 
