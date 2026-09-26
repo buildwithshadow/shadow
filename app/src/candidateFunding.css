@@ -1,0 +1,85 @@
+.fundingDesk { max-width: 1120px; margin: 0 auto; padding-bottom: 32px; }
+.fundingHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 32px; padding: 44px 0 24px; }
+.fundingHead h1 { font-size: clamp(36px, 5vw, 58px); line-height: 1.06; margin: 12px 0 20px; text-wrap: balance; }
+.fundingHead p:not(.pageEyebrow) { max-width: 560px; color: var(--ink-soft); font-size: 17px; line-height: 1.6; text-wrap: pretty; }
+.fundingWallet { display: grid; gap: 10px; min-width: 230px; padding: 20px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); }
+.fundingWallet span, .fundingWallet small { color: var(--ink-soft); font-size: 13px; }
+.fundingDesk code { font-family: var(--mono); overflow-wrap: anywhere; font-size: 13px; }
+.fundingDesk button, .fundingDesk input, .fundingDesk summary { font: inherit; }
+.fundingDesk button { min-height: 44px; padding: 11px 18px; border: 1px solid var(--border-strong); border-radius: 8px; background: var(--surface-2); color: var(--ink); cursor: pointer; line-height: 1.3; }
+.fundingDesk button:hover:not(:disabled) { border-color: var(--accent); }
+.fundingDesk button:disabled { opacity: .48; cursor: not-allowed; }
+.fundingDesk :is(button, input, summary, a):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
+.fundingDesk a { color: var(--accent); text-underline-offset: 4px; }
+.fundingScope { color: var(--ink-soft); font-size: 14px; line-height: 1.6; border-left: 2px solid var(--accent); padding-left: 14px; margin: 0 0 24px; }
+.fundingModes { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.fundingModes button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
+.fundingFeedback:empty { display: none; }
+.fundingFeedback { margin: 12px 0; }
+.fundingFeedback p { padding: 14px 16px; margin: 8px 0; border: 1px solid var(--border-strong); border-radius: 8px; overflow-wrap: anywhere; line-height: 1.5; }
+.fundingFeedback .fundingError { border-color: var(--block); color: var(--ink); }
+.fundingFeedback .fundingSuccess { border-color: var(--accent); }
+.fundingPanel, .fundingRecovery { background: var(--surface); border: 1px solid var(--border-strong); border-radius: 14px; padding: 28px; }
+.fundingRecovery { border-color: var(--warn); margin-bottom: 22px; }
+.fundingRecovery h2 { margin-top: 0; }
+.fundingRecovery .fundingField { margin: 20px 0 16px; }
+.fundingPanelHead { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; margin-bottom: 24px; }
+.fundingPanel h2, .fundingRecovery h2, .fundingDialog h2 { font-size: 24px; line-height: 1.3; text-wrap: balance; margin: 0 0 8px; }
+.fundingPanel h3 { font-size: 20px; margin: 0; text-wrap: balance; }
+.fundingPanel p, .fundingRecovery p, .fundingDialog p { color: var(--ink-soft); line-height: 1.6; margin: 8px 0 16px; text-wrap: pretty; }
+.fundingBalance { font-size: 14px; font-variant-numeric: tabular-nums; padding: 10px 12px; background: var(--surface-2); border-radius: 8px; white-space: nowrap; }
+.fundingDesk fieldset { border: 0; border-top: 1px solid var(--border-strong); margin: 28px 0; padding: 20px 0 0; min-width: 0; }
+.fundingDesk legend { color: var(--ink); font-weight: 600; padding: 0 12px 0 0; }
+.fundingGrid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px 20px; }
+.fundingThree { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.fundingWide { grid-column: 1 / -1; }
+.fundingField { display: flex; flex-direction: column; gap: 9px; min-width: 0; font-size: 14px; }
+.fundingField > label { font-weight: 600; }
+.fundingField input { color: var(--ink); background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 8px; min-height: 46px; width: 100%; padding: 11px 13px; font-size: 16px; }
+.fundingField small, .fundingActions small { color: var(--ink-soft); font-size: 13px; line-height: 1.5; }
+.fundingCallout { padding: 14px 16px; border-left: 2px solid var(--warn); background: var(--surface-2); }
+.fundingCheck { display: flex; gap: 12px; align-items: flex-start; font-size: 14px; color: var(--ink-soft); line-height: 1.6; cursor: pointer; padding: 12px 0; min-height: 44px; }
+.fundingCheck input { flex: 0 0 auto; width: 22px; height: 22px; margin: 1px 0; accent-color: var(--accent); }
+.fundingActions { display: flex; align-items: center; flex-wrap: wrap; gap: 16px; margin-top: 24px; }
+.fundingActions small { max-width: 400px; }
+.fundingDesk .fundingPrimary { background: var(--accent); color: var(--cta-fg); border-color: var(--accent); font-weight: 700; }
+.fundingLookup { display: flex; align-items: center; gap: 16px; }
+.fundingLookup .fundingField { flex: 1; }
+.fundingLine { margin-top: 28px; padding-top: 28px; border-top: 1px solid var(--border-strong); }
+.fundingLine .fundingPanelHead > span { color: var(--ink-soft); font-size: 13px; }
+.fundingMetrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: 24px 0; }
+.fundingMetrics dt { color: var(--ink-soft); font-size: 13px; margin-bottom: 10px; }
+.fundingMetrics dd { margin: 0; font-size: 26px; line-height: 1.2; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.fundingMetrics dd small { font-size: 12px; color: var(--ink-soft); }
+.fundingDesk details { margin-top: 28px; border-top: 1px solid var(--border-strong); padding-top: 8px; }
+.fundingDesk summary { padding: 14px 0; min-height: 44px; cursor: pointer; }
+.fundingDetails { display: grid; gap: 14px; margin: 20px 0; }
+.fundingDetails > div { display: grid; grid-template-columns: minmax(120px, .4fr) minmax(0, 1fr); gap: 16px; }
+.fundingDetails dt { color: var(--ink-soft); font-size: 13px; }
+.fundingDetails dd { margin: 0; font-size: 14px; overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
+.fundingFoot { padding-top: 18px; display: flex; justify-content: space-between; flex-wrap: wrap; gap: 12px; color: var(--ink-soft); font-size: 13px; line-height: 1.6; }
+.fundingFoot p { margin: 0; }
+.fundingDialog { background: var(--surface); color: var(--ink); border: 1px solid var(--border-strong); border-radius: 14px; max-width: 660px; width: calc(100% - 32px); max-height: calc(100dvh - 48px); overflow-y: auto; padding: 28px; }
+.fundingDialog::backdrop { background: rgb(0 0 0 / .7); }
+@media (max-width: 760px) {
+  .fundingHead { flex-direction: column; padding-top: 28px; gap: 18px; }
+  .fundingWallet { width: 100%; }
+  .fundingPanel, .fundingRecovery, .fundingDialog { padding: 20px; }
+  .fundingPanelHead { flex-direction: column; gap: 12px; }
+  .fundingThree { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fundingMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .fundingDetails > div { grid-template-columns: 1fr; gap: 6px; }
+}
+@media (max-width: 520px) {
+  .fundingGrid { grid-template-columns: 1fr; }
+  .fundingModes > button { flex: 1; }
+  .fundingLookup { flex-direction: column; align-items: stretch; }
+  .fundingActions { align-items: stretch; flex-direction: column; }
+  .fundingActions button { width: 100%; }
+}
+.candidateShell .nav .brand::after { content: none; }
+.candidateShell .nav a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+@media (prefers-reduced-motion: reduce) {
+  html:has(.candidateShell) { scroll-behavior: auto; }
+  .candidateShell *, .candidateShell *::before, .candidateShell *::after { animation: none !important; transition: none !important; }
+}

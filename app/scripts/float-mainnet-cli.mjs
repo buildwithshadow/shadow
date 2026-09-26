@@ -129,8 +129,8 @@ export function endpointFlag(values) {
   }
 }
 
-export function connect(values) {
-  return connectCandidate(readDeployment(process.env, { manifest: values.manifest }));
+export function connect(values, options) {
+  return connectCandidate(readDeployment(process.env, { manifest: values.manifest }), options);
 }
 
 // dry-run (default) simulates from the key's address; --execute sends;
@@ -215,14 +215,57 @@ function eventItem(eventName) {
   return floatAbi.find((item) => item.type === "event" && item.name === eventName);
 }
 
+// -32005/"Request exceeds defined limit" alone may mean a quota, not a
+// block-range limit. Splitting those errors creates more requests, so only
+// shrink a scan when the node explicitly identifies its range/result limit.
+function isLogRangeLimit(error) {
+  const seen = new Set();
+  let rangeLimit = false;
+  for (let current = error, depth = 0; current && depth < 8 && !seen.has(current); current = current.cause, depth++) {
+    seen.add(current);
+    const detail = [current.shortMessage, current.details, current.message].filter((value) => typeof value === "string").join(" ");
+    if (/rate limit|quota|too many requests|requests? per|\b429\b/i.test(detail)) return false;
+    if (/block range.{0,80}(?:too (?:large|wide)|exceed|limit|maximum)|(?:maximum|max|limited to).{0,40}block range|query returned more than.{0,40}(?:results|logs)|(?:log )?response size.{0,40}(?:exceed|limit|too large)|too many (?:logs|results)/i.test(detail)) rangeLimit = true;
+  }
+  return rangeLimit;
+}
+
+// Inclusive, non-overlapping batches. Smaller successful ranges become the
+// new ceiling for this scan. At most ~13 halvings are possible from 5,000;
+// a request budget also prevents a restrictive node turning a large scan
+// into unbounded one-block reads. A failure never yields a complete result.
+async function* logBatches(connection, event, args, low, high, reverse = false) {
+  if (low > high) return;
+  let span = LOG_CHUNK_BLOCKS;
+  let cursor = reverse ? high : low;
+  let requests = 0n;
+  const maxRequests = ((high - low) / LOG_CHUNK_BLOCKS + 1n) * 16n + 16n;
+  while (reverse ? cursor >= low : cursor <= high) {
+    const from = reverse ? (cursor - span + 1n > low ? cursor - span + 1n : low) : cursor;
+    const to = reverse ? cursor : (cursor + span - 1n < high ? cursor + span - 1n : high);
+    if (++requests > maxRequests) {
+      throw new Error(`log scan incomplete at blocks ${from}-${to}: bounded request budget exhausted after ${maxRequests} requests; use an RPC with a larger log range/result allowance`);
+    }
+    let logs;
+    try {
+      logs = await connection.client.getLogs({ address: connection.address, event, args, fromBlock: from, toBlock: to });
+    } catch (error) {
+      if (from < to && isLogRangeLimit(error)) {
+        span = (to - from + 2n) / 2n;
+        continue;
+      }
+      throw new Error(`log scan incomplete at blocks ${from}-${to}: ${rpcErrorDetail(error)}`, { cause: error });
+    }
+    yield logs;
+    cursor = reverse ? from - 1n : to + 1n;
+  }
+}
+
 // Every matching log in [fromBlock, toBlock], oldest first.
 export async function findLogs(connection, eventName, args, fromBlock, toBlock) {
   const event = eventItem(eventName);
   const logs = [];
-  for (let from = fromBlock; from <= toBlock; from += LOG_CHUNK_BLOCKS) {
-    const to = from + LOG_CHUNK_BLOCKS - 1n < toBlock ? from + LOG_CHUNK_BLOCKS - 1n : toBlock;
-    logs.push(...(await connection.client.getLogs({ address: connection.address, event, args, fromBlock: from, toBlock: to })));
-  }
+  for await (const batch of logBatches(connection, event, args, fromBlock, toBlock)) logs.push(...batch);
   return logs;
 }
 
@@ -232,11 +275,8 @@ export async function findLogs(connection, eventName, args, fromBlock, toBlock) 
 export async function findLatestLog(connection, eventName, args, { fromBlock, toBlock }) {
   const floor = fromBlock ?? (toBlock >= MAX_LOOKBACK_BLOCKS ? toBlock - MAX_LOOKBACK_BLOCKS + 1n : 0n);
   const event = eventItem(eventName);
-  for (let to = toBlock; to >= floor; ) {
-    const from = to - floor >= LOG_CHUNK_BLOCKS ? to - LOG_CHUNK_BLOCKS + 1n : floor;
-    const logs = await connection.client.getLogs({ address: connection.address, event, args, fromBlock: from, toBlock: to });
+  for await (const logs of logBatches(connection, event, args, floor, toBlock, true)) {
     if (logs.length) return { log: logs.at(-1), fromBlock: floor, toBlock };
-    to = from - 1n;
   }
   return { log: null, fromBlock: floor, toBlock };
 }

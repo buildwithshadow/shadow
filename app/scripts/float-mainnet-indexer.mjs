@@ -245,7 +245,7 @@ async function index(values) {
   if (!values.resume && fromBlockArg === null && values.manifest === undefined) {
     throw new UsageError("pass --manifest <release manifest> (the index starts at its deployment block) or --from-block <n>");
   }
-  const connection = await connect(values);
+  const connection = await connect(values, { readOnly: true });
   const previous = values.resume ? readIndexFile(out, connection) : null;
   const result = await indexEvents(connection, { fromBlock: fromBlockArg ?? connection.deployBlock, previous });
   writeJsonFile(out, result.index);

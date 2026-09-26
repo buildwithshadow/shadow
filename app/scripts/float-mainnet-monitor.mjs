@@ -107,35 +107,39 @@ async function check(values) {
   const warnBefore = values["warn-before"] === undefined ? DEFAULT_WARN_BEFORE : durationFlag(values, "warn-before");
   const maxIndexLag = values["max-index-lag"] === undefined ? DEFAULT_MAX_INDEX_LAG : durationFlag(values, "max-index-lag");
   const only = values["line-id"] === undefined ? null : [...new Set(values["line-id"].map((raw) => parseBytes32("--line-id", raw)))];
-  const connection = await connect(values);
+  const connection = await connect(values, { readOnly: true });
   const pinned = await connection.client.getBlock();
   const at = (functionName, args) => read(connection, functionName, args, pinned.number);
   const found = await discover(connection, values.index, pinned);
   const unknown = (only ?? []).filter((lineId) => !found.lineIds.includes(lineId));
   if (unknown.length) throw new Error(`no LineOpened for --line-id ${unknown.join(", ")} in blocks ${connection.deployBlock}-${pinned.number}`);
 
+  // Reads share a serial transport. Enqueue each only after its predecessor
+  // succeeds so a failed check leaves no detached requests consuming quota.
   const [owner, pendingOwner, openingsPaused, spendsPaused, effectiveLimits, totalCommittedCapital, totalSponsorObligations, minimumRepaymentWindow] =
-    await Promise.all([
-      at("owner"),
-      at("pendingOwner"),
-      at("openingsPaused"),
-      at("spendsPaused"),
-      readLimits(connection, pinned.number),
-      at("totalCommittedCapital"),
-      at("totalSponsorObligations"),
-      at("minimumRepaymentWindow"),
-    ]);
-  const pendingCaps = await Promise.all(CAP_KINDS.map((_, kind) => at("pendingCaps", [kind])));
+    [
+      await at("owner"),
+      await at("pendingOwner"),
+      await at("openingsPaused"),
+      await at("spendsPaused"),
+      await readLimits(connection, pinned.number),
+      await at("totalCommittedCapital"),
+      await at("totalSponsorObligations"),
+      await at("minimumRepaymentWindow"),
+    ];
+  const pendingCaps = [];
+  for (let kind = 0; kind < CAP_KINDS.length; kind++) pendingCaps.push(await at("pendingCaps", [kind]));
   const operatorAddresses = [...new Set(found.operatorSets.map((entry) => entry.args.operator))];
-  const operators = await Promise.all(
-    operatorAddresses.map(async (operator) => ({
+  const operators = [];
+  for (const operator of operatorAddresses) {
+    operators.push({
       operator,
       enabled: await at("operators", [operator]),
       set: found.operatorSets
         .filter((entry) => entry.args.operator === operator)
         .map(({ args, blockNumber, transactionHash }) => ({ allowed: args.allowed, blockNumber, transactionHash })),
-    })),
-  );
+    });
+  }
 
   const now = pinned.timestamp;
   const soon = (time) => time <= now + warnBefore;
@@ -204,20 +208,19 @@ async function check(values) {
     const drawn = state === "DRAWN";
     // As isMatured: declareDefault is possible from dueAt itself.
     const matured = drawn && now >= line.dueAt;
-    const providers = await Promise.all(
-      [...found.providers.get(lineId)].map(async (provider) => {
-        const policy = await readPolicy(connection, lineId, provider, pinned.number);
-        const input = { now, line, policy, effectiveLimits, totalCommittedCapital, spendsPaused, sponsorAllowed, minimumRepaymentWindow };
-        return {
-          provider,
-          active: policy.active,
-          endpointHash: policy.endpointHash,
-          expiry: policy.expiry,
-          secondsToExpiry: left(policy.expiry),
-          ...remainingCapacity(input),
-        };
-      }),
-    );
+    const providers = [];
+    for (const provider of found.providers.get(lineId)) {
+      const policy = await readPolicy(connection, lineId, provider, pinned.number);
+      const input = { now, line, policy, effectiveLimits, totalCommittedCapital, spendsPaused, sponsorAllowed, minimumRepaymentWindow };
+      providers.push({
+        provider,
+        active: policy.active,
+        endpointHash: policy.endpointHash,
+        expiry: policy.expiry,
+        secondsToExpiry: left(policy.expiry),
+        ...remainingCapacity(input),
+      });
+    }
 
     const where = { lineId };
     if (matured) {
@@ -417,11 +420,13 @@ export function reconcileState({ balance, totalSponsorObligations, totalCommitte
 
 async function reconcile(values) {
   requireManifest(values);
-  const connection = await connect(values);
+  const connection = await connect(values, { readOnly: true });
   const pinned = await connection.client.getBlock();
   const at = (functionName, args) => read(connection, functionName, args, pinned.number);
   const found = await discover(connection, values.index, pinned);
-  const [usdc, totalSponsorObligations, totalCommittedCapital] = await Promise.all([at("usdc"), at("totalSponsorObligations"), at("totalCommittedCapital")]);
+  const usdc = await at("usdc");
+  const totalSponsorObligations = await at("totalSponsorObligations");
+  const totalCommittedCapital = await at("totalCommittedCapital");
   const balance = await connection.client.readContract({
     address: usdc,
     abi: erc20Abi,

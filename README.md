@@ -20,7 +20,9 @@ Chain: Arc Testnet, chain id `5042002`
 
 ## Mainnet Candidate
 
-`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is the mainnet-candidate contract, a separate generation from the testnet V2 contract described below. It is not deployed and not audited, and its Arc testnet deployment is pending authorization. It admits approved sponsors only, allows one outstanding draw per line, excludes automatic scoring, keeps protocol fees at zero and requires no Gateway behavior. The public implementation requirements are in the specification and supporting technical documents below.
+`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is a separate generation from the V2 contract described below. The candidate is deployed on **Arc testnet**, chain `5042002`, at [`0xFeDb5c8c29792d49947492F357f21dc8405F08fc`](https://testnet.arcscan.app/address/0xFeDb5c8c29792d49947492F357f21dc8405F08fc); its [deployment manifest](contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json) records the source and runtime identity. It is not deployed on mainnet and has not been independently audited.
+
+The candidate admits approved sponsors only, allows one outstanding draw per line, excludes automatic scoring and keeps protocol fees at zero. [Open candidate funding](https://www.shadowbuild.xyz/funding) to prepare a testnet line, inspect debt, repay or reclaim eligible funds. Agent purchase signing, executor submission and provider delivery use the participant tools below. Recorded candidate cycles are founder-operated engineering tests; the external integrations documented below belong to V2.
 
 - Specification: [`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md)
 - Threat model: [`docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md`](docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md)

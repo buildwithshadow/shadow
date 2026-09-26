@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
+import { CandidateFundingDesk } from "./CandidateFundingDesk";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -2660,7 +2661,7 @@ function App() {
   );
 
   return (
-    <main className="shell">
+    <main className={pathname === "/funding" ? "shell candidateShell" : "shell"}>
       <nav className="nav">
         <Link className="brand" to="/" aria-label="Shadow">
           <ShadowMark />
@@ -2679,12 +2680,15 @@ function App() {
           <NavLink to="/builders" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Builders
           </NavLink>
+          <NavLink to="/funding" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
+            Funding
+          </NavLink>
           <NavLink to="/roadmap" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Roadmap
           </NavLink>
         </div>
         <div className="navActions">
-          <button
+          {pathname !== "/funding" && <button
             className={account ? "navWallet connected" : "navWallet"}
             onClick={connectWallet}
             type="button"
@@ -2692,7 +2696,7 @@ function App() {
           >
             <span className="navWalletDot" />
             {account ? shortAddress(account) : "Wallet"}
-          </button>
+          </button>}
           <Link to="/float" className="navCta">
             Open Float
           </Link>
@@ -2712,6 +2716,7 @@ function App() {
         <Route path="/float" element={floatPage} />
         <Route path="/proof" element={<Navigate to="/float" replace />} />
         <Route path="/builders" element={buildersPage} />
+        <Route path="/funding" element={<CandidateFundingDesk />} />
         <Route path="/roadmap" element={roadmapPage} />
         <Route path="/archive" element={<Navigate to="/float" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
@@ -7963,7 +7968,7 @@ function SiteFooter() {
       </div>
       <div className="siteFooterBottom">
         <span>Built on Arc testnet with Circle USDC · 2026</span>
-        <span>Shadow Float V2 · spending lines, controls, and receipts on Arc</span>
+        <span>Shadow Float · spending lines, controls, and receipts on Arc</span>
       </div>
     </footer>
   );

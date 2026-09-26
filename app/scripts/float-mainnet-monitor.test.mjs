@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { createPublicClient, createTestClient, createWalletClient, defineChain, erc20Abi, getAddress, http, keccak256, zeroAddress } from "viem";
+import { createPublicClient, createTestClient, createWalletClient, decodeFunctionData, defineChain, erc20Abi, getAddress, http, keccak256, zeroAddress } from "viem";
 
 import { floatAbi } from "./float-mainnet-config.mjs";
 import { CHAIN_ID, account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
@@ -436,6 +437,92 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     const one = await monitor(["check", "--line-id", seen.lineB]);
     assert.deepEqual([one.discovery.lines, one.lines.map((line) => line.lineId)], [2, [seen.lineB]]);
     await reconciles({ balance: "2000000", totalSponsorObligations: "2000000", totalCommittedCapital: "2000000", surplus: "0" });
+  });
+
+  test("failed read-only CLI batches stop at the failed read and a fresh retry keeps canonical accounting", async () => {
+    const snapshot = await testClient.snapshot();
+    let server;
+    try {
+      // Two members make operator/provider batches exercise a real sibling,
+      // rather than accidentally passing because the fixture has only one.
+      await ownerCall("setOperator", [operator.address, true]);
+      await ownerCall("setOperator", [account(8).address, true]);
+      const existing = await client.readContract({ address: float, abi: floatAbi, functionName: "getLine", args: [seen.lineA] });
+      const policyHash = await walletOf(sponsor).writeContract({
+        address: float, abi: floatAbi, functionName: "setProviderPolicy",
+        args: [seen.lineA, account(9).address, keccak256(new TextEncoder().encode(ENDPOINT)), 1_000_000n, 1_000_000n, existing.expiry, true],
+      });
+      assert.equal((await client.waitForTransactionReceipt({ hash: policyHash })).status, "success");
+      const baselineCheck = await monitor(["check"]);
+      const baselineReconcile = await monitor(["reconcile"]);
+      assert.equal(baselineCheck.contract.operators.length, 2);
+      assert.equal(lineOf(baselineCheck, seen.lineA).providers.length, 2);
+
+      let failFunction;
+      let requests = [];
+      server = createServer(async (request, response) => {
+        try {
+          let raw = "";
+          for await (const chunk of request) raw += chunk;
+          const body = JSON.parse(raw);
+          let label = body.method;
+          if (body.method === "eth_call" && body.params[0].to.toLowerCase() === float.toLowerCase()) {
+            label = decodeFunctionData({ abi: floatAbi, data: body.params[0].data }).functionName;
+          }
+          requests.push(label);
+          response.setHeader("content-type", "application/json");
+          if (label === failFunction) {
+            response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32602, message: `injected read failure for ${label}` } }));
+            return;
+          }
+          const upstream = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: raw });
+          response.end(await upstream.text());
+        } catch (error) {
+          response.statusCode = 500;
+          response.end(JSON.stringify({ error: String(error) }));
+        }
+      });
+      await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+      const proxyRpc = `http://127.0.0.1:${server.address().port}`;
+      for (const [tool, args, failing] of [
+        ["monitor", ["check"], "NAME_HASH"],
+        ["monitor", ["check"], "owner"],
+        ["monitor", ["check"], "pendingCaps"],
+        ["monitor", ["check"], "operators"],
+        ["monitor", ["check"], "providerPolicies"],
+        ["monitor", ["reconcile"], "usdc"],
+        ["indexer", ["index", "--out", path("failed-index.json")], "NAME_HASH"],
+      ]) {
+        requests = [];
+        failFunction = failing;
+        const failure = await cli(tool, args, { ARC_RPC_URL: proxyRpc });
+        assert.equal(failure.status, 1, `${tool} ${args[0]} / ${failing}`);
+        assert.equal(failure.json.ok, false);
+        assert.match(failure.json.error.message, /injected read failure/);
+        assert.equal(requests.filter((label) => label === failing).length, 1);
+        assert.equal(requests.indexOf(failing), requests.length - 1, `no RPC may run after ${failing} fails: ${requests.join(", ")}`);
+
+        failFunction = undefined;
+        requests = [];
+        const retry = await cli(tool, args, { ARC_RPC_URL: proxyRpc });
+        assert.equal(retry.status, 0);
+        assert.equal(retry.json.ok, true);
+        if (tool === "monitor") {
+          const expected = args[0] === "check" ? baselineCheck : baselineReconcile;
+          assert.deepEqual(retry.json, expected, "fresh retry must preserve the pinned block, complete discovery and accounting");
+        } else {
+          const index = JSON.parse(readFileSync(path("failed-index.json"), "utf8"));
+          assert.equal(index.checkpoint.blockHash, baselineCheck.observedAt.blockHash);
+          assert.equal(index.checkpoint.blockNumber, baselineCheck.observedAt.blockNumber);
+        }
+      }
+    } finally {
+      if (server) {
+        server.closeAllConnections();
+        await new Promise((resolve) => server.close(resolve));
+      }
+      await testClient.revert({ id: snapshot });
+    }
   });
 
   test("a drawn line warns MATURITY_SOON then DEFAULT_ELIGIBLE; stale and incomplete indexes cannot hide it", async () => {

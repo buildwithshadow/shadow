@@ -14,6 +14,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { errorMessage, redactUrl, stableStringify } from "./float-mainnet-preflight.mjs";
+import { createRpcReadTransport } from "./rpc-read-transport.mjs";
 
 // Shared configuration for the ShadowFloatMainnet candidate participant tools.
 // Kept apart from every V2 module: the candidate has its own domain, intent
@@ -132,14 +133,14 @@ export function readDeployment(env = process.env, { manifest } = {}) {
 
 // Connects and proves the address is this contract generation on this chain,
 // using the contract's own public domain and type constants.
-export async function connectCandidate(deployment) {
+export async function connectCandidate(deployment, { readOnly = false } = {}) {
   const chain = defineChain({
     id: Number(deployment.expectedChainId),
     name: `chain ${deployment.expectedChainId}`,
     nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
     rpcUrls: { default: { http: [deployment.rpcUrl] } },
   });
-  const transport = http(deployment.rpcUrl, { timeout: 30_000 });
+  const transport = readOnly ? createRpcReadTransport(deployment.rpcUrl) : http(deployment.rpcUrl, { timeout: 30_000 });
   const client = createPublicClient({ chain, transport });
 
   const chainId = BigInt(await client.getChainId());
@@ -157,7 +158,15 @@ export async function connectCandidate(deployment) {
   const read = (functionName) => client.readContract({ address: deployment.address, abi: floatAbi, functionName });
   let identity;
   try {
-    identity = await Promise.all(["NAME_HASH", "VERSION_HASH", "SPEND_INTENT_TYPEHASH", "deploymentChainId"].map(read));
+    const names = ["NAME_HASH", "VERSION_HASH", "SPEND_INTENT_TYPEHASH", "deploymentChainId"];
+    if (readOnly) {
+      // This transport already serializes requests. Do not prequeue siblings
+      // that would keep running after one read exhausts its retry budget.
+      identity = [];
+      for (const name of names) identity.push(await read(name));
+    } else {
+      identity = await Promise.all(names.map(read));
+    }
   } catch (error) {
     throw new Error(`${deployment.address} is not a ShadowFloatMainnet candidate: ${errorMessage(error)}`);
   }

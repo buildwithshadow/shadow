@@ -20,6 +20,9 @@ on:
       - "app/pnpm-lock.yaml"
       - "app/src/main.tsx"
       - "app/src/CircleWalletDiagnostic.tsx"
+      - "app/src/CandidateFundingDesk.tsx"
+      - "app/src/candidateFunding.ts"
+      - "app/src/candidateFunding.css"
       - "app/src/walletCandidateProbePayload.ts"
       - "app/src/walletPayableIntent.ts"
       - "app/src/walletDiagnosticPayload.ts"
@@ -33,6 +36,7 @@ on:
       - "app/scripts/treasury-verify-live.test.mjs"
       - "app/scripts/float-mainnet-*"
       - "app/scripts/rpc-read-queue*"
+      - "app/scripts/rpc-read-transport*"
       - "examples/float-mainnet-provider-server/**"
       - "app/scripts/shadow-url-migration.test.mjs"
       - "app/scripts/circle-candidate-probe.test.mjs"
@@ -85,6 +89,8 @@ jobs:
         # The glob includes new provider, evidence, review and pilot suites as
         # they land. Run serially because the suites use fixed local RPC ports.
         run: npm run float:mainnet:all-tools:test
+      - name: Test candidate funding and browser transaction recovery
+        run: node --test app/scripts/float-mainnet-browser.test.ts
       - name: Test the shared RPC read queue
         run: node --test app/scripts/rpc-read-queue.test.mjs
 
