@@ -3,6 +3,7 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   createPublicClient,
+  createTransport,
   createWalletClient,
   defineChain,
   getAddress,
@@ -140,8 +141,21 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
     nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
     rpcUrls: { default: { http: [deployment.rpcUrl] } },
   });
-  const transport = readOnly ? createRpcReadTransport(deployment.rpcUrl) : http(deployment.rpcUrl, { timeout: 30_000 });
-  const client = createPublicClient({ chain, transport });
+  // Every public read is paced, including reads performed before a write.
+  // Broadcasts use a separate transport with retries disabled: an ambiguous
+  // send belongs to durable reconciliation, never automatic retransmission.
+  const readTransport = createRpcReadTransport(deployment.rpcUrl);
+  const transport = readOnly ? readTransport : (options) => {
+    const reads = readTransport(options);
+    const broadcasts = http(deployment.rpcUrl, { timeout: 30_000, retryCount: 0 })(options);
+    return createTransport({
+      key: "candidate-wallet-rpc", name: "Paced preparation and single broadcast", type: "custom", retryCount: 0,
+      request: (args) => args.method === "eth_sendRawTransaction"
+        ? broadcasts.request(args, { retryCount: 0 })
+        : reads.request(args, { retryCount: 0 }),
+    });
+  };
+  const client = createPublicClient({ chain, transport: readTransport });
 
   const chainId = BigInt(await client.getChainId());
   if (chainId !== deployment.expectedChainId) {
@@ -159,14 +173,9 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
   let identity;
   try {
     const names = ["NAME_HASH", "VERSION_HASH", "SPEND_INTENT_TYPEHASH", "deploymentChainId"];
-    if (readOnly) {
-      // This transport already serializes requests. Do not prequeue siblings
-      // that would keep running after one read exhausts its retry budget.
-      identity = [];
-      for (const name of names) identity.push(await read(name));
-    } else {
-      identity = await Promise.all(names.map(read));
-    }
+    // Do not enqueue siblings that keep running after a read exhausts retries.
+    identity = [];
+    for (const name of names) identity.push(await read(name));
   } catch (error) {
     throw new Error(`${deployment.address} is not a ShadowFloatMainnet candidate: ${errorMessage(error)}`);
   }
