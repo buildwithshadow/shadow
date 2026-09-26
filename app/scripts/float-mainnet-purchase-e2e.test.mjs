@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { fileURLToPath } from "node:url";
 import { createPublicClient, createWalletClient, defineChain, erc20Abi, getAddress, http, keccak256, stringToHex } from "viem";
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
 import { connectCandidate, eip712Domain, floatAbi, SPEND_INTENT_TYPES } from "./float-mainnet-config.mjs";
@@ -158,6 +160,16 @@ test("real HTTP purchase, signed provider acceptance, monitored testnet payment 
   const observed = await pendingAdapter.status({ intent: pendingIntent });
   assert.equal(observed.payment, "pending"); assert.equal(observed.txHash, pendingHash);
   assert.equal(await client.getTransactionCount({ address: executor.address }), nonce);
+  writeFileSync(path("cli-config.json"), JSON.stringify({ ...spec, storeDir: "cli-purchases" }));
+  const cliConfig = loadPurchaseConfiguration(path("cli-config.json"));
+  initializePurchaseStore(cliConfig.spec.storeDir, cliConfig.binding);
+  const failedStart = await new Promise((resolve) => execFile(process.execPath,
+    [fileURLToPath(new URL("./float-mainnet-purchase-server.mjs", import.meta.url)), "serve", "--config", path("cli-config.json"), "--port", String(service.server.address().port)],
+    { env: { ...env, SHADOW_PURCHASE_TOKEN: TOKEN }, timeout: 10_000 },
+    (error, stdout, stderr) => resolve({ code: error?.code ?? 0, stdout, stderr })));
+  assert.equal(failedStart.code, 1, "an occupied listening port must fail startup, not report success");
+  assert.match(failedStart.stderr, /could not listen/);
+  assert.equal(failedStart.stderr.includes(env.FLOAT_EXECUTOR_PRIVATE_KEY), false);
   // Mutating pinned config is not an implicit new enrollment or budget reset.
   writeFileSync(path("config.json"), JSON.stringify({ ...spec, principal: "1" }));
   assert.equal((await call("/v1/catalog")).httpStatus, 503);

@@ -16,9 +16,12 @@ async function main() {
   const adapter = await createPurchaseAdapter(config);
   const service = createPurchaseService({ directory: config.spec.storeDir, binding: config.binding,
     token: process.env.SHADOW_PURCHASE_TOKEN, origins: config.spec.origins, catalog: purchaseCatalog(config), adapter });
-  const stop = () => service.close().then(() => process.exit(0), () => process.exit(1));
-  process.once("SIGTERM", stop); process.once("SIGINT", stop);
-  service.server.on("error", stop);
+  const stop = (code) => service.close().then(() => process.exit(code), () => process.exit(1));
+  process.once("SIGTERM", () => stop(0)); process.once("SIGINT", () => stop(0));
+  service.server.on("error", () => {
+    console.error("Purchase service could not listen; check the configured port. Credentials are not printed.");
+    void stop(1);
+  });
   service.server.listen(Number(values.port), "127.0.0.1", () => console.log(JSON.stringify({ ok: true, status: "listening", host: "127.0.0.1", port: Number(values.port), chainId: "5042002" })));
 }
 if (isEntrypoint(import.meta)) main().catch(() => { console.error("Purchase service could not start. Check private configuration and preserved stores; credentials are not printed."); process.exitCode = 1; });
