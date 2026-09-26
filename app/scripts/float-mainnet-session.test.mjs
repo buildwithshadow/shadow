@@ -107,6 +107,34 @@ test("a reverted transaction resolves the hold but never recycles or resends its
   });
 });
 
+for (const [observed, receiptStatus] of [["paid", 2], ["blocked", 1], ["pending", 0]]) {
+  test(`a previously reverted attempt changing to ${observed} halts new submissions without rewriting the ledger`, async (t) => {
+    const f = await fixture(t);
+    const digest = digestOf(STRUCT);
+    const txHash = h("original reverted transaction");
+    await withExecutionSession(f.path, f.connection, (s) => { s.reserve(STRUCT, digest); s.beforeSend(digest, txHash); });
+    f.receipts.set(txHash, { transactionHash: txHash, status: "reverted", blockNumber: 10n, blockHash: f.block.hash });
+    await withExecutionSession(f.path, f.connection, (s) => s.reconcile());
+    // A fresh process can confirm the unchanged revert; only a changed outcome holds it.
+    await withExecutionSession(f.path, f.connection, async (s) => {
+      await s.reconcile();
+      assert.equal(s.check(STRUCT, digest).status, "reverted");
+    });
+    const saved = readFileSync(f.ledger, "utf8");
+    f.statuses.set(digest, receiptStatus);
+    f.receipts.delete(txHash);
+    const next = { ...STRUCT, nonce: 2n };
+    let reachedNewSubmission = false;
+    await assert.rejects(withExecutionSession(f.path, f.connection, async (s) => {
+      await s.reconcile();
+      reachedNewSubmission = true;
+      s.reserve(next, digestOf(next));
+    }), /previous reverted transaction.*no longer canonical.*hold/);
+    assert.equal(reachedNewSubmission, false, "reconciliation must stop before reserving another purchase");
+    assert.equal(readFileSync(f.ledger, "utf8"), saved, "retain the original reverted record and its reservation");
+  });
+}
+
 test("refusals retain budget, and changed canonical outcomes fail closed", async (t) => {
   const f = await fixture(t);
   const digest = digestOf(STRUCT);

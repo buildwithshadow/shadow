@@ -177,7 +177,7 @@ export async function withExecutionSession(path, connection, callback) {
             status = "reverted";
           }
         }
-        if (entry.status === "reverted" && status === "pending") fail(`previous reverted transaction for ${entry.digest} is no longer canonical; hold`);
+        if (entry.status === "reverted" && status !== "reverted") fail(`previous reverted transaction for ${entry.digest} is no longer canonical (observed ${status}); hold and reconcile chain history`);
         updated.push({ ...entry, status });
       }
       if ((await connection.client.getBlock({ blockNumber: block.number })).hash !== block.hash) fail("canonical block changed while reconciling; hold and retry the read");
