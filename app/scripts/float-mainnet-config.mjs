@@ -14,6 +14,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { errorMessage, redactUrl, stableStringify } from "./float-mainnet-preflight.mjs";
+import { createRpcReadTransport } from "./rpc-read-transport.mjs";
 
 // Shared configuration for the ShadowFloatMainnet candidate participant tools.
 // Kept apart from every V2 module: the candidate has its own domain, intent
@@ -132,14 +133,14 @@ export function readDeployment(env = process.env, { manifest } = {}) {
 
 // Connects and proves the address is this contract generation on this chain,
 // using the contract's own public domain and type constants.
-export async function connectCandidate(deployment) {
+export async function connectCandidate(deployment, { readOnly = false } = {}) {
   const chain = defineChain({
     id: Number(deployment.expectedChainId),
     name: `chain ${deployment.expectedChainId}`,
     nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
     rpcUrls: { default: { http: [deployment.rpcUrl] } },
   });
-  const transport = http(deployment.rpcUrl, { timeout: 30_000 });
+  const transport = readOnly ? createRpcReadTransport(deployment.rpcUrl) : http(deployment.rpcUrl, { timeout: 30_000 });
   const client = createPublicClient({ chain, transport });
 
   const chainId = BigInt(await client.getChainId());

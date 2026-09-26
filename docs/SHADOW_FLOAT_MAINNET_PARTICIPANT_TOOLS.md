@@ -4,6 +4,20 @@ Status, 2026-09-25: the `ShadowFloatMainnet` candidate is deployed on **Arc test
 
 These command-line tools let each pilot participant run their own part of the lifecycle with their own key. No Shadow engineer builds or signs a participant's transaction. They target the candidate contract only. They reject a V2 address, a V2 intent file, the wrong chain, and any contract that does not report the candidate's own EIP-712 name, version and `SpendIntent` typehash.
 
+## Browser funding and repayment
+
+The [funding page](https://www.shadowbuild.xyz/funding) manages the deployed Arc testnet candidate. An approved sponsor can enter an agent, an agreed provider endpoint and spending limits, approve the exact USDC reserve, then separately confirm opening the line. Any browser EOA wallet can repay a loaded line; only its sponsor can close it and reclaim eligible reserve or claim available default recovery. The page pins the candidate address, runtime code, chain and token before preparing transactions. It does not expose a mainnet mode or accept private keys.
+
+The form uses decimal USDC amounts. Its default reserve is 0.10 test USDC, maximum purchase 0.05, daily limit 0.10 and cumulative purchase limit 0.15. Current onchain limits are checked as well as fixed browser ceilings. Repayment restores reserve but does not reset cumulative principal paid. The agent may be a deployed Circle Modular Wallet; the funding wallet must be an EOA. Agent signing, purchase submission and provider delivery still use the candidate tools below. This page does not replace those steps with a founder relay.
+
+Each transaction has a review screen and a separate wallet confirmation. The browser stores its exact destination, calldata, sender and nonce before opening the wallet, then blocks another operation from that account until the prior result is resolved. Keep the browser's site data while a request is pending. This guard applies to this browser profile, not other devices, sites or tools.
+
+On an uncertain response, select **Check confirmation**. If the wallet broadcast without returning a hash, copy the original transaction hash from wallet activity. Recovery checks the sender, nonce, exact call, canonical receipt and expected event; a matching balance change alone is insufficient. A confirmed transaction that used the same nonce but different calldata resolves as a replacement, not as a successful Shadow action.
+
+If a request never broadcast, it may have no hash. Do not clear site data to retry. Use the wallet's cancellation/replacement controls with the saved account and nonce; a confirmed replacement consumes that nonce and can be checked on the funding page. If the wallet cannot do this, ask the operator for help. Pending or unreadable receipts remain unresolved, and no automatic resend is performed. A known reverted transaction allows a new, freshly reviewed action.
+
+Repayment uses a fixed displayed amount, not a draw-specific repayment identifier. The page rechecks the debt before the wallet prompt, but an already-open prompt can become stale if another participant repays and the agent draws again. Close stale prompts, coordinate repayment with the operator, and always check confirmation before preparing another payment. Browser recovery does not make the contract's repayment function idempotent.
+
 ## Roles
 
 | Role | Tool | Key (env, read only by commands that sign, never printed) |

@@ -107,7 +107,7 @@ async function check(values) {
   const warnBefore = values["warn-before"] === undefined ? DEFAULT_WARN_BEFORE : durationFlag(values, "warn-before");
   const maxIndexLag = values["max-index-lag"] === undefined ? DEFAULT_MAX_INDEX_LAG : durationFlag(values, "max-index-lag");
   const only = values["line-id"] === undefined ? null : [...new Set(values["line-id"].map((raw) => parseBytes32("--line-id", raw)))];
-  const connection = await connect(values);
+  const connection = await connect(values, { readOnly: true });
   const pinned = await connection.client.getBlock();
   const at = (functionName, args) => read(connection, functionName, args, pinned.number);
   const found = await discover(connection, values.index, pinned);
@@ -417,7 +417,7 @@ export function reconcileState({ balance, totalSponsorObligations, totalCommitte
 
 async function reconcile(values) {
   requireManifest(values);
-  const connection = await connect(values);
+  const connection = await connect(values, { readOnly: true });
   const pinned = await connection.client.getBlock();
   const at = (functionName, args) => read(connection, functionName, args, pinned.number);
   const found = await discover(connection, values.index, pinned);
