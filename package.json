@@ -45,6 +45,7 @@
     "float:mainnet:monitor-runner": "node app/scripts/float-mainnet-monitor-runner.mjs",
     "float:mainnet:activation": "node app/scripts/float-mainnet-activation.mjs",
     "float:mainnet:request": "node app/scripts/float-mainnet-request.mjs",
+    "float:mainnet:purchase-server": "node app/scripts/float-mainnet-purchase-server.mjs",
     "float:mainnet:provider-server": "node examples/float-mainnet-provider-server/server.mjs",
     "float:mainnet:tooling:test": "node --test app/scripts/float-mainnet-tooling.test.mjs",
     "float:mainnet:all-tools:test": "node --test --test-concurrency=1 app/scripts/float-mainnet-*.test.mjs",
