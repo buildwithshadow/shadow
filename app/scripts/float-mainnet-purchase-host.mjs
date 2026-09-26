@@ -34,7 +34,9 @@ export function supervise(commands, { shutdownMs = 240_000, signals = process } 
     const stop = (code) => {
       if (stopping) return;
       stopping = true; exitCode = code;
-      for (const child of live) kill(child, "SIGTERM");
+      // Let parents drain their active subprocesses. Only the deadline kills
+      // whole groups; sending SIGTERM to groups would interrupt live sends.
+      for (const child of live) child.kill("SIGTERM");
       timer = setTimeout(() => { exitCode = 1; for (const child of live) kill(child, "SIGKILL"); }, shutdownMs);
       finish();
     };

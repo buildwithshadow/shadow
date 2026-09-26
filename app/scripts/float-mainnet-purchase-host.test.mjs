@@ -51,3 +51,13 @@ test("requested shutdown drains a child, and a stuck child is killed within the 
     assert.equal(await pending, stuck ? 1 : 0);
   }
 });
+
+test("graceful shutdown lets a parent drain its active subprocess without signaling that subprocess", async (t) => {
+  const root = fixture(t), ready = join(root, "grandchild-ready"), done = join(root, "grandchild-done"), terminated = join(root, "grandchild-signaled");
+  const grandchild = `const fs=require('fs'); process.on('SIGTERM',()=>{fs.writeFileSync(${JSON.stringify(terminated)},'1');process.exit(1)}); fs.writeFileSync(${JSON.stringify(ready)},'1');setTimeout(()=>{fs.writeFileSync(${JSON.stringify(done)},'1');process.exit(0)},300);`;
+  const parent = `const {spawn}=require('child_process'); const child=spawn(process.execPath,['-e',${JSON.stringify(grandchild)}],{stdio:'ignore'}); process.on('SIGTERM',()=>{}); child.on('exit',code=>process.exit(code));`;
+  const signals = new EventEmitter();
+  const pending = supervise([{ args: ["-e", parent], env: {}, stdio: "ignore" }], { shutdownMs: 2000, signals });
+  await until(() => existsSync(ready)); signals.emit("SIGTERM");
+  assert.equal(await pending, 0); assert.equal(existsSync(done), true); assert.equal(existsSync(terminated), false);
+});

@@ -3,6 +3,7 @@ import {
   BaseError,
   ContractFunctionRevertedError,
   createPublicClient,
+  createTransport,
   createWalletClient,
   defineChain,
   getAddress,
@@ -144,7 +145,16 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
   // Broadcasts use a separate transport with retries disabled: an ambiguous
   // send belongs to durable reconciliation, never automatic retransmission.
   const readTransport = createRpcReadTransport(deployment.rpcUrl);
-  const transport = readOnly ? readTransport : http(deployment.rpcUrl, { timeout: 30_000, retryCount: 0 });
+  const transport = readOnly ? readTransport : (options) => {
+    const reads = readTransport(options);
+    const broadcasts = http(deployment.rpcUrl, { timeout: 30_000, retryCount: 0 })(options);
+    return createTransport({
+      key: "candidate-wallet-rpc", name: "Paced preparation and single broadcast", type: "custom", retryCount: 0,
+      request: (args) => args.method === "eth_sendRawTransaction"
+        ? broadcasts.request(args, { retryCount: 0 })
+        : reads.request(args, { retryCount: 0 }),
+    });
+  };
   const client = createPublicClient({ chain, transport: readTransport });
 
   const chainId = BigInt(await client.getChainId());

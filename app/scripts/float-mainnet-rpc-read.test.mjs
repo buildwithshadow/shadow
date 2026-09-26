@@ -140,7 +140,7 @@ test("candidate connections pace reads even in write mode, while broadcasts are 
     NAME_HASH: keccak256(toBytes(DOMAIN_NAME)), VERSION_HASH: keccak256(toBytes(DOMAIN_VERSION)),
     SPEND_INTENT_TYPEHASH: keccak256(toBytes(SPEND_INTENT_TYPE_STRING)), deploymentChainId: 5042002n,
   };
-  let active = 0, maximum = 0, logs = 0, sends = 0;
+  let active = 0, maximum = 0, logs = 0, sends = 0, nonces = 0;
   const server = createServer(async (req, res) => {
     let raw = ""; for await (const chunk of req) raw += chunk;
     const body = JSON.parse(raw); active++; maximum = Math.max(maximum, active);
@@ -153,6 +153,8 @@ test("candidate connections pace reads even in write mode, while broadcasts are 
       result = encodeFunctionResult({ abi: floatAbi, functionName: name, result: identity[name] });
     } else if (body.method === "eth_getLogs") {
       if (++logs === 1) error = { code: -32005, message: "rate limit exceeded" }; else result = [];
+    } else if (body.method === "eth_getTransactionCount") {
+      if (++nonces === 1) error = { code: -32005, message: "rate limit exceeded" }; else result = "0x2";
     } else if (body.method === "eth_blockNumber") result = "0x10";
     else if (body.method === "eth_sendRawTransaction") { sends++; error = { code: -32005, message: "rate limit exceeded" }; }
     else error = { code: -32601, message: "unsupported test method" };
@@ -167,6 +169,16 @@ test("candidate connections pace reads even in write mode, while broadcasts are 
   assert.deepEqual(found, []); assert.equal(head, 16n); assert.equal(logs, 2); assert.equal(maximum, 1);
   // Public deterministic test key, never a funded wallet.
   const { wallet } = walletFromEnv(connection, "TEST_KEY", { TEST_KEY: `0x${"0".repeat(63)}1` });
+  const prepared = await wallet.prepareTransactionRequest({ to: deployment.address, parameters: ["nonce"] });
+  assert.equal(prepared.nonce, 2); assert.equal(nonces, 2, "real nonce preparation retries the transient quota");
+  logs = 0; maximum = 0;
+  const walletReads = await Promise.all([
+    wallet.request({ method: "eth_getLogs", params: [{}] }),
+    wallet.request({ method: "eth_blockNumber" }),
+  ]);
+  assert.deepEqual(walletReads, [[], "0x10"]);
+  assert.equal(logs, 2, "wallet preparation reads retry quotas");
+  assert.equal(maximum, 1, "wallet preparation reads are serialized");
   await assert.rejects(wallet.sendRawTransaction({ serializedTransaction: "0x1234" }));
   assert.equal(sends, 1);
   await assert.rejects(connection.client.request({ method: "eth_sendRawTransaction", params: ["0x1234"] }), /read-only RPC transport refuses/);
