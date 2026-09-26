@@ -1,4 +1,4 @@
-import { decodeEventLog, erc20Abi, zeroAddress } from "viem";
+import { decodeEventLog, decodeFunctionData, erc20Abi, keccak256, zeroAddress } from "viem";
 import { floatAbi } from "./float-mainnet-config.mjs";
 import {
   UsageError,
@@ -90,7 +90,7 @@ async function discover(connection, indexPath, pinned) {
     if (event === "SponsorClaimed" && sponsorClaimed.has(args.lineId)) sponsorClaimed.set(args.lineId, sponsorClaimed.get(args.lineId) + BigInt(args.amount));
   }
   const operatorSets = events.filter((entry) => entry.event === "OperatorSet");
-  return { lineIds, providers, sponsorClaimed, operatorSets, index, scanned };
+  return { lineIds, providers, sponsorClaimed, operatorSets, sponsorSets: events.filter((entry) => entry.event === "SponsorAllowed"), executions: events.filter((entry) => ["ProviderPaid", "SpendBlocked"].includes(entry.event)), index, scanned };
 }
 
 // State reads are pinned by block number; a reorg of that block during the run
@@ -102,10 +102,11 @@ async function stillCanonical(connection, pinned) {
 
 const observed = (pinned) => ({ blockNumber: pinned.number, blockHash: pinned.hash, timestamp: pinned.timestamp });
 
-async function check(values) {
+async function check(values, { snapshot = false } = {}) {
   requireManifest(values);
   const warnBefore = values["warn-before"] === undefined ? DEFAULT_WARN_BEFORE : durationFlag(values, "warn-before");
   const maxIndexLag = values["max-index-lag"] === undefined ? DEFAULT_MAX_INDEX_LAG : durationFlag(values, "max-index-lag");
+  if (snapshot && values["line-id"] !== undefined) throw new UsageError("snapshot requires unfiltered canonical discovery");
   const only = values["line-id"] === undefined ? null : [...new Set(values["line-id"].map((raw) => parseBytes32("--line-id", raw)))];
   const connection = await connect(values, { readOnly: true });
   const pinned = await connection.client.getBlock();
@@ -217,6 +218,7 @@ async function check(values) {
         active: policy.active,
         endpointHash: policy.endpointHash,
         expiry: policy.expiry,
+        ...(snapshot ? { perSpendCap: policy.perSpendCap, dailySpendCap: policy.dailySpendCap } : {}),
         secondsToExpiry: left(policy.expiry),
         ...remainingCapacity(input),
       });
@@ -262,6 +264,7 @@ async function check(values) {
       sponsor: line.sponsor,
       agent: line.agent,
       epoch: line.epoch,
+      ...(snapshot ? { sponsorClaimed: found.sponsorClaimed.get(lineId), dailySpendCap: line.dailySpendCap, maximumRepaymentWindow: line.maximumRepaymentWindow, termsVersion: line.termsVersion } : {}),
       sponsorAllowed,
       reserveCap: line.reserveCap,
       availableReserve: line.availableReserve,
@@ -291,10 +294,49 @@ async function check(values) {
       );
     }
   }
+  let extended;
+  if (snapshot) {
+    const sponsors = [];
+    for (const sponsor of [...new Set(found.sponsorSets.map((entry) => entry.args.sponsor))]) {
+      sponsors.push({ sponsor, allowed: await at("sponsorAllowed", [sponsor]), set: found.sponsorSets
+        .filter((entry) => entry.args.sponsor === sponsor)
+        .map(({ args, blockNumber, transactionHash }) => ({ allowed: args.allowed, blockNumber, transactionHash })) });
+    }
+    const usdc = await at("usdc");
+    const balance = await connection.client.readContract({ address: usdc, abi: erc20Abi, functionName: "balanceOf", args: [connection.address], blockNumber: pinned.number });
+    const accounting = { balance, ...reconcileState({ balance, totalSponsorObligations, totalCommittedCapital, lines }) };
+    const runtime = await connection.client.getCode({ address: connection.address, blockNumber: pinned.number });
+    if (!runtime || runtime === "0x") throw new Error("candidate code missing at snapshot block");
+    const fromBlock = values["executor-from-block"] === undefined ? connection.deployBlock : BigInt(values["executor-from-block"]);
+    if (fromBlock < connection.deployBlock || fromBlock > pinned.number) throw new UsageError("executor-from-block must be between deployment and observed block");
+    const executions = [];
+    const transactions = new Map();
+    for (const event of found.executions.filter((entry) => entry.blockNumber >= fromBlock)) {
+      if (!transactions.has(event.transactionHash)) transactions.set(event.transactionHash, await connection.client.getTransaction({ hash: event.transactionHash }));
+      const tx = transactions.get(event.transactionHash);
+      if (tx.blockNumber !== event.blockNumber || !tx.blockHash) throw new Error("execution transaction is not mined in its event block");
+      const block = await connection.client.getBlock({ blockNumber: event.blockNumber });
+      if (tx.blockHash !== block.hash) throw new Error("execution transaction is not canonical");
+      let executor = null;
+      // A routed smart-account call needs a route-specific decoder. It cannot
+      // establish the signed executor from the outer sender alone.
+      if (tx.to?.toLowerCase() === connection.address.toLowerCase()) {
+        try {
+          const decoded = decodeFunctionData({ abi: floatAbi, data: tx.input });
+          if (decoded.functionName === "executeSpend") executor = decoded.args[0].executor;
+        } catch { /* unknown calldata remains unverifiable */ }
+      }
+      executions.push({ event: event.event, digest: event.args.digest, lineId: event.args.lineId,
+        blockNumber: event.blockNumber, transactionHash: event.transactionHash, sender: tx.from, executor });
+    }
+    extended = { identity: { chainId: connection.chainId, address: connection.address, runtimeCodeHash: keccak256(runtime), usdc },
+      sponsors, accounting, executionAudit: { fromBlock, toBlock: pinned.number, executions } };
+  }
   await stillCanonical(connection, pinned);
 
   return {
-    ok: !alerts.some((entry) => entry.severity === "critical"),
+    ...(extended ?? {}),
+    ok: !alerts.some((entry) => entry.severity === "critical") && (extended?.accounting.ok ?? true),
     observedAt: observed(pinned),
     warnBefore,
     maxIndexLag,
@@ -462,7 +504,12 @@ async function reconcile(values) {
   };
 }
 
+export async function monitorSnapshot(values) {
+  return check(values, { snapshot: true });
+}
+
 const COMMANDS = {
+  snapshot: { options: { index: { type: "string" }, "warn-before": { type: "string" }, "max-index-lag": { type: "string" }, "executor-from-block": { type: "string" } }, run: monitorSnapshot },
   check: {
     options: {
       index: { type: "string" },
@@ -476,6 +523,8 @@ const COMMANDS = {
 };
 const TOOL = "node app/scripts/float-mainnet-monitor.mjs";
 const USAGE = [
+  `${TOOL} snapshot --manifest <path> [--index <index.json>] [--executor-from-block <block>] [--warn-before <seconds>] [--max-index-lag <seconds>]`,
+  "snapshot includes full check, sponsor membership, accounting and direct-call executor observations at the same canonical block; routed execution has executor:null and must not be assumed approved.",
   `${TOOL} check --manifest <path> [--index <index.json>] [--warn-before <seconds>] [--max-index-lag <seconds>] [--line-id <bytes32> ...]`,
   `${TOOL} reconcile --manifest <path> [--index <index.json>]`,
   "Both read one pinned block and discover events with a complete canonical log scan from deployment. --index (float-mainnet-indexer.mjs) supplies checkpoint lag/reorg diagnostics only; cached events never determine alerts or reconciliation.",

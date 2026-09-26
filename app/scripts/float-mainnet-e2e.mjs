@@ -51,13 +51,13 @@ async function rpcAnswers(rpc) {
 
 // Starts anvil on `port` and resolves once it answers; stop() kills it through
 // its child-process handle.
-export async function startAnvil(port, extraArgs = []) {
+export async function startAnvil(port, extraArgs = [], chainId = CHAIN_ID) {
   if (!ANVIL) {
     throw new Error("anvil not found on PATH or in ~/.foundry/bin: install Foundry, or set FLOAT_E2E_OPTIONAL=1 to skip the end-to-end suites");
   }
   const rpc = `http://127.0.0.1:${port}`;
   if (await rpcAnswers(rpc)) throw new Error(`${rpc} is already serving JSON-RPC; stop that process before running this test`);
-  const child = spawn(ANVIL, ["--chain-id", CHAIN_ID.toString(), "--port", String(port), "--quiet", ...extraArgs], {
+  const child = spawn(ANVIL, ["--chain-id", chainId.toString(), "--port", String(port), "--quiet", ...extraArgs], {
     stdio: "ignore",
     windowsHide: true,
   });

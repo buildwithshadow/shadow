@@ -22,6 +22,8 @@ import {
 } from "./float-mainnet-cli.mjs";
 import { checkSignature, readIntentFile } from "./float-mainnet-intent.mjs";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
+import { initializeExecutionSession, requireNamedMainnetExecutor, requireSessionPath, withExecutionSession } from "./float-mainnet-session.mjs";
+import { assertHealthySpendMonitor } from "./float-mainnet-monitor-spend-guard.mjs";
 
 // Executor-side submission of a signed ShadowFloatMainnet SpendIntent.
 // receiptStatus[digest] is read first, so a repeated submit reports the
@@ -108,6 +110,16 @@ async function preflight(values) {
   const fromBlock = fromBlockFlag(values);
   const connection = await connect(values);
   const { struct, digest, signature } = signedIntent(path, connection);
+  requireNamedMainnetExecutor(connection, struct);
+  const sessionPath = requireSessionPath(values, connection);
+  let sessionReport;
+  if (sessionPath) {
+    sessionReport = await withExecutionSession(sessionPath, connection, async (session) => {
+      await session.reconcile();
+      session.check(struct, digest);
+      return session.report();
+    });
+  }
   const from = executorAddress(connection, struct, values);
   const state = await readReceiptState(connection, struct, digest);
   const base = {
@@ -117,6 +129,7 @@ async function preflight(values) {
     receiptStatus: RECEIPT_STATUSES[state.status],
     nonceUsed: state.nonceUsed,
     nonceCancelled: state.nonceCancelled,
+    ...(sessionReport ? { session: sessionReport } : {}),
   };
   if (state.status !== 0) {
     const { status, ...recorded } = await recordedOutcome(connection, state.status, digest, fromBlock ?? connection.deployBlock);
@@ -127,10 +140,25 @@ async function preflight(values) {
 
 async function submit(values) {
   const path = required(values, "intent");
+  const connection = await connect(values);
+  const intent = signedIntent(path, connection);
+  requireNamedMainnetExecutor(connection, intent.struct);
+  const sessionPath = requireSessionPath(values, connection);
+  if (!sessionPath) return submitConnected(values, connection, intent);
+  return withExecutionSession(sessionPath, connection, async (session) => {
+    await session.reconcile();
+    const result = await submitConnected(values, connection, intent, session);
+    return { ...result, session: session.report() };
+  });
+}
+
+async function submitConnected(values, connection, { struct, digest, signature }, session = null) {
   const mode = writeMode(values);
   const fromBlock = fromBlockFlag(values);
-  const connection = await connect(values);
-  const { struct, digest, signature } = signedIntent(path, connection);
+  const prior = session?.check(struct, digest);
+  if (prior?.status === "reverted") {
+    return { ok: false, digest, status: "session-reverted", txHashes: [], txHash: prior.txHash, error: { message: "The original session transaction reverted. Its reservation remains consumed and this digest is never resent; review the cause before preparing another intent.", revert: null } };
+  }
   const signer = signerFor(connection, mode, KEY);
   if (struct.executor !== zeroAddress && struct.executor !== signer.address) {
     const who = mode.mode === "calldata" ? "--from is" : `${KEY} belongs to`;
@@ -140,6 +168,10 @@ async function submit(values) {
 
   const state = await readReceiptState(connection, struct, digest);
   if (state.status !== 0) {
+    if (session && !prior) {
+      session.reserve(struct, digest);
+      await session.reconcile();
+    }
     return { ok: true, dryRun, digest, txHashes: [], ...(await recordedOutcome(connection, state.status, digest, fromBlock ?? connection.deployBlock)) };
   }
 
@@ -176,10 +208,23 @@ async function submit(values) {
   }
 
   const call = { address: connection.address, abi: floatAbi, functionName: "executeSpend", args: [struct, signature] };
+  const guardMonitor = async () => {
+    if (connection.chainId !== 5042n || mode.mode === "dry-run") return;
+    if (!session || !values.manifest || !values["monitor-baseline"] || !values["monitor-state-dir"]) throw new Error("Arc mainnet executable submissions require --manifest, --monitor-baseline and --monitor-state-dir with a healthy approved monitor");
+    await assertHealthySpendMonitor({ baselinePath: values["monitor-baseline"], manifestPath: values.manifest,
+      stateDir: values["monitor-state-dir"], sessionPolicy: session.policy, connection, struct });
+  };
+  // Deny a known monitoring hold before consuming a reservation. Check again
+  // immediately before broadcast in case signing/preparation took too long.
+  await guardMonitor();
+  // This fsynced reservation precedes any send or executable calldata output.
+  // If signing/preparation fails or the process dies, hold until reconciled.
+  if (session && mode.mode !== "dry-run") session.reserve(struct, digest);
   let result;
   try {
     // The pre-check above ran at a pinned block; state can move before the send.
     result = await runCalls(connection, signer, [call], {
+      beforeSend: session ? async ({ txHash }) => { await guardMonitor(); session.beforeSend(digest, txHash); } : undefined,
       check:
         values["allow-block"] === true
           ? undefined
@@ -193,6 +238,9 @@ async function submit(values) {
     });
   } catch (error) {
     if (!(error instanceof SendFailure)) throw error;
+    if (session) {
+      try { await session.reconcile(); } catch { /* Keep the durable reservation and original send error. */ }
+    }
     // The RPC that lost the send is often still down: an unreadable
     // receiptStatus must not cost the user the hash and the guidance.
     let receiptStatus;
@@ -207,7 +255,7 @@ async function submit(values) {
     // receiptStatus then means another submission recorded the digest first.
     const message =
       error.status === "unknown"
-        ? `the outcome of ${error.txHash} is unknown (${error.detail}); receiptStatus is now "${receiptStatus}"${unreadable}. Nothing is resent automatically. Check ${error.txHash} (or run float-mainnet-line.mjs receipt --digest ${digest}) before re-running submit. A second payment is impossible: once this spend is recorded, receiptStatus and the used nonce make a duplicate executeSpend revert`
+        ? `the outcome of ${error.txHash} is unknown (${error.detail}); receiptStatus is now "${receiptStatus}"${unreadable}. Nothing is resent automatically. ${session ? "The durable session holds this reservation; run reconcile-session before continuing. This digest is never resent by the session." : `Check ${error.txHash} (or run float-mainnet-line.mjs receipt --digest ${digest}) before re-running submit. A second payment is impossible: once this spend is recorded, receiptStatus and the used nonce make a duplicate executeSpend revert`}`
         : `transaction ${error.txHash} recorded no outcome; receiptStatus is ${receiptStatus}${unreadable}`;
     return {
       ok: false,
@@ -224,6 +272,7 @@ async function submit(values) {
 
   const txHash = result.txHashes[0];
   return afterSend({ ...result, digest, txHash }, async () => {
+    if (session) await session.reconcile();
     const paid = result.events.find((entry) => entry.event === "ProviderPaid" && entry.args.digest === digest);
     const blocked = result.events.find((entry) => entry.event === "SpendBlocked" && entry.args.digest === digest);
     if (!paid && !blocked) throw new Error(`transaction ${txHash} succeeded without a ProviderPaid or SpendBlocked event for ${digest}`);
@@ -242,18 +291,29 @@ async function submit(values) {
   });
 }
 
-const INTENT_OPTIONS = { intent: { type: "string" }, "from-block": { type: "string" } };
+const SESSION_OPTIONS = { session: { type: "string" } };
+const INTENT_OPTIONS = { intent: { type: "string" }, "from-block": { type: "string" }, ...SESSION_OPTIONS };
 const COMMANDS = {
+  "init-session": { options: SESSION_OPTIONS, run: async (values) => initializeExecutionSession(required(values, "session"), await connect(values)) },
+  "reconcile-session": { options: SESSION_OPTIONS, run: async (values) => withExecutionSession(required(values, "session"), await connect(values), async (session) => {
+    const report = await session.reconcile();
+    return { ok: report.pending.length === 0, status: report.pending.length ? "session-held" : "session-reconciled", session: report,
+      ...(report.pending.length ? { error: { message: "Original outcome remains unresolved. No new submission or resend is allowed; preserve this ledger and reconcile the original digest/transaction.", revert: null } } : {}) };
+  }) },
   preflight: { options: { ...INTENT_OPTIONS, from: { type: "string" } }, run: preflight },
-  submit: { options: { ...INTENT_OPTIONS, ...WRITE_OPTIONS, "allow-block": { type: "boolean" } }, run: submit },
+  submit: { options: { ...INTENT_OPTIONS, ...WRITE_OPTIONS, "allow-block": { type: "boolean" }, "monitor-baseline": { type: "string" }, "monitor-state-dir": { type: "string" } }, run: submit },
 };
 const TOOL = "node app/scripts/float-mainnet-submit.mjs";
 const USAGE = [
-  `${TOOL} preflight --intent <signed.json> [--from <executor>] [--from-block <n>] [--manifest <path>]`,
-  `${TOOL} submit --intent <signed.json> [--execute | --calldata --from <executor>] [--allow-block] [--from-block <n>] [--manifest <path>]`,
+  `${TOOL} init-session --session <policy.json> [--manifest <path>]`,
+  `${TOOL} reconcile-session --session <policy.json> [--manifest <path>]`,
+  `${TOOL} preflight --intent <signed.json> [--session <policy.json>] [--from <executor>] [--from-block <n>] [--manifest <path>]`,
+  `${TOOL} submit --intent <signed.json> [--session <policy.json>] [--execute | --calldata --from <executor>] [--allow-block] [--from-block <n>] [--manifest <path>]`,
   `submit signs with ${KEY} (never printed); without --execute it only simulates, and reports simulatedAt (the block the simulation ran at). --calldata --from <executor> needs no key and prints the executeSpend call for a Safe or contract executor.`,
   "A simulated SpendBlocked (nonce used, provider not paid) is sent, or printed as calldata, only with --allow-block.",
   `An already-recorded digest is reported, never resent; its event is looked up back from the head (--from-block or the manifest's deployment block bounds it, else ${MAX_LOOKBACK_BLOCKS.toString()} blocks).`,
+  "Arc mainnet requires --session <policy.json> and an exact nonzero executor. Testnet can opt in. Initialize the ledger once; all processes must share it. Every attempted digest permanently reserves gross principal across epochs, including blocked/reverted attempts. Uncertain attempts hold new submissions until reconciled; no automatic reset or resend.",
+  "Mainnet --execute and --calldata additionally require --manifest, --monitor-baseline and --monitor-state-dir. Missing, stale or held monitoring stops a new attempt before reservation; direct broadcast checks again immediately before sending. Calldata still needs a fresh check at later wallet execution.",
 ];
 
 if (isEntrypoint(import.meta)) runCli(COMMANDS, USAGE);

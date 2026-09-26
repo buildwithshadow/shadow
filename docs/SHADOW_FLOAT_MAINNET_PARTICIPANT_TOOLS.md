@@ -47,6 +47,7 @@ From the repository root, set `M=contracts/deployments/float-mainnet-candidate/a
 
 ## Conventions
 
+- **Durable execution policy.** Arc mainnet intent build/sign/verify and submit/preflight require `--session <policy.json>` with an initialized persistent ledger and exact nonzero executor. Testnet can opt in. The [execution session guide](SHADOW_EXECUTION_SESSION.md) explains policy fields, initialization and recovery. Gross reservations survive new line epochs and never recycle; unresolved attempts hold new submissions. This is a local executor restriction, not a Solidity global limit.
 - **Dry run by default.** A write command simulates from the signer's address and prints the calls. `--execute` sends them, waits for each receipt, and prints the transaction hashes and decoded Float events. `--calldata --from <address>` needs no key and prints `{to, value, data}` for a Safe or an external wallet.
 - **One JSON object** on stdout per run. Exit 0 on success, 1 on failure (`{ok:false, error:{message, revert}}`, where `revert` is the contract's custom error name), and 2 on a usage error, with the tool's full usage.
 - **Amounts** are atomic USDC (6 decimals): `1000000` is 1 USDC. **Times** (`<t>`) are unix seconds or `+<seconds>` after the latest block, never wall-clock time. **Durations** are bare seconds.

@@ -372,7 +372,7 @@ export function predictSpend(input, intent) {
 // status "unknown" and never resent.
 // check(call, result), when given, runs on the last simulation before a call is
 // signed (or printed as calldata) and throws to stop it.
-export async function runCalls(connection, signer, calls, { simulate = true, check } = {}) {
+export async function runCalls(connection, signer, calls, { simulate = true, check, beforeSend } = {}) {
   const { client } = connection;
   if (signer.mode !== "execute") {
     const [first, ...dependent] = calls;
@@ -422,6 +422,9 @@ export async function runCalls(connection, signer, calls, { simulate = true, che
       throw error;
     }
     const txHash = keccak256(serializedTransaction);
+    // Optional durable policy hook: failure here prevents the first broadcast.
+    // No raw signed transaction or private key is passed to the persistence layer.
+    await beforeSend?.({ call, txHash });
     txHashes.push(txHash);
     let receipt;
     try {
