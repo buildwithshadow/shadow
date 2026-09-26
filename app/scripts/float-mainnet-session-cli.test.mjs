@@ -8,6 +8,7 @@ import { createPublicClient, createWalletClient, defineChain, erc20Abi, getAddre
 import { eip712Domain, floatAbi, SPEND_INTENT_TYPES } from "./float-mainnet-config.mjs";
 import { intentFile, structFromMessage } from "./float-mainnet-intent.mjs";
 import { account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
+import { loadContext, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
 
 // Local Anvil only. Chain 5042 exercises the mandatory policy boundary, using
 // public deterministic test accounts and a locally deployed mock token.
@@ -24,7 +25,7 @@ describe("durable execution session through real CLIs and local chain", { skip: 
   const client = createPublicClient({ chain, transport: http(RPC) });
   const wallet = (a) => createWalletClient({ account: a, chain, transport: http(RPC) });
   const artifact = (path) => JSON.parse(readFileSync(new URL(`../../contracts/out/${path}`, import.meta.url), "utf8"));
-  let anvil, dir, usdc, float, lineId, policy;
+  let anvil, dir, usdc, float, lineId, policy, deployBlock, monitorArgs = [], monitorCycle = 0;
   const path = (name) => join(dir, name);
   const AGENT = { FLOAT_AGENT_PRIVATE_KEY: keyOf(7) };
   const EXECUTOR = { FLOAT_EXECUTOR_PRIVATE_KEY: keyOf(8) };
@@ -52,12 +53,15 @@ describe("durable execution session through real CLIs and local chain", { skip: 
     const hash = await wallet(owner).deployContract({ abi, bytecode: bytecode.object, args });
     const receipt = await client.waitForTransactionReceipt({ hash });
     assert.equal(receipt.status, "success");
+    if (name.startsWith("ShadowFloatMainnet")) deployBlock = receipt.blockNumber.toString();
     return getAddress(receipt.contractAddress);
   }
   async function open() {
+    await write(owner, float, floatAbi, "setOpeningsPaused", [false]);
     const now = (await client.getBlock()).timestamp;
     await write(sponsor, float, floatAbi, "openLine", [{ agent: agent.address, reserve: 1_000_000n, lineSpendCap: 1_000_000n, dailySpendCap: 1_000_000n, lineExpiry: now + 604_800n, maximumRepaymentWindow: 86400n, provider: provider.address, endpointHash: keccak256(stringToHex(ENDPOINT)), providerPerSpendCap: 1_000_000n, providerDailyCap: 1_000_000n, providerExpiry: now + 604_800n }]);
     lineId = await client.readContract({ address: float, abi: floatAbi, functionName: "activeLineId", args: [sponsor.address, agent.address] });
+    await write(owner, float, floatAbi, "setOpeningsPaused", [true]);
   }
   async function repayCloseOpen() {
     await write(agent, usdc, erc20Abi, "approve", [float, PRINCIPAL]);
@@ -71,8 +75,27 @@ describe("durable execution session through real CLIs and local chain", { skip: 
     await ok("intent", ["sign", "--intent", path(name), "--session", path("policy.json")], AGENT);
     return built;
   }
-  const submitArgs = (name) => ["submit", "--intent", path(name), "--session", path("policy.json")];
+  const submitArgs = (name) => ["submit", "--intent", path(name), "--session", path("policy.json"), ...monitorArgs];
   const balance = () => client.readContract({ address: usdc, abi: erc20Abi, functionName: "balanceOf", args: [provider.address] });
+  async function refreshMonitor() {
+    const manifestPath = path("manifest.json"), baselinePath = path("baseline.json"), stateDir = path(`monitor-${++monitorCycle}`);
+    writeFileSync(manifestPath, JSON.stringify({ ok: true, chainId: CHAIN.toString(), contract: { address: float }, bytecode: { onchainRuntimeKeccak256: policy.runtimeKeccak256 }, deployment: { blockNumber: deployBlock } }));
+    const snapshot = await ok("monitor", ["snapshot", "--manifest", manifestPath, "--executor-from-block", deployBlock]);
+    // Explicit local fixture baseline; production tools never learn one from a snapshot.
+    const baseline = { schemaVersion: 1, identity: { chainId: CHAIN.toString(), address: float, runtimeCodeHash: policy.runtimeKeccak256, usdc, deployBlock },
+      owner: owner.address, operators: [], sponsors: [sponsor.address], effectiveLimits: Object.fromEntries(Object.entries(LIMITS).map(([k,v]) => [k,String(v)])),
+      pauses: { openingsPaused: true, spendsPaused: false }, executor: { address: executor.address, fromBlock: deployBlock },
+      policy: { intervalMs: 1000, runTimeoutMs: 30000, maxHeartbeatAgeMs: 60000, maxBlockAgeSeconds: 300, maxIndexLagSeconds: 120, warnBeforeSeconds: 3600, requireIndex: false },
+      lines: snapshot.lines.map(line => ({ lineId: line.lineId, sponsor: sponsor.address, agent: agent.address, epoch: line.epoch, reserveCap: line.reserveCap,
+        lineSpendCap: line.lineSpendCap, dailySpendCap: line.dailySpendCap, maximumRepaymentWindow: line.maximumRepaymentWindow, termsVersion: line.termsVersion,
+        expiry: line.expiry, allowedStates: ["OPEN", "DRAWN", "CLOSED"], providers: line.providers.map(p => Object.fromEntries(["provider", "active", "endpointHash", "expiry", "perSpendCap", "dailySpendCap"].map(k => [k,p[k]]))) })) };
+    writeFileSync(baselinePath, JSON.stringify(baseline));
+    const context = loadContext({ baselinePath, manifestPath, stateDir });
+    const result = await runMonitorOnce(context, { collect: async () => snapshot });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    monitorArgs = ["--manifest", manifestPath, "--monitor-baseline", baselinePath, "--monitor-state-dir", stateDir];
+    return { stateDir };
+  }
 
   before(async () => {
     anvil = await startAnvil(PORT, [], CHAIN);
@@ -108,6 +131,14 @@ describe("durable execution session through real CLIs and local chain", { skip: 
   });
 
   test("a confirmed payment is counted once across separate submit processes", async () => {
+    await fails("submit", [...submitArgs("first.json"), "--execute"], /healthy approved monitor/, EXECUTOR);
+    assert.equal(JSON.parse(readFileSync(path("ledger/ledger.json"))).entries.length, 0);
+    const { stateDir } = await refreshMonitor();
+    const heartbeatPath = join(stateDir, "heartbeat.json"), heartbeat = JSON.parse(readFileSync(heartbeatPath));
+    writeFileSync(heartbeatPath, JSON.stringify({ ...heartbeat, completedAt: "2000-01-01T00:00:00.000Z" }));
+    await fails("submit", [...submitArgs("first.json"), "--execute"], /monitor/i, EXECUTOR);
+    assert.equal(JSON.parse(readFileSync(path("ledger/ledger.json"))).entries.length, 0, "monitor rejection reserved an unsent attempt");
+    await refreshMonitor();
     const paid = await ok("submit", [...submitArgs("first.json"), "--execute"], EXECUTOR);
     assert.equal(paid.status, "paid");
     assert.equal(paid.session.acceptedPrincipal, "300000");
@@ -122,6 +153,7 @@ describe("durable execution session through real CLIs and local chain", { skip: 
   test("broadcast interruption preserves the hash and reservation; restart reconciles without another payment", async () => {
     await repayCloseOpen();
     await signed("second.json");
+    await refreshMonitor();
     let broadcast = false;
     const proxy = createServer(async (request, response) => {
       let body = "";
@@ -174,10 +206,11 @@ describe("durable execution session through real CLIs and local chain", { skip: 
   });
 
   test("calldata reservation persists with no hash and prevents unsafe resubmission", async () => {
+    await refreshMonitor();
     writeFileSync(path("calldata-policy.json"), JSON.stringify({ ...policy, sessionId: "local-calldata-case", ledgerDirectory: "./calldata-ledger" }));
     const selected = ["--session", path("calldata-policy.json")];
     await ok("submit", ["init-session", ...selected]);
-    const result = await ok("submit", ["submit", "--intent", path("third.json"), ...selected, "--calldata", "--from", executor.address]);
+    const result = await ok("submit", ["submit", "--intent", path("third.json"), ...selected, ...monitorArgs, "--calldata", "--from", executor.address]);
     assert.equal(result.calls.length, 1);
     assert.equal(result.session.pending[0].txHash, null);
     await fails("submit", ["submit", "--intent", path("third.json"), ...selected, "--execute"], /unresolved attempt.*no resend/, EXECUTOR);

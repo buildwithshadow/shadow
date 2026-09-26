@@ -1,5 +1,17 @@
 # Durable execution sessions
 
+Mainnet `submit --execute` and `submit --calldata` also require a passing
+`--manifest`, an approved `--monitor-baseline`, and `--monitor-state-dir`.
+The submitter checks fresh monitor health before reserving an attempt and again
+immediately before direct broadcast. Missing, stale, corrupt or latched monitoring
+holds fail closed. A previously recorded digest can still be reconciled while
+monitoring is held; recovery never sends it again. See
+[the monitor runner](FLOAT_MAINNET_MONITOR_RUNNER.md).
+
+Calldata output checks monitoring when it is prepared, but cannot enforce what a
+separate wallet does later. Recheck before that wallet executes. This client
+policy does not prevent direct contract calls outside these tools.
+
 The candidate submit tool requires a durable session policy on Arc mainnet
 (chain 5042). Testnet tools can opt in with the same `--session` flag. This is
 executor policy, **not a global contract limit**. It does not authorize a release,
