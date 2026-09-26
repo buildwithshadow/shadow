@@ -22,7 +22,9 @@ From the contract's access checks:
 | Agent | Sign intents; `cancel-nonce` | Move reserve or change terms |
 | Anyone | `repay` a `DRAWN` or `DEFAULTED` line; submit a signed intent (unless it names an executor) | |
 
-The committed tools cover the owner's allowlist and pause actions (`float-mainnet-owner.mjs`). No committed tool sends `setOperator`, `reduceCap`, `proposeCapIncrease`, `activateCapIncrease` or `cancelCapIncrease`: those are transactions the Safe (or, for cancel, an operator) builds itself, calling the function on the Float with the `CapKind` number (`0` `PROTOCOL_RESERVE`, `1` `LINE_RESERVE`, `2` `LINE_SPEND`, `3` `PER_SPEND`, `4` `DAILY_SPEND`).
+The owner CLI (`float-mainnet-owner.mjs`) covers sponsor allowlisting, pause/unpause, operator allow/revoke, cap reduction, cancellation of a queued cap increase, and two-step ownership transfer. See the [control commands](SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md#owner-and-emergency-controls). It checks live roles, simulates by default and can print key-free calldata for the governing wallet. The CLI requires named caps: `protocol-reserve`, `line-reserve`, `line-spend`, `per-spend`, and `daily-spend`.
+
+Scheduling and activating cap increases remain separate governor calls: `proposeCapIncrease` and `activateCapIncrease` on the Float, with `CapKind` (`0` `PROTOCOL_RESERVE`, `1` `LINE_RESERVE`, `2` `LINE_SPEND`, `3` `PER_SPEND`, `4` `DAILY_SPEND`). They are not required for an immediate reduction or emergency stop. The existing contract still enforces the governance delay and immutable maxima. A printed control call is not containment or a completed ownership transfer; submit it through the authorized wallet and verify its receipt and resulting state.
 
 ## Running the monitor
 
@@ -79,7 +81,7 @@ The two pauses stop new risk only. In the contract, `openingsPaused` is read onl
    - suspected agent-key compromise: keep spends paused. `cancel-nonce` cannot contain it: it needs the agent's own key, and whoever holds that key can sign intents with fresh nonces, against the current terms too. Before any unpause, the sponsor contains each of the agent's lines:
      - an `OPEN` (debt-free) line: close it (`node app/scripts/float-mainnet-sponsor.mjs close --line-id <line> --execute --manifest $M`). Every intent on a `CLOSED` line reverts, and the reserve returns to the sponsor, who can open a new line for a new agent key;
      - a `DRAWN` line: deactivate every provider policy on it (`node app/scripts/float-mainnet-sponsor.mjs set-provider-policy --line-id <line> --provider <addr> --inactive --execute --manifest $M`, once per provider from its canonical `ProviderPolicySet` events). No spend executes while the line is `DRAWN` (`InvalidState`), but a repayment reopens it; afterwards an intent to an inactive provider pays nothing (`SpendBlocked(PROVIDER_NOT_ALLOWED)`), even one signed afresh. Close the line once it is repaid, using the executed close command above;
-   - suspected relayer or executor compromise, with the agent key safe (signed intents may have leaked): keep spends paused; the sponsor runs `update-terms` on the line or `set-provider-policy` (deactivating the provider, say). Either bumps the line's `termsVersion`, so every intent signed before it reverts `StaleTerms`. The agent can also `cancel-nonce` each known unused nonce. The owner removes a compromised operator with `setOperator(operator, false)`;
+   - suspected relayer or executor compromise, with the agent key safe (signed intents may have leaked): keep spends paused; the sponsor runs `update-terms` on the line or `set-provider-policy` (deactivating the provider, say). Either bumps the line's `termsVersion`, so every intent signed before it reverts `StaleTerms`. The agent can also `cancel-nonce` each known unused nonce. The owner removes a compromised operator with `float-mainnet-owner.mjs disallow-operator --operator <address>` (with `--execute` or confirmed owner-wallet calldata as above);
    - accounting divergence (a failed `reconcile`, or a `DISCOVERY_INCOMPLETE` that a full scan does not clear): pause both, reconcile through both RPCs, and make no further writes until it is explained;
    - an unexpected `CAP_INCREASE_PENDING`, `OWNERSHIP_PENDING`, pause or `OPERATOR_CHANGED`: cancel the increase, and treat the owner or operator key as compromised. Operators are no check on a compromised owner: the owner can remove every operator at once (`setOperator(op, false)` takes effect immediately) and then propose a cap increase, and an operator's cancel only restarts the governance delay, since the owner can propose again at once; it can also unpause immediately. What the delay buys is time for sponsors to contain their lines as above; no owner function can move a line's reserve;
    - restricted USDC transfers: a failed token transfer reverts the whole call and changes no state; retry only once the restriction is resolved.
@@ -161,7 +163,7 @@ For the team to run on Arc testnet once a candidate deployment and its rehearsal
 - [ ] Index: stopping the indexer for longer than `--max-index-lag` shows `INDEX_LAG`; `index --out index.json --resume --manifest $M` clears it.
 - [ ] Incident closeout written for one drill.
 
-## What is tested, and what is not yet rehearsed
+## What the local tests establish
 
 `app/scripts/float-mainnet-monitor.test.mjs` runs on anvil through the committed CLIs:
 
@@ -179,11 +181,13 @@ For the team to run on Arc testnet once a candidate deployment and its rehearsal
 - a pending owner (`OWNERSHIP_PENDING`); the protocol cap reduced to `totalCommittedCapital` (no alert) and one below it (`PROTOCOL_CAP_EXCEEDED`);
 - unit tests of the four identities with synthetic lines: each total failing on its own mismatch, each per-line identity failing on each field of each state, and equal and opposite errors on two lines failing only `linesMatchReserveCap`; and of the `CapKind` order against the contract source.
 
-Not yet rehearsed or tested:
+`app/scripts/float-mainnet-owner-tools.test.mjs` also exercises operator grants and revocation, role denials, all five named cap reductions, cancellation of a queued increase before and after its activation time, and two-step ownership transfer. Dry runs and key-free calldata are checked to send nothing; successful writes and role changes are checked against local onchain state.
 
-- anything on Arc testnet or another public network, and every step of the checklist above;
-- a Safe sending pause, unpause, `setOperator` or cap-governance calls; there is no committed tool for the last two;
-- real Arc USDC (restricted transfers, blocklisting) under the monitor;
+What these local tests do not establish:
+
+- completion of the full public-network incident drill and checklist above; separately recorded founder-operated Arc testnet lifecycle and read-only monitoring checks remain narrower evidence;
+- an actual Safe executing pause, unpause, operator or cap-governance calls; the owner CLI's calldata and EOA role paths have local tests, which do not establish an actual Safe execution;
+- incident handling when real Arc USDC transfers are restricted or an affected address is blocklisted;
 - a real reorg: the reorganized index checkpoint is simulated by an edited hash, and a pinned block reorganized during a run is handled in code but not exercised by a test;
-- two-RPC reconciliation, alert routing and a scheduler;
-- scan time on a long chain.
+- continuous two-RPC monitoring with scheduled checks, heartbeat and delivered alerts; successful live read-only reconciliation is a snapshot, not this operating service;
+- scan performance at sustained production scale.
