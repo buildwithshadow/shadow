@@ -54,7 +54,7 @@ Use this **same initialized policy** throughout:
 node app/scripts/float-mainnet-submit.mjs preflight --intent /private/signed.json --session /private/session.json --manifest /private/release.json
 node app/scripts/float-mainnet-submit.mjs submit --intent /private/signed.json --session /private/session.json --manifest /private/release.json
 # Only with the existing transaction authorization and executor signer:
-node app/scripts/float-mainnet-submit.mjs submit --intent /private/signed.json --session /private/session.json --manifest /private/release.json --execute
+node app/scripts/float-mainnet-submit.mjs submit --intent /private/signed.json --session /private/session.json --manifest /private/release.json --monitor-baseline /private/monitor-baseline.json --monitor-state-dir /private/monitor-state --execute
 ```
 
 A dry run does not reserve a new attempt. Before execution or `--calldata` output,
