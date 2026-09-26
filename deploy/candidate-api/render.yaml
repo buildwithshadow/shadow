@@ -1,0 +1,27 @@
+# Provision only after account/cost approval and private enrollment preparation.
+# This blueprint is not evidence that the API is deployed.
+services:
+  - type: web
+    name: shadow-candidate-testnet-api
+    runtime: node
+    region: frankfurt
+    plan: 1c-2g
+    branch: main
+    autoDeployTrigger: off
+    numInstances: 1
+    buildCommand: npx --yes pnpm@10.34.4 --dir app install --frozen-lockfile --ignore-workspace
+    startCommand: exec node app/scripts/float-mainnet-purchase-host.mjs --config /var/data/shadow/purchase.json --persistent-root /var/data/shadow
+    maxShutdownDelaySeconds: 300
+    disk:
+      name: shadow-candidate-state
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      - key: NODE_VERSION
+        value: "24"
+      - key: ARC_RPC_URL
+        sync: false
+      - key: FLOAT_EXECUTOR_PRIVATE_KEY
+        sync: false
+      - key: SHADOW_PURCHASE_TOKEN
+        sync: false

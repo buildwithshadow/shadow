@@ -116,7 +116,7 @@ Use a persistent Node process, private durable volume, TLS reverse proxy and
 single writer. Do not put the store on ephemeral serverless storage or start
 multiple replicas. Back up the purchase store, execution ledger and provider
 store together. Never log Authorization headers or request bodies at the proxy.
-The service itself listens only on loopback.
+The standalone service defaults to loopback; the managed-host entrypoint below explicitly opts into managed ingress.
 
 1. Verify the testnet deployment manifest, owner-approved baseline, named
    executor and sponsor/agent/provider policy. Fund the bounded line separately.
@@ -190,3 +190,51 @@ Pending-ledger observations preserve their transaction hash without passing the
 submission-eligibility check. Saved results and delivery receipts remain usable
 with the provider offline, and corrupt cached bytes are refused.
 All test keys are public deterministic Anvil fixtures; no live funds are used.
+
+## Managed Node hosting
+
+`deploy/candidate-api/render.yaml` is an optional, unprovisioned paid-service
+blueprint. Confirm the account, current compute/disk price and persistent mount
+before creating it. Deploy a reviewed commit manually; auto-deploys and replicas
+are disabled. No private configuration, signer or token belongs in the blueprint.
+
+Provision the enrollment files and explicitly initialized stores under
+`/var/data/shadow` using the operator steps above. Preserve stable paths across
+releases because configuration bindings include resolved paths. Do not move a
+previously used enrollment to a new path or recreate its store: stop and reconcile
+before planning a state migration. The first hosted enrollment should be initialized
+at its final paths. Do not import an older backup to reset spent capacity.
+
+The hosting entrypoint refuses absent paths or symlinks escaping the declared
+persistent root. This validates path containment, not the host's disk durability;
+verify the actual mount in the provider before use. It launches the API and monitor
+in one instance, strips executor credentials from the monitor environment, and
+stops both if either exits. It never initializes state or clears a hold/lock at boot.
+A crash can require manual reconciliation before the platform's restart succeeds.
+
+```sh
+node app/scripts/float-mainnet-purchase-host.mjs \
+  --config /var/data/shadow/purchase.json \
+  --persistent-root /var/data/shadow --port 8788
+```
+
+The hosting entrypoint explicitly binds the API to `0.0.0.0` for managed TLS
+ingress. The standalone server still defaults to loopback; `--host 0.0.0.0` is
+an explicit opt-in. All purchase routes retain bearer authentication and origin
+checks. Use TCP platform health checks (no anonymous HTTP health route), then
+verify authenticated catalog/status separately. A listening port proves process
+liveness, not a healthy monitor or readiness to spend. Never embed the shared
+enrollment token in a public JavaScript bundle.
+
+The host allows 240 seconds for child shutdown, then kills remaining process
+groups. Configure the platform termination window to at least 300 seconds. Stop
+new jobs and allow active work to finish before planned deployments. An interrupted
+send still requires canonical reconciliation; a forced shutdown never authorizes
+resending. Test restart and provider-outage recovery before admitting participants.
+Attach the chosen API domain only after provider-URL, TLS and authenticated-route
+checks pass. Preserve the existing frontend hostname and other DNS records.
+
+Candidate public clients now use the paced read-only RPC transport even in tools
+that also submit transactions. Wallet broadcasts use a separate transport with
+retries disabled. Log scans still split only explicit range/result-size errors;
+quota exhaustion fails the scan instead of reporting partial history as complete.
