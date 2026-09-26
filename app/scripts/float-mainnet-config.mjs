@@ -158,7 +158,15 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
   const read = (functionName) => client.readContract({ address: deployment.address, abi: floatAbi, functionName });
   let identity;
   try {
-    identity = await Promise.all(["NAME_HASH", "VERSION_HASH", "SPEND_INTENT_TYPEHASH", "deploymentChainId"].map(read));
+    const names = ["NAME_HASH", "VERSION_HASH", "SPEND_INTENT_TYPEHASH", "deploymentChainId"];
+    if (readOnly) {
+      // This transport already serializes requests. Do not prequeue siblings
+      // that would keep running after one read exhausts its retry budget.
+      identity = [];
+      for (const name of names) identity.push(await read(name));
+    } else {
+      identity = await Promise.all(names.map(read));
+    }
   } catch (error) {
     throw new Error(`${deployment.address} is not a ShadowFloatMainnet candidate: ${errorMessage(error)}`);
   }

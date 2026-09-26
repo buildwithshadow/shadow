@@ -16,8 +16,8 @@ export const CANDIDATE_FUNDING = {
 } as const
 export const candidateFundingAbi = candidateAbiJson as Abi
 export const candidateFundingChain = defineChain({ id: CANDIDATE_FUNDING.chainId, name: 'Arc Testnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.testnet.arc.network'] } }, blockExplorers: { default: { name: 'Arc testnet explorer', url: 'https://testnet.arcscan.app' } }, testnet: true })
-export type CandidateReadClient = Pick<PublicClient, 'getChainId' | 'getCode' | 'readContract' | 'getBlock' | 'simulateContract' | 'getTransactionCount' | 'getTransaction' | 'getTransactionReceipt'>
-export type CandidateWalletClient = Pick<WalletClient, 'getAddresses' | 'getChainId' | 'sendTransaction'>
+export type CandidateReadClient = Pick<PublicClient, 'getChainId' | 'getCode' | 'readContract' | 'getBlock' | 'simulateContract' | 'getTransaction' | 'getTransactionReceipt'>
+export type CandidateWalletClient = Pick<WalletClient, 'getAddresses' | 'getChainId' | 'sendTransaction' | 'request'>
 export interface CandidateOpenInput {
   agent: string; provider: string; endpoint: string
   reserve: string; lineSpendCap: string; dailySpendCap: string
@@ -286,6 +286,16 @@ async function walletMatches(session: CandidateSession) {
   if (!accounts[0] || !same(accounts[0], session.account)) throw new Error('The selected wallet account changed. Refresh the action before signing.')
 }
 
+async function walletPendingNonce(session: CandidateSession): Promise<number> {
+  // The wallet's provider may see pending transactions absent from the public
+  // read RPC. Never use that public RPC to choose an explicit signing nonce.
+  const raw = await session.walletClient.request<{ Parameters: [Address, 'pending']; ReturnType: Hex }>({ method: 'eth_getTransactionCount', params: [session.account, 'pending'] })
+  if (typeof raw !== 'string' || !/^0x[0-9a-fA-F]+$/.test(raw)) throw new Error('The connected wallet did not return a valid pending transaction nonce. No wallet transaction was requested.')
+  const nonce = BigInt(raw)
+  if (nonce > BigInt(Number.MAX_SAFE_INTEGER)) throw new Error('The wallet transaction nonce is outside the supported range. No wallet transaction was requested.')
+  return Number(nonce)
+}
+
 export async function executeCandidateCall(session: CandidateSession, prepared: CandidatePrepared): Promise<CandidateResolution> {
   if (!same(session.account, prepared.account)) throw new Error('This action was prepared for a different wallet.')
   if (memoryLocks.has(session.journal.key)) throw new Error('A transaction for this account is already being prepared.')
@@ -309,8 +319,8 @@ export async function executeCandidateCall(session: CandidateSession, prepared: 
     }
     await client.simulateContract({ address: prepared.to, abi: call.abi, functionName: call.functionName, args: call.args, account: session.account })
     const block = await client.getBlock()
-    const nonce = await client.getTransactionCount({ address: session.account, blockTag: 'pending' })
     await walletMatches(session)
+    const nonce = await walletPendingNonce(session)
     // Persist before opening the wallet: a provider can broadcast successfully
     // and lose its response without ever returning a transaction hash.
     let pending: CandidatePending = {
@@ -320,6 +330,20 @@ export async function executeCandidateCall(session: CandidateSession, prepared: 
     }
     session.journal.save(pending)
     stage(session, pending)
+    try {
+      // Recheck the same provider immediately before requesting a send. This
+      // is not an atomic reservation: another app/device can still submit
+      // while the wallet prompt is open. Keep prompts brief and stop if another
+      // transaction is submitted; profile tab locks do not protect other apps.
+      await walletMatches(session)
+      if (await walletPendingNonce(session) !== nonce) throw new Error('Your wallet has another pending transaction. No wallet transaction was requested here. Finish it, then review this action again.')
+      await walletMatches(session)
+    } catch (error) {
+      // No send request has occurred, so this journal belongs to a definitely
+      // unsubmitted preparation, not an uncertain broadcast.
+      session.journal.clear()
+      throw error
+    }
     let txHash: Hash
     try {
       txHash = await session.walletClient.sendTransaction({ account: session.account, chain: candidateFundingChain, to: prepared.to, data: prepared.data, value: 0n, nonce })

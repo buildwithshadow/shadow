@@ -41,14 +41,14 @@ function fixture() {
     chainId: CANDIDATE_FUNDING.chainId, code: deployedCode, accountCode: '0x', selected: sponsor, walletChain: CANDIDATE_FUNDING.chainId,
     sponsorAllowed: true, openingsPaused: false, spendsPaused: false, allowance: 1_000_000n, balance: 10_000_000n, activeLineId: zeroHash,
     limits: [25_000_000n, 5_000_000n, 5_000_000n, 1_000_000n, 2_000_000n], totalCommittedCapital: 0n, epoch: 0n,
-    block: { number: 100n, timestamp: 1_800_000_000n, hash: blockHash }, nonce: 7, sends: 0, simulation: 0, transactions: new Map(), receipts: new Map(), readCalls: [],
+    block: { number: 100n, timestamp: 1_800_000_000n, hash: blockHash }, nonce: 7, walletNonce: 7, walletNonceReads: 0, publicNonceReads: 0, sends: 0, simulation: 0, transactions: new Map(), receipts: new Map(), readCalls: [],
     line: { sponsor, agent, epoch: 1n, expiry: 1_800_604_800n, maximumRepaymentWindow: 86_400n, day: 0n, termsVersion: 1n, state: 1, reserveCap: 100_000n, availableReserve: 100_000n, principalOutstanding: 0n, recoveryAvailable: 0n, lineSpendCap: 150_000n, dailySpendCap: 100_000n, cumulativePrincipalPaid: 0n, spentToday: 0n, dueAt: 0n },
   }
   const client = {
     async getChainId() { return state.chainId },
     async getCode({ address }: any) { return address.toLowerCase() === CANDIDATE_FUNDING.address.toLowerCase() ? state.code : state.accountCode },
     async getBlock() { return state.block },
-    async getTransactionCount() { return state.nonce },
+    async getTransactionCount() { state.publicNonceReads++; return state.nonce },
     async readContract({ functionName }: any) {
       state.readCalls.push(functionName)
       if (state.failRead === functionName) throw new Error(`RPC unavailable during ${functionName}`)
@@ -76,11 +76,17 @@ function fixture() {
   const wallet = {
     async getChainId() { return state.walletChain },
     async getAddresses() { return [state.selected] },
+    async request({ method, params }: any) {
+      assert.equal(method, 'eth_getTransactionCount'); assert.deepEqual(params, [sponsor, 'pending'])
+      state.walletNonceReads++
+      if (state.onWalletNonce) return state.onWalletNonce(state.walletNonceReads)
+      return toHex(state.walletNonce)
+    },
     async sendTransaction(request: any) { state.sends++; state.request = request; assert.ok(journal.load(), 'journal must exist before wallet prompt'); if (state.onSend) return state.onSend(request); return txHash },
   } as unknown as CandidateWalletClient
   const session = { publicClient: client, walletClient: wallet, account: sponsor, journal }
   function mined(prepared: CandidatePrepared, overrides: any = {}) {
-    const transaction = { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: state.nonce, chainId: CANDIDATE_FUNDING.chainId, blockHash, blockNumber: state.block.number, ...overrides }
+    const transaction = { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: state.walletNonce, chainId: CANDIDATE_FUNDING.chainId, blockHash, blockNumber: state.block.number, ...overrides }
     const kind = prepared.kind
     const logs = kind === 'approve' ? [eventLog('Approval', { owner: sponsor, spender: CANDIDATE_FUNDING.address, value: prepared.amount }, true)]
       : kind === 'open' ? [eventLog('LineOpened', { lineId: prepared.lineId, sponsor, agent: prepared.agent, epoch: prepared.expectedEpoch, reserve: prepared.amount, termsVersion: 1n })]
@@ -166,7 +172,7 @@ test('approval and opening are separate confirmations; rejection leaves confirme
   f.mined(approve)
   assert.equal((await executeCandidateCall(f.session, approve)).status, 'confirmed')
   assert.equal(f.journal.load(), null)
-  f.state.allowance = 100_000n; f.state.nonce++
+  f.state.allowance = 100_000n; f.state.nonce++; f.state.walletNonce++
   const open = await prepareCandidateOpen(f.client, sponsor, input)
   f.state.onSend = () => { throw { code: 4001 } }
   await assert.rejects(() => executeCandidateCall(f.session, open), /declined/)
@@ -182,6 +188,61 @@ test('wallet account or network changes and non-EOA senders are rejected without
     await assert.rejects(() => executeCandidateCall(f.session, prepared))
     assert.equal(f.state.sends, 0); assert.equal(f.journal.load(), null)
   }
+})
+
+test('the connected provider pending nonce overrides a stale public RPC nonce', async () => {
+  const f = fixture(); f.state.nonce = 7; f.state.walletNonce = 11
+  const prepared = await prepareCandidateOpen(f.client, sponsor, input)
+  f.state.onSend = () => { f.mined(prepared); return txHash }
+  assert.equal((await executeCandidateCall(f.session, prepared)).status, 'confirmed')
+  assert.equal(f.state.request.nonce, 11)
+  assert.equal(f.state.walletNonceReads, 2)
+  assert.equal(f.state.publicNonceReads, 0)
+})
+
+test('a provider nonce change after journaling prevents the send and allows a fresh review', async () => {
+  const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
+  f.state.onWalletNonce = (count: number) => {
+    if (count === 1) return '0x7'
+    assert.equal(f.journal.load()?.nonce, 7, 'the recheck must happen after journaling')
+    return '0x8'
+  }
+  await assert.rejects(() => executeCandidateCall(f.session, prepared), /another pending transaction/)
+  assert.equal(f.state.sends, 0); assert.equal(f.journal.load(), null)
+  f.state.onWalletNonce = null; f.state.walletNonce = 8
+  const fresh = await prepareCandidateOpen(f.client, sponsor, input)
+  f.state.onSend = () => { f.mined(fresh); return txHash }
+  assert.equal((await executeCandidateCall(f.session, fresh)).status, 'confirmed')
+  assert.equal(f.state.request.nonce, 8)
+})
+
+test('failed or invalid nonce revalidation clears only the never-sent preparation', async () => {
+  for (const fail of [() => { throw new Error('wallet provider unavailable') }, () => 'invalid']) {
+    const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
+    f.state.onWalletNonce = (count: number) => count === 1 ? '0x7' : fail()
+    await assert.rejects(() => executeCandidateCall(f.session, prepared))
+    assert.equal(f.state.sends, 0); assert.equal(f.journal.load(), null)
+  }
+})
+
+test('unsupported, malformed and unsafe provider nonces stop before journaling or signing', async () => {
+  for (const result of ['invalid', '0x20000000000000', -1, undefined]) {
+    const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
+    f.state.onWalletNonce = () => result
+    await assert.rejects(() => executeCandidateCall(f.session, prepared), /nonce/)
+    assert.equal(f.state.sends, 0); assert.equal(f.journal.load(), null); assert.equal(f.state.publicNonceReads, 0)
+  }
+  const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
+  f.state.onWalletNonce = () => { throw { code: -32601, message: 'method not supported' } }
+  await assert.rejects(() => executeCandidateCall(f.session, prepared))
+  assert.equal(f.state.sends, 0); assert.equal(f.journal.load(), null); assert.equal(f.state.publicNonceReads, 0)
+})
+
+test('an account change during the last nonce read cannot open a signing prompt', async () => {
+  const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
+  f.state.onWalletNonce = (count: number) => { if (count === 2) f.state.selected = other; return '0x7' }
+  await assert.rejects(() => executeCandidateCall(f.session, prepared), /account changed/)
+  assert.equal(f.state.sends, 0); assert.equal(f.journal.load(), null)
 })
 
 test('hashless successful send retains exact nonce and calldata; reload blocks resend and exact receipt recovers it', async () => {
@@ -291,6 +352,7 @@ test('browser calls drive actual candidate open, paid draw, full repayment and r
     const injectedWallet = (who: Address) => ({
       getAddresses: async () => [who],
       getChainId: async () => CANDIDATE_FUNDING.chainId,
+      request: (request: any) => createWalletClient({ account: who, chain: candidateFundingChain, transport: http(anvil.rpc) }).request(request),
       sendTransaction: (request: any) => createWalletClient({ account: who, chain: candidateFundingChain, transport: http(anvil.rpc) }).sendTransaction(request),
     }) as CandidateWalletClient
     async function deploy(compiled: any, args: any[]) {
