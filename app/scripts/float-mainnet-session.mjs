@@ -199,6 +199,10 @@ export async function withExecutionSession(path, connection, callback) {
     };
     return await callback({
       policy, report, reconcile, check,
+      recorded(digest) {
+        bytes32(digest, "intent digest");
+        return structuredClone(entries.find((entry) => entry.digest === digest) ?? null);
+      },
       reserve(struct, digest) {
         if (check(struct, digest)) fail("recorded session digest is never resent");
         const message = Object.fromEntries(SPEND_INTENT_TYPES.SpendIntent.map(({ name }) => [name, typeof struct[name] === "bigint" ? struct[name].toString() : struct[name]]));

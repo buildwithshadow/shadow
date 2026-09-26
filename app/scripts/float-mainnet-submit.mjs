@@ -209,8 +209,8 @@ async function submitConnected(values, connection, { struct, digest, signature }
 
   const call = { address: connection.address, abi: floatAbi, functionName: "executeSpend", args: [struct, signature] };
   const guardMonitor = async () => {
-    if (connection.chainId !== 5042n || mode.mode === "dry-run") return;
-    if (!session || !values.manifest || !values["monitor-baseline"] || !values["monitor-state-dir"]) throw new Error("Arc mainnet executable submissions require --manifest, --monitor-baseline and --monitor-state-dir with a healthy approved monitor");
+    if ((connection.chainId !== 5042n && values["require-monitor"] !== true) || mode.mode === "dry-run") return;
+    if (!session || !values.manifest || !values["monitor-baseline"] || !values["monitor-state-dir"]) throw new Error("Executable submissions with enforced monitoring require --session, --manifest, --monitor-baseline and --monitor-state-dir with a healthy approved monitor");
     await assertHealthySpendMonitor({ baselinePath: values["monitor-baseline"], manifestPath: values.manifest,
       stateDir: values["monitor-state-dir"], sessionPolicy: session.policy, connection, struct });
   };
@@ -301,7 +301,7 @@ const COMMANDS = {
       ...(report.pending.length ? { error: { message: "Original outcome remains unresolved. No new submission or resend is allowed; preserve this ledger and reconcile the original digest/transaction.", revert: null } } : {}) };
   }) },
   preflight: { options: { ...INTENT_OPTIONS, from: { type: "string" } }, run: preflight },
-  submit: { options: { ...INTENT_OPTIONS, ...WRITE_OPTIONS, "allow-block": { type: "boolean" }, "monitor-baseline": { type: "string" }, "monitor-state-dir": { type: "string" } }, run: submit },
+  submit: { options: { ...INTENT_OPTIONS, ...WRITE_OPTIONS, "allow-block": { type: "boolean" }, "require-monitor": { type: "boolean" }, "monitor-baseline": { type: "string" }, "monitor-state-dir": { type: "string" } }, run: submit },
 };
 const TOOL = "node app/scripts/float-mainnet-submit.mjs";
 const USAGE = [
@@ -314,6 +314,7 @@ const USAGE = [
   `An already-recorded digest is reported, never resent; its event is looked up back from the head (--from-block or the manifest's deployment block bounds it, else ${MAX_LOOKBACK_BLOCKS.toString()} blocks).`,
   "Arc mainnet requires --session <policy.json> and an exact nonzero executor. Testnet can opt in. Initialize the ledger once; all processes must share it. Every attempted digest permanently reserves gross principal across epochs, including blocked/reverted attempts. Uncertain attempts hold new submissions until reconciled; no automatic reset or resend.",
   "Mainnet --execute and --calldata additionally require --manifest, --monitor-baseline and --monitor-state-dir. Missing, stale or held monitoring stops a new attempt before reservation; direct broadcast checks again immediately before sending. Calldata still needs a fresh check at later wallet execution.",
+  "--require-monitor applies the same monitoring gate on testnet; a durable --session is also required for this mode.",
 ];
 
 if (isEntrypoint(import.meta)) runCli(COMMANDS, USAGE);

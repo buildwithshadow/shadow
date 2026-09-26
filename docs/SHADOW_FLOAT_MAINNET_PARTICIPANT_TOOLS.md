@@ -6,6 +6,11 @@ These command-line tools let each pilot participant run their own part of the li
 
 ## Browser funding and repayment
 
+For a participant frontend integration, the [candidate purchase API](CANDIDATE_PURCHASE_API.md)
+wraps the signing, provider acceptance, monitored execution and result recovery
+tools in a persistent single-enrollment HTTP service. It is testnet-only and must
+be provisioned separately; this repository does not configure a public endpoint.
+
 The [funding page](https://www.shadowbuild.xyz/funding) manages the deployed Arc testnet candidate. An approved sponsor can enter an agent, an agreed provider endpoint and spending limits, approve the exact USDC reserve, then separately confirm opening the line. Any browser EOA wallet can repay a loaded line; only its sponsor can close it and reclaim eligible reserve or claim available default recovery. The page pins the candidate address, runtime code, chain and token before preparing transactions. It does not expose a mainnet mode or accept private keys.
 
 The form uses decimal USDC amounts. Its default reserve is 0.10 test USDC, maximum purchase 0.05, daily limit 0.10 and cumulative purchase limit 0.15. Current onchain limits are checked as well as fixed browser ceilings. Repayment restores reserve but does not reset cumulative principal paid. The agent may be a deployed Circle Modular Wallet; the funding wallet must be an EOA. Agent signing, purchase submission and provider delivery still use the candidate tools below. This page does not replace those steps with a founder relay.
