@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
+import { isIP } from "node:net";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { inspect, parseArgs } from "node:util";
@@ -84,7 +85,7 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000 }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000 }) {
   if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
   for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
   mkdirSync(storeDir, { recursive: true });
@@ -92,6 +93,20 @@ export function createProviderServer({ connection, account, endpointHash, price,
   const fileOf = (digest, slot) => join(storeDir, `${digest}.${slot}.json`);
   const accepting = new Map();
   const serving = new Map();
+  const admitting = new Set();
+
+  // Synchronous reservation before the first await. One process owns each store.
+  function reserveAdmission(digest) {
+    const files = readdirSync(storeDir);
+    const delivered = new Set(files.filter(name => /^0x[0-9a-f]{64}\.delivery\.json$/.test(name)).map(name => name.slice(0, 66)));
+    const stored = new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66)).filter(digest => !delivered.has(digest)));
+    if (stored.has(digest)) return () => {}; // A prepared retry already occupies its slot.
+    if (new Set([...stored, ...admitting]).size >= maxStoredPurchases) {
+      throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
+    }
+    admitting.add(digest);
+    return () => admitting.delete(digest);
+  }
 
   // This server reserves each provider job id for at most one intent digest.
   // The durable claim also arbitrates concurrent accepts for different digests.
@@ -155,10 +170,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
       bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
     }
-    // Keep existing recovery available even when new purchase storage is full.
-    if (new Set(readdirSync(storeDir).filter(name => /^0x[0-9a-f]{64}\.(?:prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66))).size >= maxStoredPurchases) {
-      throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
-    }
+    const releaseAdmission = reserveAdmission(digest);
+    try {
     // acceptIntent's checks that need no chain read, made first, so that an
     // intent refused on its face costs no RPC call.
     const problems = [];
@@ -196,6 +209,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     bindRequest(requestId, digest);
     const kept = storeOnce(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
     return { acceptance: kept, checkedIntent: intent };
+    } finally { releaseAdmission(); }
   }
 
   // One acceptance per digest, whatever the request id: the first request id
@@ -333,7 +347,19 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return [404, { error: "not found" }];
   }
 
-  let active = 0, requests = 0, windowStart = Date.now();
+  const quotas = new Map(), callerActive = new Map();
+  let normalActive = 0, recoveryActive = 0;
+  const recoverySlots = Math.max(1, Math.floor(maxConcurrent / 2));
+  if (maxConcurrent < 2) throw new Error('Provider needs at least two slots to reserve recovery capacity');
+  function callerOf(request) {
+    const remote = request.socket.remoteAddress || 'unknown';
+    if (trustLoopbackProxy && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
+      const forwarded = request.headers['x-shadow-client-ip'];
+      if (typeof forwarded !== 'string' || !isIP(forwarded)) return null;
+      return forwarded.toLowerCase();
+    }
+    return remote.toLowerCase();
+  }
   const server = createServer({ maxHeaderSize: 8192, requestTimeout: 15000, headersTimeout: 10000, keepAliveTimeout: 5000 }, async (request, response) => {
     response.setHeader('cache-control', 'no-store');
     response.setHeader('x-content-type-options', 'nosniff');
@@ -348,9 +374,31 @@ export function createProviderServer({ connection, account, endpointHash, price,
       }
       if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
     }
-    if (Date.now() - windowStart >= 60000) { requests = 0; windowStart = Date.now(); }
-    if (active >= maxConcurrent || ++requests > maxRequestsPerMinute) { response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy. Retry the original request later."}'); return; }
-    active++;
+    let pathname;
+    try { pathname = new URL(request.url, 'http://provider.invalid').pathname; }
+    catch { response.writeHead(400); response.end('{"error":"Invalid request target"}'); return; }
+    const routeKind = request.method === 'POST' && pathname === '/accept' ? 'accept'
+      : request.method === 'POST' && pathname === '/serve' ? 'serve'
+      : request.method === 'GET' && pathname.startsWith('/status/') ? 'status' : null;
+    // Unknown routes cannot spend the budget reserved for real requests.
+    if (!routeKind) { response.writeHead(404); response.end('{"error":"not found"}'); return; }
+    const caller = callerOf(request);
+    if (!caller) { response.writeHead(400); response.end('{"error":"Missing trusted client address"}'); return; }
+    const now = Date.now(), quotaKey = `${caller}:${routeKind}`;
+    let quota = quotas.get(quotaKey);
+    if (!quota || now - quota.start >= 60000) {
+      if (quotas.size >= 2048) for (const [key, entry] of quotas) if (now - entry.start >= 60000) quotas.delete(key);
+      if (!quotas.has(quotaKey) && quotas.size >= 2048) { response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy"}'); return; }
+      quota = { start: now, count: 0 }; quotas.set(quotaKey, quota);
+    }
+    const recovery = routeKind !== 'accept', activeKey = `${caller}:${recovery ? 'recovery' : 'accept'}`;
+    const concurrent = callerActive.get(activeKey) || 0;
+    const full = recovery ? recoveryActive >= recoverySlots : normalActive >= maxConcurrent - recoverySlots;
+    if (++quota.count > maxRequestsPerMinute || full || (publicOrigin && concurrent >= 1)) {
+      response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy. Retry the original request later."}'); return;
+    }
+    callerActive.set(activeKey, concurrent + 1);
+    if (recovery) recoveryActive++; else normalActive++;
     try {
     const context = { digest: null };
     let status;
@@ -367,7 +415,11 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     response.writeHead(status, { "content-type": "application/json" });
     response.end(stableStringify(body));
-    } finally { active--; }
+    } finally {
+      if (recovery) recoveryActive--; else normalActive--;
+      const remaining = (callerActive.get(activeKey) || 1) - 1;
+      if (remaining) callerActive.set(activeKey, remaining); else callerActive.delete(activeKey);
+    }
   });
   server.maxConnections = 32;
   return server;
@@ -408,7 +460,7 @@ async function main() {
     const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
     ({ default: service } = await import(serviceModule));
   }
-  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null });
+  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
     server.once("error", reject);

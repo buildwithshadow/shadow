@@ -17,7 +17,7 @@
     "maskedRuntimeKeccak256": "0x5ec80f04a66b0868ae0f7a390a9d90442366325a030b21e21e60ed4d4def6e55"
   },
   "source": {
-    "commit": "acc6810aed9f5d95e2a8292439ab7250f3d2397f"
+    "commit": "48a495e42251cb97c5bd6a9feb0078d5fac8a811"
   },
   "config": {
     "usdc": "0x3600000000000000000000000000000000000000",

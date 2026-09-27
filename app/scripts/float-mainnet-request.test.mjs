@@ -169,7 +169,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   // its service and its chain client are wrapped to count signatures, service
   // runs and chain calls: failNextSign and failNextCall make the next one fail,
   // and hold, when set, is a promise the signer and the service wait for.
-  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService } = {}) {
+  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService, maxStoredPurchases = 1000 } = {}) {
     const stats = { signed: 0, work: [], prepared: [], calls: [], failNextSign: false, failNextCall: null, failSignatureRpc: null, hold: null };
     const signer = {
       address: key.address,
@@ -214,7 +214,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         };
       },
     });
-    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service });
+    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service, maxStoredPurchases });
     await listen(server, port);
     return { server, stats, port };
   }
@@ -1123,6 +1123,47 @@ describe("request client against the reference provider server", { skip: e2eSkip
       await stop(server);
       assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);
     }
+  });
+
+  test("storage admission reserves the last slot across concurrent distinct purchases", async () => {
+    const a = await signedIntent("capacity-a"), b = await signedIntent("capacity-b");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: path("bounded-store"), maxStoredPurchases: 1 });
+    try {
+      bounded.stats.hold = arrivals(bounded.server, 2);
+      const replies = await Promise.all([a,b].map((intent, i) => post(OTHER_PORT, "/accept", { intent: readJson(intent.file), requestId: `capacity-${i}` })));
+      assert.deepEqual(replies.map(x => x.status).sort(), [200,503]);
+      assert.equal(bounded.stats.signed, 1);
+      assert.equal(readdirSync(path("bounded-store")).filter(x => x.endsWith(".acceptance.json")).length, 1);
+      const winner = replies.findIndex(x => x.status === 200);
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson([a,b][winner].file), requestId: `capacity-${winner}` })).status, 200);
+    } finally { await stop(bounded.server); }
+  });
+
+  test("completed deliveries free admission capacity without deleting their recovery records", async () => {
+    const a = await signedIntent("completed-capacity");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: path("completed-capacity-store"), maxStoredPurchases: 1 });
+    try {
+      const old = '0x' + 'ab'.repeat(32);
+      for (const slot of ['prepared','acceptance','delivery']) writeFileSync(join(path("completed-capacity-store"), `${old}.${slot}.json`), '{}');
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(a.file), requestId: 'after-completed' })).status, 200);
+      assert.ok(existsSync(join(path("completed-capacity-store"), `${old}.acceptance.json`)));
+      assert.ok(existsSync(join(path("completed-capacity-store"), `${old}.delivery.json`)));
+    } finally { await stop(bounded.server); }
+  });
+
+  test("a prepared purchase can finish acceptance at capacity after a signer interruption", async () => {
+    const a = await signedIntent("prepared-capacity");
+    const preparedService = async () => ({ result: "prepared report" });
+    preparedService.prepare = preparedService;
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: path("prepared-capacity-store"), maxStoredPurchases: 1, serviceImpl: preparedService });
+    try {
+      bounded.stats.failNextSign = true;
+      const body = { intent: readJson(a.file), requestId: "prepared-capacity" };
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 500);
+      assert.equal(readdirSync(path("prepared-capacity-store")).filter(x => x.endsWith(".prepared.json")).length, 1);
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
+      assert.equal(bounded.stats.prepared.length, 1);
+    } finally { await stop(bounded.server); }
   });
 
   test("concurrent first requests for one digest get one acceptance, one service run and one receipt, through the server's in-flight map", async () => {
