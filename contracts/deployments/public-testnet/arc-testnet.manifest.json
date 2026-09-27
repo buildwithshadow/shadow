@@ -1,0 +1,43 @@
+{
+  "schema": "shadow-public-testnet-release/v1",
+  "ok": true,
+  "chainId": "5042002",
+  "contract": {
+    "address": "0xb31d9e17410b10a619b66df0c31f59acbb33b553",
+    "name": "ShadowFloatPublicTestnet"
+  },
+  "deployment": {
+    "txHash": "0xdcef6c6563ee81f5e5ba072804f1c11eea4485a21683c3e19d0a9c64eeae6f80",
+    "blockNumber": "64249620",
+    "deployer": "0xBDb1e0718EC6f6e2817c9cd4e5c5ed25Ac191Fb8",
+    "nonce": 6247
+  },
+  "bytecode": {
+    "onchainRuntimeKeccak256": "0x70baacf4e86e7dfb0e89f741b752fef58829da7edc0465ef95845c047b9ffaeb",
+    "maskedRuntimeKeccak256": "0x5ec80f04a66b0868ae0f7a390a9d90442366325a030b21e21e60ed4d4def6e55"
+  },
+  "source": {
+    "commit": "48a495e42251cb97c5bd6a9feb0078d5fac8a811"
+  },
+  "config": {
+    "usdc": "0x3600000000000000000000000000000000000000",
+    "maxima": {
+      "protocolReserve": "50000000",
+      "lineReserve": "10000000",
+      "lineSpend": "10000000",
+      "perSpend": "2000000",
+      "dailySpend": "4000000"
+    },
+    "initial": {
+      "protocolReserve": "25000000",
+      "lineReserve": "5000000",
+      "lineSpend": "5000000",
+      "perSpend": "1000000",
+      "dailySpend": "2000000"
+    },
+    "minimumRepaymentWindow": "3600",
+    "maximumRepaymentWindow": "604800",
+    "governanceDelay": "172800"
+  },
+  "verifiedAt": "2026-09-27T09:41:19.935Z"
+}

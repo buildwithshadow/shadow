@@ -1,5 +1,6 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
+import { isIP } from "node:net";
 import { createRequire } from "node:module";
 import { join } from "node:path";
 import { inspect, parseArgs } from "node:util";
@@ -84,19 +85,71 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000 }) {
+  if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
+  for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
   mkdirSync(storeDir, { recursive: true });
   const provider = parseAddress("account.address", account.address, Error);
   const fileOf = (digest, slot) => join(storeDir, `${digest}.${slot}.json`);
   const accepting = new Map();
   const serving = new Map();
+  const admitting = new Set();
+
+  let reclaiming = null;
+  let reclaimCursor = 0;
+  let lastReclaim = 0;
+  function outstanding() {
+    const files = readdirSync(storeDir);
+    const terminal = new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:delivery|released)\.json$/.test(name)).map(name => name.slice(0, 66)));
+    return new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:admission|prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66)).filter(digest => !terminal.has(digest)));
+  }
+
+  // Reclaim only with finalized onchain evidence. Keep every original record
+  // for recovery/audit; a paid-but-undelivered request must retain its slot.
+  // Bound each pass and rotate through the store so RPC work stays bounded.
+  async function reclaimExpired() {
+    if (reclaiming) return reclaiming;
+    if (Date.now() - lastReclaim < 30_000) return;
+    lastReclaim = Date.now();
+    reclaiming = (async () => {
+      const pending = [...outstanding()].filter(digest => !admitting.has(digest));
+      if (!pending.length) return;
+      const block = await connection.client.getBlock({ blockTag: "finalized" });
+      if (block.number === null) throw new Error("Finalized block is unavailable; admission remains held");
+      const batch = Array.from({ length: Math.min(32, pending.length) }, (_, i) => pending[(reclaimCursor + i) % pending.length]);
+      reclaimCursor = (reclaimCursor + batch.length) % pending.length;
+      for (const digest of batch) {
+        const metadata = readStored(fileOf(digest, "admission"));
+        if (metadata?.digest !== digest || !/^[0-9]+$/.test(metadata.signatureExpiry) || block.timestamp <= BigInt(metadata.signatureExpiry)) continue;
+        const status = Number(await read(connection, "receiptStatus", [digest], block.number));
+        if (status !== 0 && status !== 1) continue;
+        storeOnce(fileOf(digest, "released"), { digest, reason: status === 0 ? "expired-unpaid" : "blocked", blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() });
+      }
+    })().finally(() => { reclaiming = null; });
+    return reclaiming;
+  }
+
+  async function reserveAdmission(digest) {
+    let stored = outstanding();
+    if (stored.has(digest)) return () => {}; // An interrupted retry already occupies its slot.
+    if (new Set([...stored, ...admitting]).size >= maxStoredPurchases) await reclaimExpired();
+    // No await between this final capacity check and reservation. One process
+    // owns each store, including when concurrent callers await the same sweep.
+    stored = outstanding();
+    if (new Set([...stored, ...admitting]).size >= maxStoredPurchases) {
+      throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
+    }
+    admitting.add(digest);
+    return () => admitting.delete(digest);
+  }
 
   // This server reserves each provider job id for at most one intent digest.
   // The durable claim also arbitrates concurrent accepts for different digests.
-  function bindRequest(requestId, digest) {
+  function bindRequest(requestId, digest, claim = true) {
     const file = join(storeDir, `request-${requestIdHashOf(requestId)}.json`);
     const binding = { requestId, digest };
-    const kept = storeOnce(file, binding) ? binding : readStored(file);
+    const kept = claim ? (storeOnce(file, binding) ? binding : readStored(file)) : readStored(file);
+    if (!claim && kept === null) return;
     if (kept?.requestId !== requestId || !/^0x[0-9a-f]{64}$/.test(kept?.digest)) {
       throw new HttpError(`the stored binding for request ${JSON.stringify(requestId)} is invalid; the provider has to repair it`, 500);
     }
@@ -153,6 +206,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
       bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
     }
+    const releaseAdmission = await reserveAdmission(digest);
+    try {
     // acceptIntent's checks that need no chain read, made first, so that an
     // intent refused on its face costs no RPC call.
     const problems = [];
@@ -166,17 +221,25 @@ export function createProviderServer({ connection, account, endpointHash, price,
     // acceptIntent refuses with a plain Error listing its problems, before it
     // signs anything. An RPC failure is one of viem's Error subclasses, and a
     // failure once signing has begun is the provider's own: neither is a refusal.
+    const rememberAdmission = () => storeOnce(fileOf(digest, "admission"), { digest, signatureExpiry: struct.signatureExpiry.toString() });
     let signing = false;
     const signer = {
       address: account.address,
       signTypedData: async (typed) => {
         signing = true;
+        // Reject existing conflicts before upstream work; atomically claim again
+        // after preparation, before persisting anything under this digest.
+        bindRequest(requestId, digest, false);
         if (typeof service.prepare === "function" && !checkedPrepared(digest, requestId)) {
           const output = await service.prepare({ digest, requestId });
           if (output === null) throw new HttpError(`service request ${JSON.stringify(requestId)} is unavailable; no acceptance was signed`, 422);
           const prepared = outputRecord(digest, requestId, output);
+          bindRequest(requestId, digest);
+          rememberAdmission();
           if (!storeOnce(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
         }
+        bindRequest(requestId, digest);
+        rememberAdmission();
         return account.signTypedData(typed);
       },
     };
@@ -190,6 +253,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     bindRequest(requestId, digest);
     const kept = storeOnce(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
     return { acceptance: kept, checkedIntent: intent };
+    } finally { releaseAdmission(); }
   }
 
   // One acceptance per digest, whatever the request id: the first request id
@@ -327,7 +391,61 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return [404, { error: "not found" }];
   }
 
-  return createServer(async (request, response) => {
+  const routeQuotas = { accept: new Map(), status: new Map(), serve: new Map() }, callerActive = new Map();
+  let normalActive = 0, recoveryActive = 0;
+  const recoverySlots = Math.max(1, Math.floor(maxConcurrent / 2));
+  if (maxConcurrent < 2) throw new Error('Provider needs at least two slots to reserve recovery capacity');
+  function callerOf(request) {
+    const remote = request.socket.remoteAddress || 'unknown';
+    if (trustLoopbackProxy && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
+      const forwarded = request.headers['x-shadow-client-ip'];
+      if (typeof forwarded !== 'string' || !isIP(forwarded)) return null;
+      return forwarded.toLowerCase();
+    }
+    return remote.toLowerCase();
+  }
+  const server = createServer({ maxHeaderSize: 8192, requestTimeout: 15000, headersTimeout: 10000, keepAliveTimeout: 5000 }, async (request, response) => {
+    response.setHeader('cache-control', 'no-store');
+    response.setHeader('x-content-type-options', 'nosniff');
+    if (publicOrigin) {
+      response.setHeader('vary', 'Origin');
+      const origin = request.headers.origin;
+      if (origin && origin !== publicOrigin) { response.writeHead(403); response.end(); return; }
+      if (origin === publicOrigin) {
+        response.setHeader('access-control-allow-origin', publicOrigin);
+        response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+        response.setHeader('access-control-allow-headers', 'content-type');
+      }
+      if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
+    }
+    let pathname;
+    try { pathname = new URL(request.url, 'http://provider.invalid').pathname; }
+    catch { response.writeHead(400); response.end('{"error":"Invalid request target"}'); return; }
+    const routeKind = request.method === 'POST' && pathname === '/accept' ? 'accept'
+      : request.method === 'POST' && pathname === '/serve' ? 'serve'
+      : request.method === 'GET' && pathname.startsWith('/status/') ? 'status' : null;
+    // Unknown routes cannot spend the budget reserved for real requests.
+    if (!routeKind) { response.writeHead(404); response.end('{"error":"not found"}'); return; }
+    const caller = callerOf(request);
+    if (!caller) { response.writeHead(400); response.end('{"error":"Missing trusted client address"}'); return; }
+    const quotas = routeQuotas[routeKind];
+    const now = Date.now(), quotaKey = caller;
+    let quota = quotas.get(quotaKey);
+    if (!quota || now - quota.start >= 60000) {
+      if (quotas.size >= 2048) for (const [key, entry] of quotas) if (now - entry.start >= 60000) quotas.delete(key);
+      if (!quotas.has(quotaKey) && quotas.size >= 2048) { response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy"}'); return; }
+      quota = { start: now, count: 0 }; quotas.set(quotaKey, quota);
+    }
+    // Status polling shares normal admission, never paid-result delivery slots.
+    const recovery = routeKind === 'serve', activeKey = `${caller}:${routeKind}`;
+    const concurrent = callerActive.get(activeKey) || 0;
+    const full = recovery ? recoveryActive >= recoverySlots : normalActive >= maxConcurrent - recoverySlots;
+    if (++quota.count > maxRequestsPerMinute || full || (publicOrigin && concurrent >= 1)) {
+      response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy. Retry the original request later."}'); return;
+    }
+    callerActive.set(activeKey, concurrent + 1);
+    if (recovery) recoveryActive++; else normalActive++;
+    try {
     const context = { digest: null };
     let status;
     let body;
@@ -343,7 +461,14 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     response.writeHead(status, { "content-type": "application/json" });
     response.end(stableStringify(body));
+    } finally {
+      if (recovery) recoveryActive--; else normalActive--;
+      const remaining = (callerActive.get(activeKey) || 1) - 1;
+      if (remaining) callerActive.set(activeKey, remaining); else callerActive.delete(activeKey);
+    }
   });
+  server.maxConnections = 32;
+  return server;
 }
 
 async function main() {
@@ -381,7 +506,7 @@ async function main() {
     const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
     ({ default: service } = await import(serviceModule));
   }
-  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service });
+  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
     server.once("error", reject);

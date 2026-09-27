@@ -1,6 +1,6 @@
 # Float Mainnet Candidate: Reference Provider Server
 
-A small HTTP server that shows how a provider takes part in a `ShadowFloatMainnet` purchase, and how it recovers a paid request whose answer was interrupted. It is a **reference, not production hosting**: it has no TLS, authentication, rate limiting or monitoring, and it runs as a single process. It is tested end to end on a local anvil chain only. The candidate is not deployed on any network.
+A small HTTP server that shows how a provider takes part in a Shadow candidate purchase and recovers a paid request whose answer was interrupted. It runs as a **single process per persistent store** with bounded request admission and purchase storage. TLS, authentication for private results, and monitoring belong to the hosting deployment; they are not supplied by this reference server. The public testnet report service uses public transaction data and an exact browser-origin allowlist. Its contract deployment is recorded in `contracts/deployments/public-testnet/arc-testnet.manifest.json`.
 
 The protocol is **Shadow's own convention** for this candidate. It is not x402 or any other payment standard, and no existing seller supports it: a provider has to adopt it. The server uses the provider kit's exported functions (`acceptIntent`, `checkPayment`, `deliverResult`, `validateReceiptFile`, `storeOnce`) from `app/scripts/float-mainnet-provider.mjs`. Every protocol check is the kit's own, including the fresh payment check that gates every `/serve`, even when its result and delivery are already stored. The server adds the HTTP layer and the store's layout, and on `/accept` it repeats the kit's checks that need no chain read (provider, endpoint, price, a signature present) before calling `acceptIntent`, so an intent refused on its face costs no RPC calls. The receipt formats are described in `docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md` §6. The agent's side is `app/scripts/float-mainnet-request.mjs`.
 
@@ -141,3 +141,20 @@ An answer over 16 MiB is refused without being read to its end. `--out` is writt
 - **The acceptance gate is provider-side.** A caller can submit a fresh signed intent directly to the contract without asking `/accept`, so the request-id binding does not prevent every duplicate charge. A different request id for the same underlying job is not detected. Use stable provider-issued job ids and do not execute an intent without the matching acceptance.
 - **Store ownership and retention.** Run one server process per store directory and keep its files indefinitely. The atomic binding and start marker prevent simultaneous service starts for the same digest across processes, but one process per store remains the supported operation. Removing a marker or result breaks recovery. Before reusing a store written by an older server, reconcile its acceptance files and request ids; older acceptances have no request binding.
 - **Sizes.** Request bodies are limited to 64 KiB. `fetch` reads answers of up to 16 MiB, so a result is limited to about 12 MiB (base64).
+
+When serving the public browser flow, set `PROVIDER_PUBLIC_ORIGIN` to the exact
+HTTPS frontend origin. Requests with another browser origin are rejected; clients
+without an Origin header remain supported. This is CORS, not user authentication.
+The public default admits four active requests, with two reserved exclusively for `/serve` result delivery, and 120 requests per caller/route per minute. Status and purchase admission share the other two slots. Each route has its own bounded caller-quota table, so status-table exhaustion cannot deny a new delivery caller. Unknown routes do not consume those quotas. A
+single provider process reserves capacity across distinct digests before signing;
+unresolved admitted, prepared and accepted purchases share the 1,000-purchase admission ceiling. Completed deliveries free capacity while their records remain available for recovery. At capacity, a bounded sweep checks up to 32 records against one finalized block, at most once per 30 seconds. Expired authorizations free capacity only when that finalized receipt proves they are unpaid or blocked; paid but undelivered records stay held. Original records are retained alongside the release evidence. RPC failures leave capacity held. Existing
+accepted and prepared requests remain recoverable at capacity. Do not remove
+records to make room without preserving their recovery obligations. Monitor the
+persistent disk as retained history grows; the admission ceiling is not a byte quota.
+
+Behind a trusted local reverse proxy, set `PROVIDER_TRUST_LOOPBACK_PROXY=true`
+and have that proxy overwrite `X-Shadow-Client-IP` with the actual remote address.
+Only a loopback socket may supply this header; otherwise the socket address is
+used. Never forward a caller-supplied value. The hosted Caddy route uses
+`header_up X-Shadow-Client-IP {remote_host}`. One caller may occupy at most one
+public request slot per route.

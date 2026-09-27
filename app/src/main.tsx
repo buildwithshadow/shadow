@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
+import { PUBLIC_TESTNET, PUBLIC_TEST_SERVICE } from "./publicTestnet";
 import { CandidateFundingDesk } from "./CandidateFundingDesk";
 import { createRoot } from "react-dom/client";
 import {
@@ -2445,8 +2446,8 @@ function App() {
             </p>
             <HomeTruthStrip floatState={floatV2State} deskState={floatDeskState} deskLoading={floatDeskLoading} />
             <div className="heroActions">
-              <Link to="/float" className="heroCtaPrimary">
-                Open Shadow Float
+              <Link to="/start" className="heroCtaPrimary">
+                Fund an agent
                 <span className="heroCtaArrow">→</span>
               </Link>
               <Link className="heroCtaSecondary" to="/float#v2-activity">
@@ -2680,7 +2681,7 @@ function App() {
           <NavLink to="/builders" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Builders
           </NavLink>
-          <NavLink to="/funding" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
+          <NavLink to="/start" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Funding
           </NavLink>
           <NavLink to="/roadmap" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
@@ -2697,8 +2698,8 @@ function App() {
             <span className="navWalletDot" />
             {account ? shortAddress(account) : "Wallet"}
           </button>}
-          <Link to="/float" className="navCta">
-            Open Float
+          <Link to="/start" className="navCta">
+            Fund an agent
           </Link>
         </div>
       </nav>
@@ -2716,7 +2717,8 @@ function App() {
         <Route path="/float" element={floatPage} />
         <Route path="/proof" element={<Navigate to="/float" replace />} />
         <Route path="/builders" element={buildersPage} />
-        <Route path="/funding" element={<CandidateFundingDesk />} />
+        <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
+        <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
         <Route path="/archive" element={<Navigate to="/float" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />

@@ -83,3 +83,7 @@
   html:has(.candidateShell) { scroll-behavior: auto; }
   .candidateShell *, .candidateShell *::before, .candidateShell *::after { animation: none !important; transition: none !important; }
 }
+
+.publicServiceResult { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow: auto; font-size: 0.85rem; }
+
+.fundingPanel + .fundingPanel { margin-top: 24px; }
