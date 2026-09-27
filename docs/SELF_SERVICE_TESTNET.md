@@ -41,8 +41,9 @@ transaction lock or an independent custody system.
 - Integrate sponsor self-registration, connected agent invitations, provider
   selection, amount review, wallet changes and pending/recovery UI in the normal
   product flow. The module alone is not a usable public onboarding surface.
-- Finish provider request-ID semantics for multiple users and repeated jobs,
-  HTTP authentication/privacy as appropriate, CORS and resource limits.
+- Finish provider HTTP authentication/privacy as appropriate, CORS and resource
+  limits. The report service accepts distinct `report:<random job ID>:<payment hash>`
+  requests; retries must retain the original job ID.
 - Exercise EOA and supported smart-wallet signing/execution separately against
   the deployed contract. Unit tests are not Circle wallet execution evidence.
 - Verify funded purchase, duplicate/refusal, response loss, repayment and reclaim

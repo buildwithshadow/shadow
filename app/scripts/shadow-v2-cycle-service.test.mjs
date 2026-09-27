@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { assertNoInterveningDebtChange, createShadowV2CycleService, verifyCanonicalBlocks } from "../../examples/float-mainnet-provider-server/shadow-v2-cycle-service.mjs";
+import { reportPaymentFromRequest, assertNoInterveningDebtChange, createShadowV2CycleService, verifyCanonicalBlocks } from "../../examples/float-mainnet-provider-server/shadow-v2-cycle-service.mjs";
 
 const paymentTx = `0x${"a".repeat(64)}`;
 const repaymentTx = `0x${"b".repeat(64)}`;
@@ -61,4 +61,16 @@ test("a same-sized intervening debt cycle cannot be represented as one restored 
   const earlierRepayment = log(`0x${"e".repeat(64)}`, `0x${"f".repeat(64)}`, 6, "1000", "0");
   const laterPayment = log(`0x${"3".repeat(64)}`, `0x${"4".repeat(64)}`, 5, "0", "1000");
   assert.throws(() => assertNoInterveningDebtChange([start, earlierRepayment, laterPayment, end], report), /intervened/);
+});
+
+
+test("distinct report jobs can reference one cycle without accepting arbitrary identifiers", () => {
+  const a = `report:${"1".repeat(32)}:${paymentTx}`;
+  const b = `report:${"2".repeat(32)}:${paymentTx}`;
+  assert.notEqual(a, b);
+  assert.equal(reportPaymentFromRequest(a), paymentTx);
+  assert.equal(reportPaymentFromRequest(b), paymentTx);
+  for (const bad of [null, "", `report:short:${paymentTx}`, `${a}:suffix`, `report:${"g".repeat(32)}:${paymentTx}`]) {
+    assert.equal(reportPaymentFromRequest(bad), null);
+  }
 });
