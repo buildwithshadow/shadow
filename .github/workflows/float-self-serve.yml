@@ -22,6 +22,9 @@ on:
       - "app/src/CircleWalletDiagnostic.tsx"
       - "app/src/CandidateFundingDesk.tsx"
       - "app/src/candidateFunding.ts"
+      - "app/src/selfServicePurchase.mjs"
+      - "app/scripts/self-service-purchase*.test.mjs"
+      - "app/scripts/shadow-v2-cycle-service.test.mjs"
       - "app/src/candidateFunding.css"
       - "app/src/walletCandidateProbePayload.ts"
       - "app/src/walletPayableIntent.ts"
@@ -91,6 +94,10 @@ jobs:
         run: npm run float:mainnet:all-tools:test
       - name: Test candidate funding and browser transaction recovery
         run: node --test app/scripts/float-mainnet-browser.test.ts
+      - name: Test public testnet self-registration and wallet purchases
+        run: |
+          forge test --root contracts --match-contract ShadowFloatPublicTestnetTest
+          node --test --test-concurrency=1 app/scripts/self-service-purchase*.test.mjs app/scripts/shadow-v2-cycle-service.test.mjs
       - name: Test the shared RPC read queue
         run: node --test app/scripts/rpc-read-queue.test.mjs
 

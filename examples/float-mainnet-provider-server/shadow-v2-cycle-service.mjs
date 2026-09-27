@@ -128,6 +128,15 @@ async function verifyDebtInterval(clients, payment, repayment, report) {
   assertNoInterveningDebtChange(logs[0], report);
 }
 
+// Job identity is separate from the historical report being purchased.
+// A new purchase uses a random job ID; every retry retains that SAME ID.
+export function reportPaymentFromRequest(requestId) {
+  if (typeof requestId !== "string") return null;
+  if (HASH.test(requestId)) return requestId.toLowerCase(); // existing rehearsal clients
+  const match = /^report:[0-9a-f]{32}:(0x[0-9a-f]{64})$/.exec(requestId);
+  return match?.[1] ?? null;
+}
+
 export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } = {}) {
   if (!HASH.test(paymentTx || "") || !HASH.test(repaymentTx || "") || paymentTx.toLowerCase() === repaymentTx.toLowerCase()) {
     throw new Error("SHADOW_V2_PAYMENT_TX and SHADOW_V2_REPAYMENT_TX must be distinct transaction hashes");
@@ -139,7 +148,7 @@ export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } =
   if (rpcClients.length !== 2 || rpcClients[0] === rpcClients[1]) throw new Error("two independent Arc RPC clients are required");
   const service = async () => { throw new Error("V2 cycle report must be prepared before provider acceptance"); };
   service.prepare = async ({ requestId }) => {
-    if (typeof requestId !== "string" || requestId.toLowerCase() !== paymentHash) return null;
+    if (reportPaymentFromRequest(requestId) !== paymentHash) return null;
     const reads = await Promise.all(rpcClients.map(async (client) => {
       if (await client.getChainId() !== CHAIN_ID) throw new Error("provider report RPC is not Arc testnet");
       return Promise.all([
@@ -151,6 +160,7 @@ export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } =
       if (comparable(reads[0][i]) !== comparable(reads[1][i])) throw new Error("independent RPC receipts disagree");
     }
     const report = checkedCycle(reads[0][0], reads[0][1], paymentHash, repaymentHash);
+    report.requestId = requestId;
     await verifyDebtInterval(rpcClients, reads[0][0], reads[0][1], report);
     // A prepared result is retained after acceptance, so reject shallow or
     // orphaned receipts before freezing their block hashes under the digest.
