@@ -391,7 +391,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return [404, { error: "not found" }];
   }
 
-  const quotas = new Map(), callerActive = new Map();
+  const routeQuotas = { accept: new Map(), status: new Map(), serve: new Map() }, callerActive = new Map();
   let normalActive = 0, recoveryActive = 0;
   const recoverySlots = Math.max(1, Math.floor(maxConcurrent / 2));
   if (maxConcurrent < 2) throw new Error('Provider needs at least two slots to reserve recovery capacity');
@@ -428,14 +428,16 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (!routeKind) { response.writeHead(404); response.end('{"error":"not found"}'); return; }
     const caller = callerOf(request);
     if (!caller) { response.writeHead(400); response.end('{"error":"Missing trusted client address"}'); return; }
-    const now = Date.now(), quotaKey = `${caller}:${routeKind}`;
+    const quotas = routeQuotas[routeKind];
+    const now = Date.now(), quotaKey = caller;
     let quota = quotas.get(quotaKey);
     if (!quota || now - quota.start >= 60000) {
       if (quotas.size >= 2048) for (const [key, entry] of quotas) if (now - entry.start >= 60000) quotas.delete(key);
       if (!quotas.has(quotaKey) && quotas.size >= 2048) { response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy"}'); return; }
       quota = { start: now, count: 0 }; quotas.set(quotaKey, quota);
     }
-    const recovery = routeKind !== 'accept', activeKey = `${caller}:${recovery ? 'recovery' : 'accept'}`;
+    // Status polling shares normal admission, never paid-result delivery slots.
+    const recovery = routeKind === 'serve', activeKey = `${caller}:${routeKind}`;
     const concurrent = callerActive.get(activeKey) || 0;
     const full = recovery ? recoveryActive >= recoverySlots : normalActive >= maxConcurrent - recoverySlots;
     if (++quota.count > maxRequestsPerMinute || full || (publicOrigin && concurrent >= 1)) {

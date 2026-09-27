@@ -65,3 +65,32 @@ test('malformed absolute request targets return 400 without terminating the serv
   assert.equal(result,400);
   assert.equal((await fetch(url+'/unknown')).status,404);
 });
+
+test('blocked status RPC reads cannot consume exclusive result-delivery capacity', async t => {
+  let release, started;
+  const hold = new Promise(resolve => { release = resolve });
+  const arrived = new Promise(resolve => { started = resolve });
+  let reads = 0;
+  const url = await fixture(t, { trustLoopbackProxy: true, connection: { client: { readContract: async () => { if (++reads === 2) started(); await hold; return 0n; } } } });
+  const hash = '0x'+'ab'.repeat(32);
+  const polling = [1,2].map(i => fetch(url+'/status/'+hash, { headers: { 'x-shadow-client-ip': `198.51.100.${i}` } }));
+  try {
+    await arrived;
+    assert.equal((await fetch(url+'/status/'+hash, { headers: { 'x-shadow-client-ip': '198.51.100.3' } })).status, 429);
+    const served = await fetch(url+'/serve', { method: 'POST', headers: { 'content-type': 'application/json', 'x-shadow-client-ip': '198.51.100.1' }, body: JSON.stringify({digest:hash}) });
+    assert.equal(served.status, 404, 'serve reaches the receipt lookup while both normal slots are held');
+  } finally { release(); await Promise.all(polling); }
+});
+
+test('a full status-caller quota table cannot reject a new recovery caller', async t => {
+  const url = await fixture(t, { trustLoopbackProxy: true });
+  for (let i = 0; i < 2048; i++) {
+    const ip = `198.51.${Math.floor(i / 254)}.${i % 254 + 1}`;
+    const r = await fetch(url+'/status/invalid', { headers: { 'x-shadow-client-ip': ip } });
+    assert.equal(r.status, 400);
+    await r.text();
+  }
+  const headers = { 'x-shadow-client-ip': '203.0.113.1' };
+  assert.equal((await fetch(url+'/status/invalid', {headers})).status, 429);
+  assert.equal((await fetch(url+'/serve', {method:'POST',headers,body:'invalid'})).status, 400);
+});
