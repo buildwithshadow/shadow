@@ -36,19 +36,3 @@ locking blocks a new transaction. A different browser/device can still submit a
 transaction independently, but the onchain nonce and intent digest prevent a
 second payment of that authorization. Do not describe browser storage as a global
 transaction lock or an independent custody system.
-
-## Remaining release work
-
-- Review and deploy the testnet derivative; publish a pinned manifest and verify
-  runtime/ABI identity. Do not change the production pin to an undeployed address.
-- Integrate sponsor self-registration, connected agent invitations, provider
-  selection, amount review, wallet changes and pending/recovery UI in the normal
-  product flow. The module alone is not a usable public onboarding surface.
-- Finish provider HTTP authentication/privacy as appropriate, CORS and resource
-  limits. The report service accepts distinct `report:<random job ID>:<payment hash>`
-  requests; retries must retain the original job ID.
-- Exercise EOA and supported smart-wallet signing/execution separately against
-  the deployed contract. Unit tests are not Circle wallet execution evidence.
-- Verify funded purchase, duplicate/refusal, response loss, repayment and reclaim
-  from an ordinary browser with a newly connected participant.
-- Complete maintained HTTPS ingress, including unattended certificate renewal.

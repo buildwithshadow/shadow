@@ -276,7 +276,7 @@ contract ShadowFloatMainnet {
         emit OperatorSet(operator, allowed);
     }
 
-    function setSponsorAllowed(address sponsor, bool allowed) public virtual onlyOwner nonReentrant {
+    function setSponsorAllowed(address sponsor, bool allowed) external onlyOwner nonReentrant {
         if (sponsor == address(0)) revert InvalidAddress();
         sponsorAllowed[sponsor] = allowed;
         emit SponsorAllowed(sponsor, allowed);

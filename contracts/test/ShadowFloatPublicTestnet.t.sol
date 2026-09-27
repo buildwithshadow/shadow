@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: MIT
 pragma solidity ^0.8.24;
 import {ShadowFloatPublicTestnet} from "../src/ShadowFloatPublicTestnet.sol";
-import {ShadowFloatMainnet} from "../src/ShadowFloatMainnet.sol";
 import {MockAsset} from "../src/MockAsset.sol";
 
 interface VmPublicTestnet {
@@ -16,8 +15,8 @@ contract ShadowFloatPublicTestnetTest {
     address constant ALICE = address(0xA11CE);
     address constant BOB = address(0xB0B);
 
-    function limits() internal pure returns (ShadowFloatMainnet.Limits memory) {
-        return ShadowFloatMainnet.Limits(25e6, 5e6, 5e6, 1e6, 2e6);
+    function limits() internal pure returns (ShadowFloatPublicTestnet.Limits memory) {
+        return ShadowFloatPublicTestnet.Limits(25e6, 5e6, 5e6, 1e6, 2e6);
     }
 
     function setUp() public {
@@ -72,7 +71,7 @@ contract ShadowFloatPublicTestnetTest {
         target.registerSponsor();
         vm.prank(ALICE);
         token.approve(address(target), 100000);
-        ShadowFloatMainnet.OpenLineParams memory p = ShadowFloatMainnet.OpenLineParams({
+        ShadowFloatPublicTestnet.OpenLineParams memory p = ShadowFloatPublicTestnet.OpenLineParams({
             agent: BOB,
             reserve: 100000,
             lineSpendCap: 100000,
