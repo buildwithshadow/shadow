@@ -1,17 +1,16 @@
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
-  CANDIDATE_FUNDING, candidateErrorMessage, candidateFundingChain, createCandidateJournal, executeCandidateCall,
-  prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
-  readCandidateLine, readCandidateSnapshot, reconcileCandidatePending,
-  type CandidateLine, type CandidateOpenInput, type CandidatePending, type CandidatePrepared,
+  CANDIDATE_FUNDING as LEGACY_FUNDING, candidateErrorMessage, candidateFundingChain, createCandidateFundingKit,
+  type CandidateDeployment, type CandidateLine, type CandidateOpenInput, type CandidatePending, type CandidatePrepared,
   type CandidateResolution, type CandidateSnapshot,
 } from "./candidateFunding";
 import "./candidateFunding.css";
+import { PublicPurchase, type PublicService } from "./PublicPurchase";
 
-const client = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport("https://rpc.testnet.arc.network", {
+const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport("https://rpc.testnet.arc.network", {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
 }) });
 const initialForm: CandidateOpenInput = {
@@ -40,11 +39,20 @@ function Field({ label, name, value, onChange, hint, decimal = false, required =
   </div>;
 }
 
-export function CandidateFundingDesk() {
+export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: { deployment?: CandidateDeployment; service?: PublicService }) {
+  const CANDIDATE_FUNDING = deployment;
+  const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
+    readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => createCandidateFundingKit(deployment), [deployment]);
+  const client = useMemo(() => deployment.selfRegistration ? createPublicClient({ chain: candidateFundingChain,
+    transport: createRpcReadTransport("https://rpc.quicknode.testnet.arc.io", { timeout: 15_000,
+      queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment]);
   const [mode, setMode] = useState<"open" | "manage">(() => new URLSearchParams(window.location.search).has("line") ? "manage" : "open");
   const [account, setAccount] = useState<Address | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
-  const [form, setForm] = useState(initialForm);
+  const [form, setForm] = useState(() => ({ ...initialForm,
+    agent: service ? new URLSearchParams(window.location.search).get("agent") || "" : "",
+    ...(service ? { provider: service.provider, endpoint: service.endpoint } : {}),
+  }));
   const [providerAgreed, setProviderAgreed] = useState(false);
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
@@ -179,15 +187,15 @@ export function CandidateFundingDesk() {
     finally { setBusy(""); }
   }
 
-  async function review(action: "open" | "repay" | "reclaim", event?: FormEvent) {
+  async function review(action: "register" | "open" | "repay" | "reclaim", event?: FormEvent) {
     event?.preventDefault();
     if (!account || !canWrite) return;
     if (action === "open" && !providerAgreed) { setError("Confirm the provider accepts Shadow payments for this endpoint before funding it."); return; }
     const currentRevision = revision.current;
     setError(""); setNotice(""); setResolution(null); setBusy("Checking current limits and preparing your review…");
     try {
-      if (action !== "open" && !line) throw new Error("Load the funding line before reviewing an action.");
-      const value = action === "open" ? await prepareCandidateOpen(client, account, form)
+      if (action !== "open" && action !== "register" && !line) throw new Error("Load the funding line before reviewing an action.");
+      const value = action === "register" ? await prepareCandidateRegistration(client, account) : action === "open" ? await prepareCandidateOpen(client, account, form)
         : action === "repay" ? await prepareCandidateRepay(client, account, line!.lineId)
         : await prepareCandidateReclaim(client, account, line!.lineId);
       if (revision.current !== currentRevision) throw new Error("The wallet or form changed. Review the current details again.");
@@ -291,7 +299,7 @@ export function CandidateFundingDesk() {
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
-      <div><p className="pageEyebrow">Arc testnet · Candidate funding</p>
+      <div><p className="pageEyebrow">Arc testnet · Agent funding</p>
         <h1>Fund an agent.<br />Keep the limits.</h1>
         <p>Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet.</p>
       </div>
@@ -304,7 +312,13 @@ export function CandidateFundingDesk() {
       </div>
     </header>
 
-    <p className="fundingScope">Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet.</p>
+    <p className="fundingScope">{service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
+    {service && account && <section className="fundingPanel" aria-labelledby="agent-invite-title">
+      <h2 id="agent-invite-title">Ask a sponsor to fund your agent</h2>
+      <p>Share this link with your sponsor. It includes your connected wallet as the agent; they review the address and choose the budget themselves.</p>
+      <div className="fundingField"><label htmlFor="agent-funding-link">Your agent funding link</label><input id="agent-funding-link" readOnly value={`${window.location.origin}${window.location.pathname}?agent=${account}`} /></div>
+      <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); setMode("open"); }}>Use my wallet as the agent</button>
+    </section>}
     <div className="fundingModes" aria-label="Funding actions">
       <button type="button" aria-pressed={mode === "open"} onClick={() => { invalidate(); setMode("open"); }} disabled={Boolean(busy)}>Open a funding line</button>
       <button type="button" aria-pressed={mode === "manage"} onClick={() => { invalidate(); setMode("manage"); }} disabled={Boolean(busy)}>Manage a line</button>
@@ -322,7 +336,7 @@ export function CandidateFundingDesk() {
 
     {pending && <section className="fundingRecovery" aria-labelledby="funding-recovery-title">
       <h2 id="funding-recovery-title">Check the previous transaction first</h2>
-      <p>A {pending.kind === "approve" ? "USDC approval" : pending.kind === "open" ? "line opening" : pending.kind === "repay" ? "repayment" : "reclaim"} has not been resolved. New transactions from this wallet are paused here so a retry cannot accidentally send it again.</p>
+      <p>A {pending.kind === "register" ? "sponsor registration" : pending.kind === "approve" ? "USDC approval" : pending.kind === "open" ? "line opening" : pending.kind === "repay" ? "repayment" : "reclaim"} has not been resolved. New transactions from this wallet are paused here so a retry cannot accidentally send it again.</p>
       <p>Finish any open wallet prompt. Then check its status. Keep this browser’s site data until it is resolved.</p>
       {pending.txHash && <a href={`${explorer}/tx/${pending.txHash}`} target="_blank" rel="noreferrer">Open the saved transaction</a>}
       <Field name="recovery-hash" label="Transaction hash from your wallet (optional)" value={recoveryHash} onChange={setRecoveryHash} required={false}
@@ -338,12 +352,12 @@ export function CandidateFundingDesk() {
       <div className="fundingPanelHead"><div><h2>Set the purchase budget</h2><p>One agent, one approved provider, one outstanding purchase at a time.</p></div>
         {snapshot && <span className="fundingBalance">{usdc(snapshot.balance)} USDC available</span>}
       </div>
-      {snapshot && !snapshot.sponsorAllowed && <p className="fundingCallout">This wallet is not approved as a sponsor yet. Ask the Shadow operator to approve its public address. You can still inspect a line under “Manage a line.”</p>}
+      {snapshot && !snapshot.sponsorAllowed && <p className="fundingCallout">{deployment.selfRegistration ? <>Register this wallet before funding. No token approval or transfer is included. <button type="button" disabled={!canWrite || snapshot.openingsPaused} onClick={() => void review("register")}>Review sponsor registration</button></> : "This wallet is not approved as a sponsor yet. Ask the Shadow operator to approve its public address. You can still inspect a line under “Manage a line.”"}</p>}
       {snapshot?.openingsPaused && <p className="fundingCallout">New lines are currently paused. Existing repayment and eligible reclaim remain available.</p>}
       <fieldset disabled={Boolean(busy)}><legend>Who will use the budget?</legend><div className="fundingGrid">
-        <Field name="agent" label="Agent wallet address" value={form.agent} onChange={(value) => updateForm("agent", value)} hint="The wallet that will sign each purchase. A deployed Circle Modular Wallet is supported as the agent." />
-        <Field name="provider" label="Provider payment address" value={form.provider} onChange={(value) => updateForm("provider", value)} hint="Confirm this destination with the provider before funding." />
-        <div className="fundingWide"><Field name="endpoint" label="Agreed service endpoint" value={form.endpoint} onChange={(value) => updateForm("endpoint", value)} hint="Paste the exact HTTPS endpoint agreed with the provider. Shadow binds purchases to this text; this form does not contact the endpoint." /></div>
+        <Field name="agent" label="Agent wallet address" value={form.agent} onChange={(value) => updateForm("agent", value)} hint={service ? "The wallet from your agent’s invitation, or use your own wallet to try the full flow." : "The wallet that will sign each purchase. A deployed Circle Modular Wallet is supported as the agent."} />
+        <Field name="provider" label="Provider payment address" value={form.provider} onChange={(value) => updateForm("provider", value)} disabled={Boolean(service)} hint="Confirm this destination with the provider before funding." />
+        <div className="fundingWide"><Field name="endpoint" label="Agreed service endpoint" value={form.endpoint} onChange={(value) => updateForm("endpoint", value)} disabled={Boolean(service)} hint="Paste the exact HTTPS endpoint agreed with the provider. Shadow binds purchases to this text; this form does not contact the endpoint." /></div>
       </div></fieldset>
       <fieldset disabled={Boolean(busy)}><legend>How much can the agent use?</legend><div className="fundingGrid fundingThree">
         <Field name="reserve" label="USDC to set aside" value={form.reserve} onChange={(value) => updateForm("reserve", value)} decimal hint="Transferred into the line when it opens." />
@@ -395,13 +409,15 @@ export function CandidateFundingDesk() {
       </div>}
     </section>}
 
-    <footer className="fundingFoot"><p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
+    {service && <PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} initialLineId={lineId} />}
+    <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 
     <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description"
       onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}>
       {prepared && <><p className="pageEyebrow">Arc testnet · Wallet confirmation</p>
-        <h2 id="funding-review-title">{prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : "Reclaim eligible funds"}</h2>
+        <h2 id="funding-review-title">{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : "Reclaim eligible funds"}</h2>
         <p id="funding-review-description">{prepared.summary}</p>
         <dl className="fundingDetails"><div><dt>Wallet</dt><dd><code>{prepared.account}</code></dd></div>
           <div><dt>Amount</dt><dd>{usdc(prepared.amount)} test USDC</dd></div>
@@ -410,7 +426,7 @@ export function CandidateFundingDesk() {
         </dl>
         {reviewInput && <dl className="fundingDetails"><div><dt>Agent</dt><dd><code>{reviewInput.agent}</code></dd></div><div><dt>Provider</dt><dd><code>{reviewInput.provider}</code></dd></div>
           <div><dt>Endpoint</dt><dd>{reviewInput.endpoint}</dd></div><div><dt>Total / daily / per purchase</dt><dd>{reviewInput.lineSpendCap} / {reviewInput.dailySpendCap} / {reviewInput.providerPerSpendCap} USDC</dd></div></dl>}
-        <p>{prepared.kind === "approve" ? "This approval does not open a line or repay debt. You will review that transaction separately." : prepared.kind === "repay" ? "This is a fixed repayment amount. Keep this wallet prompt brief and close it if the line changes. Check confirmation before retrying." : prepared.kind === "open" ? "The sponsor bears repayment risk. A paid provider can leave debt outstanding even if delivery fails." : "Closing an open line ends its purchase access and returns eligible reserve to its sponsor."}</p>
+        <p>{prepared.kind === "register" ? "Registration enables funding from this wallet only. Your tokens remain in your wallet." : prepared.kind === "approve" ? "This approval does not open a line or repay debt. You will review that transaction separately." : prepared.kind === "repay" ? "This is a fixed repayment amount. Keep this wallet prompt brief and close it if the line changes. Check confirmation before retrying." : prepared.kind === "open" ? "The sponsor bears repayment risk. A paid provider can leave debt outstanding even if delivery fails." : "Closing an open line ends its purchase access and returns eligible reserve to its sponsor."}</p>
         <p>Finish other transactions from this account first. If you submit one elsewhere while this wallet prompt is open, cancel this request and review it again. Shadow cannot reserve a wallet nonce across other apps or devices.</p>
         <div className="fundingActions"><button autoFocus type="button" onClick={() => setPrepared(null)} disabled={Boolean(busy)}>Back</button>
           <button className="fundingPrimary" type="button" onClick={() => void sendReviewed()} disabled={Boolean(busy)}>Confirm in wallet</button></div>

@@ -38,7 +38,7 @@ export interface CandidateSnapshot {
   limits: CandidateLimits; totalCommittedCapital: bigint; minimumRepaymentWindow: bigint; maximumRepaymentWindow: bigint
   balance: bigint; allowance: bigint; activeLineId: Hash; nextEpoch: bigint; activeLine: CandidateLine | null
 }
-export type CandidateAction = 'approve' | 'open' | 'repay' | 'close' | 'claim-defaulted'
+export type CandidateAction = 'register' | 'approve' | 'open' | 'repay' | 'close' | 'claim-defaulted'
 export interface CandidatePrepared {
   kind: CandidateAction; account: Address; to: Address; data: Hex; value: '0'; amount: bigint
   lineId: Hash | null; agent: Address | null; expectedEpoch: bigint | null
@@ -55,6 +55,14 @@ export interface CandidateJournal { key: string; load(): CandidatePending | null
 export interface CandidateSession { publicClient: CandidateReadClient; walletClient: CandidateWalletClient; account: Address; journal: CandidateJournal; onStage?: (pending: CandidatePending) => void }
 export type CandidateResolution = { status: 'confirmed' | 'reverted' | 'replaced' | 'unknown'; txHash: Hash | null; message: string; lineId?: Hash }
 
+export type CandidateDeployment = Omit<typeof CANDIDATE_FUNDING, 'address' | 'runtimeHash'> & { address: Address; runtimeHash: Hash; selfRegistration?: boolean }
+export function createCandidateFundingKit(deployment: CandidateDeployment) {
+  const CANDIDATE_FUNDING = Object.freeze({ ...deployment })
+  if (CANDIDATE_FUNDING.chainId !== 5042002) throw new Error('Only Arc testnet is supported.')
+  const candidateFundingAbi: Abi = deployment.selfRegistration ? [...candidateAbiJson,
+    { type: 'function', name: 'registerSponsor', inputs: [], outputs: [], stateMutability: 'nonpayable' },
+    { type: 'function', name: 'sponsorAdmissionRevoked', inputs: [{ name: 'sponsor', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
+  ] as Abi : candidateAbiJson as Abi
 const states = ['NONE', 'OPEN', 'DRAWN', 'DEFAULTED', 'CLOSED'] as const
 const typeString = 'SpendIntent(address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor)'
 const memoryLocks = new Set<string>()
@@ -86,12 +94,12 @@ function read(client: CandidateReadClient, functionName: string, args: readonly 
 function tokenRead(client: CandidateReadClient, functionName: string, args: readonly unknown[] = [], blockNumber?: bigint): Promise<any> {
   return client.readContract({ address: CANDIDATE_FUNDING.usdc, abi: erc20Abi, functionName: functionName as any, args: args as any, blockNumber })
 }
-export function candidateErrorMessage(error: unknown): string {
+function candidateErrorMessage(error: unknown): string {
   if (error instanceof Error) return error.message.split('\n')[0]
   return 'The request could not be completed. Check the connection and try refreshing.'
 }
 
-export async function verifyCandidate(client: CandidateReadClient): Promise<void> {
+async function verifyCandidate(client: CandidateReadClient): Promise<void> {
   if (await client.getChainId() !== CANDIDATE_FUNDING.chainId) throw new Error('This workflow only supports Arc testnet.')
   const code = await client.getCode({ address: CANDIDATE_FUNDING.address })
   if (!code || keccak256(code) !== CANDIDATE_FUNDING.runtimeHash) throw new Error('The deployed contract does not match the verified Shadow testnet candidate.')
@@ -117,14 +125,14 @@ async function lineAt(client: CandidateReadClient, lineId: Hash, block: { number
   return { ...fields, lineId, sponsor, agent: address(raw.agent), state, stateName: states[state], observedBlock: block.number, observedTimestamp: block.timestamp, sponsorAllowed: Boolean(sponsorAllowed), spendsPaused: Boolean(spendsPaused) } as CandidateLine
 }
 
-export async function readCandidateLine(client: CandidateReadClient, rawLineId: string): Promise<CandidateLine> {
+async function readCandidateLine(client: CandidateReadClient, rawLineId: string): Promise<CandidateLine> {
   const lineId = hash(rawLineId)
   await verifyCandidate(client)
   const block = await client.getBlock()
   return lineAt(client, lineId, block)
 }
 
-export async function readCandidateSnapshot(client: CandidateReadClient, input: { sponsor: string; agent?: string }): Promise<CandidateSnapshot> {
+async function readCandidateSnapshot(client: CandidateReadClient, input: { sponsor: string; agent?: string }): Promise<CandidateSnapshot> {
   const sponsor = address(input.sponsor)
   const agent = input.agent ? address(input.agent, 'Agent') : null
   await verifyCandidate(client)
@@ -159,7 +167,7 @@ function fingerprint(line: CandidateLine): string {
   return [line.state, line.principalOutstanding, line.cumulativePrincipalPaid, line.dueAt, line.availableReserve, line.recoveryAvailable].join(':')
 }
 
-export async function prepareCandidateOpen(client: CandidateReadClient, rawAccount: string, input: CandidateOpenInput): Promise<CandidatePrepared> {
+async function prepareCandidateOpen(client: CandidateReadClient, rawAccount: string, input: CandidateOpenInput): Promise<CandidatePrepared> {
   const account = address(rawAccount)
   const agent = address(input.agent, 'Agent')
   const provider = address(input.provider, 'Provider')
@@ -168,7 +176,7 @@ export async function prepareCandidateOpen(client: CandidateReadClient, rawAccou
   try { endpoint = new URL(input.endpoint) } catch { throw new Error('Enter the exact HTTPS endpoint agreed with your provider.') }
   if (input.endpoint !== input.endpoint.trim() || endpoint.protocol !== 'https:' || !endpoint.hostname || endpoint.username || endpoint.password || endpoint.hash) throw new Error('Use the exact HTTPS provider endpoint without credentials, fragments, or surrounding spaces.')
   const snapshot = await readCandidateSnapshot(client, { sponsor: account, agent })
-  if (!snapshot.sponsorAllowed) throw new Error('This sponsor has not been enabled for the testnet pilot. Request access before funding.')
+  if (!snapshot.sponsorAllowed) throw new Error(deployment.selfRegistration ? 'Register this wallet as a sponsor before funding.' : 'This sponsor has not been enabled for the testnet pilot. Request access before funding.')
   if (snapshot.openingsPaused) throw new Error('Opening new funding lines is currently paused.')
   if (snapshot.activeLine && !['CLOSED', 'DEFAULTED'].includes(snapshot.activeLine.stateName)) throw new Error('This sponsor and agent already have an active funding line. Manage that line first.')
   const reserve = amount(input.reserve, 'Reserve', min(snapshot.limits.lineReserve, CANDIDATE_FUNDING.maxReserve))
@@ -189,7 +197,7 @@ export async function prepareCandidateOpen(client: CandidateReadClient, rawAccou
   return { kind: 'open', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'openLine', args: [params] }), value: '0', amount: reserve, lineId, agent, expectedEpoch: snapshot.nextEpoch, observedBlock: snapshot.observedBlock, summary: 'Fund this line with testnet USDC. The provider can only be paid under the limits shown.' }
 }
 
-export async function prepareCandidateRepay(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
+async function prepareCandidateRepay(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
   const account = address(rawAccount)
   const line = await readCandidateLine(client, rawLineId)
   if (!['DRAWN', 'DEFAULTED'].includes(line.stateName) || line.principalOutstanding <= 0n) throw new Error('This line has no outstanding debt to repay.')
@@ -201,7 +209,7 @@ export async function prepareCandidateRepay(client: CandidateReadClient, rawAcco
   return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'repay', args: [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: line.stateName === 'DEFAULTED' ? 'Repay this debt into sponsor recovery. The defaulted line stays closed to new purchases.' : 'Repay the displayed debt in full. Repayment restores reserve but does not reset the total purchase limit.' }
 }
 
-export async function prepareCandidateReclaim(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
+async function prepareCandidateReclaim(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
   const account = address(rawAccount)
   const line = await readCandidateLine(client, rawLineId)
   if (!same(account, line.sponsor)) throw new Error('Only this line’s sponsor can reclaim its funds.')
@@ -214,7 +222,7 @@ export async function prepareCandidateReclaim(client: CandidateReadClient, rawAc
 
 function checkPending(value: unknown, expectedAccount?: Address): CandidatePending {
   const p = value as CandidatePending
-  const actions: string[] = ['approve', 'open', 'repay', 'close', 'claim-defaulted']
+  const actions: string[] = ['register', 'approve', 'open', 'repay', 'close', 'claim-defaulted']
   if (!p || p.version !== 1 || p.chainId !== CANDIDATE_FUNDING.chainId || !same(p.candidate ?? '', CANDIDATE_FUNDING.address) || !isAddress(p.account) || (expectedAccount && !same(expectedAccount, p.account)) || !actions.includes(p.kind) || !isAddress(p.to) || !/^0x(?:[0-9a-fA-F]{2})+$/.test(p.data) || p.data.length > 4096 || p.value !== '0' || !/^\d+$/.test(p.amount) || !/^\d+$/.test(p.fromBlock) || !Number.isSafeInteger(p.nonce) || p.nonce < 0 || !['wallet', 'pending', 'unknown'].includes(p.status) || (p.txHash !== null && !/^0x[0-9a-fA-F]{64}$/.test(p.txHash))) throw new Error('The saved transaction record is invalid. Keep it for investigation; no new transaction was sent.')
   // Decode the saved call, so reconciliation cannot accidentally certify an
   // unrelated or wrong-contract record as a completed product action.
@@ -222,7 +230,7 @@ function checkPending(value: unknown, expectedAccount?: Address): CandidatePendi
   return p
 }
 
-export function createCandidateJournal(storage: CandidateStorage, rawAccount: string): CandidateJournal {
+function createCandidateJournal(storage: CandidateStorage, rawAccount: string): CandidateJournal {
   const account = address(rawAccount)
   const key = `shadow:candidate-funding:v1:${CANDIDATE_FUNDING.chainId}:${CANDIDATE_FUNDING.address.toLowerCase()}:${account.toLowerCase()}`
   return {
@@ -249,10 +257,14 @@ function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'v
   if (!same(record.to, isApproval ? CANDIDATE_FUNDING.usdc : CANDIDATE_FUNDING.address) || record.value !== '0') throw new Error('The transaction does not target the expected testnet contract.')
   const abi: Abi = isApproval ? erc20Abi : candidateFundingAbi
   const decoded = decodeFunctionData({ abi, data: record.data })
-  const expectedName = { approve: 'approve', open: 'openLine', repay: 'repay', close: 'closeLine', 'claim-defaulted': 'claimDefaulted' }[record.kind]
+  const expectedName = { register: 'registerSponsor', approve: 'approve', open: 'openLine', repay: 'repay', close: 'closeLine', 'claim-defaulted': 'claimDefaulted' }[record.kind]
   if (decoded.functionName !== expectedName) throw new Error('The transaction action does not match its calldata.')
   const args = decoded.args as readonly any[]
   const value = BigInt(record.amount)
+  if (record.kind === 'register') {
+    if (!deployment.selfRegistration || value !== 0n || record.lineId !== null) throw new Error('Invalid testnet registration.');
+    return { abi, functionName: decoded.functionName, args };
+  }
   if (value <= 0n) throw new Error('The transaction amount must be positive.')
   if (isApproval && (!same(args[0], CANDIDATE_FUNDING.address) || BigInt(args[1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('Only an exact bounded approval to the testnet candidate is supported.')
   if (record.kind === 'open') {
@@ -296,7 +308,7 @@ async function walletPendingNonce(session: CandidateSession): Promise<number> {
   return Number(nonce)
 }
 
-export async function executeCandidateCall(session: CandidateSession, prepared: CandidatePrepared): Promise<CandidateResolution> {
+async function executeCandidateCall(session: CandidateSession, prepared: CandidatePrepared): Promise<CandidateResolution> {
   if (!same(session.account, prepared.account)) throw new Error('This action was prepared for a different wallet.')
   if (memoryLocks.has(session.journal.key)) throw new Error('A transaction for this account is already being prepared.')
   memoryLocks.add(session.journal.key)
@@ -313,7 +325,7 @@ export async function executeCandidateCall(session: CandidateSession, prepared: 
       const current = await readCandidateSnapshot(client, { sponsor: session.account, agent: p.agent })
       if (prepared.expectedEpoch !== current.nextEpoch || !prepared.lineId || !same(predictedLine(session.account, p.agent, current.nextEpoch), prepared.lineId)) throw new Error('The funding-line epoch changed. Refresh before opening a line.')
       if (BigInt(p.lineExpiry) < current.observedTimestamp + current.minimumRepaymentWindow + CANDIDATE_FUNDING.signatureTtl || BigInt(p.providerExpiry) < current.observedTimestamp + current.minimumRepaymentWindow + CANDIDATE_FUNDING.signatureTtl) throw new Error('This prepared line expires too soon. Refresh before funding.')
-    } else if (prepared.kind !== 'approve') {
+    } else if (prepared.kind !== 'approve' && prepared.kind !== 'register') {
       const current = await readCandidateLine(client, prepared.lineId!)
       if (!prepared.lineFingerprint || fingerprint(current) !== prepared.lineFingerprint) throw new Error('The line or debt changed. Refresh and review the current amount before confirming.')
     }
@@ -365,13 +377,14 @@ export async function executeCandidateCall(session: CandidateSession, prepared: 
 }
 
 function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly any[] }): boolean {
-  const expected = { approve: 'Approval', open: 'LineOpened', repay: 'Repaid', close: 'LineClosed', 'claim-defaulted': 'SponsorClaimed' }[pending.kind]
+  const expected = { register: 'SponsorAllowed', approve: 'Approval', open: 'LineOpened', repay: 'Repaid', close: 'LineClosed', 'claim-defaulted': 'SponsorClaimed' }[pending.kind]
   for (const log of receipt.logs) {
     if (!same(log.address, pending.to)) continue
     try {
       const event = decodeEventLog({ abi: pending.kind === 'approve' ? erc20Abi : candidateFundingAbi, data: log.data, topics: log.topics })
       if (event.eventName !== expected) continue
       const args: any = event.args
+      if (pending.kind === 'register') return same(args.sponsor, pending.account) && args.allowed === true
       if (pending.kind === 'approve') return same(args.owner, pending.account) && same(args.spender, CANDIDATE_FUNDING.address) && BigInt(args.value) === BigInt(pending.amount)
       if (!pending.lineId || !same(args.lineId, pending.lineId)) continue
       if (pending.kind === 'open') return same(args.sponsor, pending.account) && !!pending.agent && same(args.agent, pending.agent) && BigInt(args.reserve) === BigInt(pending.amount) && String(args.epoch) === pending.expectedEpoch
@@ -384,7 +397,7 @@ function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly a
   return false
 }
 
-export async function reconcileCandidatePending(client: CandidateReadClient, rawPending: CandidatePending, providedHash?: string): Promise<CandidateResolution> {
+async function reconcileCandidatePending(client: CandidateReadClient, rawPending: CandidatePending, providedHash?: string): Promise<CandidateResolution> {
   const pending = checkPending(rawPending)
   const txHash = providedHash ? hash(providedHash, 'Transaction hash') : pending.txHash
   const unknown = (message: string): CandidateResolution => ({ status: 'unknown', txHash, message })
@@ -407,3 +420,20 @@ export async function reconcileCandidatePending(client: CandidateReadClient, raw
     return unknown('Confirmation is pending or the chain could not be read reliably. Keep this transaction record and check again; nothing has been resent.')
   }
 }
+
+async function prepareCandidateRegistration(client: CandidateReadClient, rawAccount: string): Promise<CandidatePrepared> {
+  if (!deployment.selfRegistration) throw new Error('Self-registration is unavailable on this deployment.')
+  const account = address(rawAccount)
+  const snapshot = await readCandidateSnapshot(client, { sponsor: account })
+  if (snapshot.sponsorAllowed) throw new Error('This wallet is already registered.')
+  if (snapshot.openingsPaused) throw new Error('New sponsor registration is paused.')
+  if (await read(client, 'sponsorAdmissionRevoked', [account], snapshot.observedBlock)) throw new Error('This wallet’s sponsor access was revoked.')
+  return { kind: 'register', account, to: CANDIDATE_FUNDING.address,
+    data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'registerSponsor' }), value: '0', amount: 0n,
+    lineId: null, agent: null, expectedEpoch: null, observedBlock: snapshot.observedBlock,
+    summary: 'Register your wallet to fund your own agent lines. This does not transfer or approve tokens; testnet gas applies.' }
+}
+
+return { verifyCandidate, readCandidateLine, readCandidateSnapshot, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, createCandidateJournal, executeCandidateCall, reconcileCandidatePending, candidateErrorMessage, prepareCandidateRegistration }
+}
+export const { verifyCandidate, readCandidateLine, readCandidateSnapshot, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, createCandidateJournal, executeCandidateCall, reconcileCandidatePending, candidateErrorMessage, prepareCandidateRegistration } = createCandidateFundingKit(CANDIDATE_FUNDING)

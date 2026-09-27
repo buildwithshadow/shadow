@@ -5,7 +5,7 @@ import { createPublicClient, createTestClient, createWalletClient, decodeFunctio
 // @ts-expect-error Existing shared JavaScript Anvil helpers have no declaration file.
 import { account, startAnvil, e2eSkip } from './float-mainnet-e2e.mjs'
 import {
-  CANDIDATE_FUNDING, candidateFundingAbi, candidateFundingChain, createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
+  createCandidateFundingKit, CANDIDATE_FUNDING, candidateFundingAbi, candidateFundingChain, createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
   readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, verifyCandidate,
   type CandidateReadClient, type CandidateWalletClient, type CandidateOpenInput, type CandidatePrepared, type CandidatePending,
 } from '../src/candidateFunding.ts'
@@ -422,4 +422,38 @@ test('browser calls drive actual candidate open, paid draw, full repayment and r
     assert.equal(await balance(providerAccount.address), 50_000n)
     assert.equal(await balance(CANDIDATE_FUNDING.address), 0n)
   } finally { anvil.stop() }
+})
+
+
+test('public registration preserves existing deployment behavior and enforces pause/revocation', async () => {
+  const f = fixture()
+  const kit = createCandidateFundingKit({ ...CANDIDATE_FUNDING, selfRegistration: true })
+  f.state.sponsorAllowed = false
+  f.state.sponsorAdmissionRevoked = false
+  const prepared = await kit.prepareCandidateRegistration(f.client, sponsor)
+  assert.equal(prepared.kind, 'register')
+  assert.equal(prepared.amount, 0n)
+  assert.equal(prepared.to, CANDIDATE_FUNDING.address)
+  f.state.openingsPaused = true
+  await assert.rejects(() => kit.prepareCandidateRegistration(f.client, sponsor), /paused/)
+  f.state.openingsPaused = false; f.state.sponsorAdmissionRevoked = true
+  await assert.rejects(() => kit.prepareCandidateRegistration(f.client, sponsor), /revoked/)
+  await assert.rejects(() => createCandidateFundingKit(CANDIDATE_FUNDING).prepareCandidateRegistration(f.client, sponsor), /unavailable/)
+})
+
+test('deployment-specific journal cannot certify a legacy record or accept a nonzero registration', async () => {
+  const f = fixture()
+  const kit = createCandidateFundingKit({ ...CANDIDATE_FUNDING, address: other, selfRegistration: true })
+  assert.notEqual(kit.createCandidateJournal(f.storage, sponsor).key, f.journal.key)
+  const publicKit = createCandidateFundingKit({ ...CANDIDATE_FUNDING, selfRegistration: true })
+  f.state.sponsorAllowed = false; f.state.sponsorAdmissionRevoked = false
+  const prepared = await publicKit.prepareCandidateRegistration(f.client, sponsor)
+  await assert.rejects(() => publicKit.executeCandidateCall(f.session, { ...prepared, amount: 1n }), /Invalid testnet registration/)
+  assert.equal(f.state.sends, 0)
+  const publicJournal = publicKit.createCandidateJournal(f.storage, sponsor)
+  const publicSession = { ...f.session, journal: publicJournal, walletClient: { ...f.wallet, sendTransaction: async () => { f.state.sends++; assert.ok(publicJournal.load()); throw new Error('lost response') } } }
+  const result = await publicKit.executeCandidateCall(publicSession, prepared)
+  assert.equal(result.status, 'unknown')
+  assert.equal(f.state.sends, 1)
+  await assert.rejects(() => publicKit.executeCandidateCall(publicSession, prepared), /Resolve the saved transaction/)
 })

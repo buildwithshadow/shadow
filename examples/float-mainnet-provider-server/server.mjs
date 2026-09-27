@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { join } from "node:path";
@@ -84,7 +84,9 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000 }) {
+  if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
+  for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
   mkdirSync(storeDir, { recursive: true });
   const provider = parseAddress("account.address", account.address, Error);
   const fileOf = (digest, slot) => join(storeDir, `${digest}.${slot}.json`);
@@ -152,6 +154,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
       }
       bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
+    }
+    // Keep existing recovery available even when new purchase storage is full.
+    if (readdirSync(storeDir).filter(name => name.endsWith('.acceptance.json')).length >= maxStoredPurchases) {
+      throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
     }
     // acceptIntent's checks that need no chain read, made first, so that an
     // intent refused on its face costs no RPC call.
@@ -327,7 +333,25 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return [404, { error: "not found" }];
   }
 
-  return createServer(async (request, response) => {
+  let active = 0, requests = 0, windowStart = Date.now();
+  const server = createServer({ maxHeaderSize: 8192, requestTimeout: 15000, headersTimeout: 10000, keepAliveTimeout: 5000 }, async (request, response) => {
+    response.setHeader('cache-control', 'no-store');
+    response.setHeader('x-content-type-options', 'nosniff');
+    if (publicOrigin) {
+      response.setHeader('vary', 'Origin');
+      const origin = request.headers.origin;
+      if (origin && origin !== publicOrigin) { response.writeHead(403); response.end(); return; }
+      if (origin === publicOrigin) {
+        response.setHeader('access-control-allow-origin', publicOrigin);
+        response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
+        response.setHeader('access-control-allow-headers', 'content-type');
+      }
+      if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
+    }
+    if (Date.now() - windowStart >= 60000) { requests = 0; windowStart = Date.now(); }
+    if (active >= maxConcurrent || ++requests > maxRequestsPerMinute) { response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy. Retry the original request later."}'); return; }
+    active++;
+    try {
     const context = { digest: null };
     let status;
     let body;
@@ -343,7 +367,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     response.writeHead(status, { "content-type": "application/json" });
     response.end(stableStringify(body));
+    } finally { active--; }
   });
+  server.maxConnections = 32;
+  return server;
 }
 
 async function main() {
@@ -381,7 +408,7 @@ async function main() {
     const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
     ({ default: service } = await import(serviceModule));
   }
-  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service });
+  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
     server.once("error", reject);
