@@ -147,7 +147,7 @@ HTTPS frontend origin. Requests with another browser origin are rejected; client
 without an Origin header remain supported. This is CORS, not user authentication.
 The public default admits four active requests, with two reserved for recovery, and 120 requests per caller/route per minute. Unknown routes do not consume those quotas. A
 single provider process reserves capacity across distinct digests before signing;
-unresolved prepared and accepted purchases share the 1,000-purchase admission ceiling. Completed deliveries free capacity while their records remain available for recovery. Existing
+unresolved admitted, prepared and accepted purchases share the 1,000-purchase admission ceiling. Completed deliveries free capacity while their records remain available for recovery. At capacity, a bounded sweep checks up to 32 records against one finalized block, at most once per 30 seconds. Expired authorizations free capacity only when that finalized receipt proves they are unpaid or blocked; paid but undelivered records stay held. Original records are retained alongside the release evidence. RPC failures leave capacity held. Existing
 accepted and prepared requests remain recoverable at capacity. Do not remove
 records to make room without preserving their recovery obligations. Monitor the
 persistent disk as retained history grows; the admission ceiling is not a byte quota.

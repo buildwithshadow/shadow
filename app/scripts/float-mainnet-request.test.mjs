@@ -1158,6 +1158,57 @@ describe("request client against the reference provider server", { skip: e2eSkip
     } finally { await stop(bounded.server); }
   });
 
+  test("expired unpaid acceptances release capacity using finalized receipts without deleting history", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    const a = await signedIntent("expired-unpaid-capacity");
+    const dir = path("expired-unpaid-store");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: dir, maxStoredPurchases: 1 });
+    try {
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(a.file), requestId: "expired-job" })).status, 200);
+      const expiry = Number(readJson(a.file).typedData.message.signatureExpiry);
+      await client.request({ method: "evm_setNextBlockTimestamp", params: [expiry + 1] });
+      await client.request({ method: "anvil_mine", params: ["0x80"] });
+      assert.ok((await client.getBlock({ blockTag: "finalized" })).timestamp > BigInt(expiry));
+      const b = await signedIntent("after-expired-capacity");
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(b.file), requestId: "after-expired-job" })).status, 200);
+      assert.equal(readJson(join(dir, `${a.digest}.released.json`)).reason, "expired-unpaid");
+      assert.ok(existsSync(join(dir, `${a.digest}.acceptance.json`)), "original receipt is retained");
+    } finally { await stop(bounded.server); await client.request({ method: "evm_revert", params: [snapshot] }); }
+  });
+
+  test("failed finality reads never release an unresolved purchase", async () => {
+    const a = await signedIntent("finality-held-a"), b = await signedIntent("finality-held-b");
+    const dir = path("finality-held-store");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: dir, maxStoredPurchases: 1 });
+    try {
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(a.file), requestId: "finality-held-a" })).status, 200);
+      bounded.stats.failNextCall = new Error("finalized RPC unavailable");
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(b.file), requestId: "finality-held-b" })).status, 500);
+      assert.equal(existsSync(join(dir, `${a.digest}.released.json`)), false);
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(b.file), requestId: "finality-held-b" })).status, 503);
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(a.file), requestId: "finality-held-a" })).status, 200);
+    } finally { await stop(bounded.server); }
+  });
+
+  test("expired paid-but-undelivered purchases retain capacity and remain recoverable", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    const a = await signedIntent("paid-undelivered-capacity");
+    const b = await signedIntent("after-held-capacity");
+    const dir = path("paid-undelivered-store");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: dir, maxStoredPurchases: 1 });
+    try {
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(a.file), requestId: "paid-held-job" })).status, 200);
+      assert.equal((await ok("submit", ["submit", "--intent", a.file, "--execute"], EXECUTOR)).status, "paid");
+      const expiry = Number(readJson(a.file).typedData.message.signatureExpiry);
+      await client.request({ method: "evm_setNextBlockTimestamp", params: [expiry + 1] });
+      await client.request({ method: "anvil_mine", params: ["0x80"] });
+      assert.ok((await client.getBlock({ blockTag: "finalized" })).timestamp > BigInt(expiry));
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(b.file), requestId: "held-new-job" })).status, 503);
+      assert.equal(existsSync(join(dir, `${a.digest}.released.json`)), false);
+      assert.equal((await post(OTHER_PORT, "/serve", { digest: a.digest })).status, 200);
+    } finally { await stop(bounded.server); await client.request({ method: "evm_revert", params: [snapshot] }); }
+  });
+
   test("completed deliveries free admission capacity without deleting their recovery records", async () => {
     const a = await signedIntent("completed-capacity");
     const bounded = await startProviderServer(OTHER_PORT, { storeDir: path("completed-capacity-store"), maxStoredPurchases: 1 });

@@ -95,12 +95,47 @@ export function createProviderServer({ connection, account, endpointHash, price,
   const serving = new Map();
   const admitting = new Set();
 
-  // Synchronous reservation before the first await. One process owns each store.
-  function reserveAdmission(digest) {
+  let reclaiming = null;
+  let reclaimCursor = 0;
+  let lastReclaim = 0;
+  function outstanding() {
     const files = readdirSync(storeDir);
-    const delivered = new Set(files.filter(name => /^0x[0-9a-f]{64}\.delivery\.json$/.test(name)).map(name => name.slice(0, 66)));
-    const stored = new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66)).filter(digest => !delivered.has(digest)));
-    if (stored.has(digest)) return () => {}; // A prepared retry already occupies its slot.
+    const terminal = new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:delivery|released)\.json$/.test(name)).map(name => name.slice(0, 66)));
+    return new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:admission|prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66)).filter(digest => !terminal.has(digest)));
+  }
+
+  // Reclaim only with finalized onchain evidence. Keep every original record
+  // for recovery/audit; a paid-but-undelivered request must retain its slot.
+  // Bound each pass and rotate through the store so RPC work stays bounded.
+  async function reclaimExpired() {
+    if (reclaiming) return reclaiming;
+    if (Date.now() - lastReclaim < 30_000) return;
+    lastReclaim = Date.now();
+    reclaiming = (async () => {
+      const pending = [...outstanding()].filter(digest => !admitting.has(digest));
+      if (!pending.length) return;
+      const block = await connection.client.getBlock({ blockTag: "finalized" });
+      if (block.number === null) throw new Error("Finalized block is unavailable; admission remains held");
+      const batch = Array.from({ length: Math.min(32, pending.length) }, (_, i) => pending[(reclaimCursor + i) % pending.length]);
+      reclaimCursor = (reclaimCursor + batch.length) % pending.length;
+      for (const digest of batch) {
+        const metadata = readStored(fileOf(digest, "admission"));
+        if (metadata?.digest !== digest || !/^[0-9]+$/.test(metadata.signatureExpiry) || block.timestamp <= BigInt(metadata.signatureExpiry)) continue;
+        const status = Number(await read(connection, "receiptStatus", [digest], block.number));
+        if (status !== 0 && status !== 1) continue;
+        storeOnce(fileOf(digest, "released"), { digest, reason: status === 0 ? "expired-unpaid" : "blocked", blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() });
+      }
+    })().finally(() => { reclaiming = null; });
+    return reclaiming;
+  }
+
+  async function reserveAdmission(digest) {
+    let stored = outstanding();
+    if (stored.has(digest)) return () => {}; // An interrupted retry already occupies its slot.
+    if (new Set([...stored, ...admitting]).size >= maxStoredPurchases) await reclaimExpired();
+    // No await between this final capacity check and reservation. One process
+    // owns each store, including when concurrent callers await the same sweep.
+    stored = outstanding();
     if (new Set([...stored, ...admitting]).size >= maxStoredPurchases) {
       throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
     }
@@ -171,7 +206,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
     }
-    const releaseAdmission = reserveAdmission(digest);
+    const releaseAdmission = await reserveAdmission(digest);
     try {
     // acceptIntent's checks that need no chain read, made first, so that an
     // intent refused on its face costs no RPC call.
@@ -186,6 +221,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     // acceptIntent refuses with a plain Error listing its problems, before it
     // signs anything. An RPC failure is one of viem's Error subclasses, and a
     // failure once signing has begun is the provider's own: neither is a refusal.
+    const rememberAdmission = () => storeOnce(fileOf(digest, "admission"), { digest, signatureExpiry: struct.signatureExpiry.toString() });
     let signing = false;
     const signer = {
       address: account.address,
@@ -199,9 +235,11 @@ export function createProviderServer({ connection, account, endpointHash, price,
           if (output === null) throw new HttpError(`service request ${JSON.stringify(requestId)} is unavailable; no acceptance was signed`, 422);
           const prepared = outputRecord(digest, requestId, output);
           bindRequest(requestId, digest);
+          rememberAdmission();
           if (!storeOnce(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
         }
         bindRequest(requestId, digest);
+        rememberAdmission();
         return account.signTypedData(typed);
       },
     };
