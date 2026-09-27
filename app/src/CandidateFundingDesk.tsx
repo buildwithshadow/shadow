@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address } from "viem";
+import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
   CANDIDATE_FUNDING as LEGACY_FUNDING, candidateErrorMessage, candidateFundingChain, createCandidateFundingKit,
@@ -217,6 +217,29 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     finally { setBusy(""); }
   }
 
+  // Capture the view that launched the purchase; a late response must not
+  // replace a different line or an account/network selection made meanwhile.
+  const purchaseViewRevision = revision.current;
+  async function refreshPurchaseLine(id: string, transactionHash?: Hex) {
+    const isCurrent = () => revision.current === purchaseViewRevision &&
+      (!lineId || lineId.toLowerCase() === id.toLowerCase());
+    if (!isCurrent()) return;
+    setLineId(id);
+    setLine(null);
+    setError("");
+    setBusy(transactionHash ? "Waiting for purchase confirmation and updating the balance…" : "Updating the funding line balance…");
+    try {
+      if (transactionHash) {
+        await client.waitForTransactionReceipt({ hash: transactionHash, timeout: 45_000 });
+        if (!isCurrent()) return;
+      }
+      const value = await readCandidateLine(client, id);
+      if (isCurrent()) { setLineId(id); setLine(value); setMode("manage"); }
+    } catch (cause) {
+      if (isCurrent()) setError(`Could not confirm the latest line balance. Use “Check payment & recover result” when your connection recovers; do not submit another purchase. ${messageOf(cause)}`);
+    }
+  }
+
   async function refreshAfter(result: CandidateResolution, forAccount: Address, currentRevision: number) {
     if (result.status !== "confirmed") return;
     const isCurrent = () => activeAccount.current === forAccount && revision.current === currentRevision;
@@ -411,7 +434,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </section>}
 
     {service && <PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
     <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 
