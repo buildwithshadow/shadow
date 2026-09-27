@@ -110,10 +110,11 @@ export function createProviderServer({ connection, account, endpointHash, price,
 
   // This server reserves each provider job id for at most one intent digest.
   // The durable claim also arbitrates concurrent accepts for different digests.
-  function bindRequest(requestId, digest) {
+  function bindRequest(requestId, digest, claim = true) {
     const file = join(storeDir, `request-${requestIdHashOf(requestId)}.json`);
     const binding = { requestId, digest };
-    const kept = storeOnce(file, binding) ? binding : readStored(file);
+    const kept = claim ? (storeOnce(file, binding) ? binding : readStored(file)) : readStored(file);
+    if (!claim && kept === null) return;
     if (kept?.requestId !== requestId || !/^0x[0-9a-f]{64}$/.test(kept?.digest)) {
       throw new HttpError(`the stored binding for request ${JSON.stringify(requestId)} is invalid; the provider has to repair it`, 500);
     }
@@ -190,12 +191,17 @@ export function createProviderServer({ connection, account, endpointHash, price,
       address: account.address,
       signTypedData: async (typed) => {
         signing = true;
+        // Reject existing conflicts before upstream work; atomically claim again
+        // after preparation, before persisting anything under this digest.
+        bindRequest(requestId, digest, false);
         if (typeof service.prepare === "function" && !checkedPrepared(digest, requestId)) {
           const output = await service.prepare({ digest, requestId });
           if (output === null) throw new HttpError(`service request ${JSON.stringify(requestId)} is unavailable; no acceptance was signed`, 422);
           const prepared = outputRecord(digest, requestId, output);
+          bindRequest(requestId, digest);
           if (!storeOnce(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
         }
+        bindRequest(requestId, digest);
         return account.signTypedData(typed);
       },
     };

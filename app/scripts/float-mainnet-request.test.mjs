@@ -1139,6 +1139,25 @@ describe("request client against the reference provider server", { skip: e2eSkip
     } finally { await stop(bounded.server); }
   });
 
+  test("conflicting prepared requests do not consume storage admission slots", async () => {
+    const intents = await Promise.all(["bound-first", "bound-conflict", "bound-next"].map(name => signedIntent(name)));
+    const preparedService = async () => ({ result: "prepared report" });
+    preparedService.prepare = preparedService;
+    const dir = path("binding-capacity-store");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: dir, maxStoredPurchases: 2, serviceImpl: preparedService });
+    try {
+      const replies = await Promise.all(intents.slice(0, 2).map(intent => post(OTHER_PORT, "/accept", { intent: readJson(intent.file), requestId: "one-job" })));
+      assert.deepEqual(replies.map(x => x.status).sort(), [200, 409]);
+      const loser = intents[replies.findIndex(x => x.status === 409)];
+      assert.equal(existsSync(join(dir, `${loser.digest}.prepared.json`)), false);
+      const preparedBefore = bounded.stats.prepared.length;
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(loser.file), requestId: "one-job" })).status, 409);
+      assert.equal(bounded.stats.prepared.length, preparedBefore, "existing conflict does not prepare again");
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(intents[2].file), requestId: "new-job" })).status, 200);
+      assert.equal(readdirSync(dir).filter(x => x.endsWith(".prepared.json")).length, 2);
+    } finally { await stop(bounded.server); }
+  });
+
   test("completed deliveries free admission capacity without deleting their recovery records", async () => {
     const a = await signedIntent("completed-capacity");
     const bounded = await startProviderServer(OTHER_PORT, { storeDir: path("completed-capacity-store"), maxStoredPurchases: 1 });
