@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
-import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address } from "viem";
+import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
   CANDIDATE_FUNDING as LEGACY_FUNDING, candidateErrorMessage, candidateFundingChain, createCandidateFundingKit,
@@ -220,18 +220,23 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   // Capture the view that launched the purchase; a late response must not
   // replace a different line or an account/network selection made meanwhile.
   const purchaseViewRevision = revision.current;
-  async function refreshPurchaseLine(id: string) {
+  async function refreshPurchaseLine(id: string, transactionHash?: Hex) {
     const isCurrent = () => revision.current === purchaseViewRevision &&
-      lineId.toLowerCase() === id.toLowerCase();
+      (!lineId || lineId.toLowerCase() === id.toLowerCase());
     if (!isCurrent()) return;
+    setLineId(id);
     setLine(null);
     setError("");
-    setBusy("Updating the funding line balance…");
+    setBusy(transactionHash ? "Waiting for purchase confirmation and updating the balance…" : "Updating the funding line balance…");
     try {
+      if (transactionHash) {
+        await client.waitForTransactionReceipt({ hash: transactionHash, timeout: 45_000 });
+        if (!isCurrent()) return;
+      }
       const value = await readCandidateLine(client, id);
-      if (isCurrent()) { setLine(value); setMode("manage"); }
+      if (isCurrent()) { setLineId(id); setLine(value); setMode("manage"); }
     } catch (cause) {
-      if (isCurrent()) setError(`Could not refresh the line balance. Load the line again when your connection recovers. ${messageOf(cause)}`);
+      if (isCurrent()) setError(`Could not confirm the latest line balance. Use “Check payment & recover result” when your connection recovers; do not submit another purchase. ${messageOf(cause)}`);
     }
   }
 
