@@ -92,8 +92,23 @@ export function createSelfServicePurchase({
     "Provider must use a fixed HTTPS URL.",
   );
   const key = `shadow.public-purchase.v1:${config.chainId}:${contract}:${account}`;
-  const read = (name, args = []) =>
-    client.readContract({ address: contract, abi, functionName: name, args });
+  const read = async (name, args = []) => {
+    const result = await client.readContract({
+      address: contract,
+      abi,
+      functionName: name,
+      args,
+    });
+    // Solidity's public mapping getter returns multiple outputs, not a tuple object.
+    if (name === "lines" && Array.isArray(result)) {
+      return Object.fromEntries(
+        abi
+          .find((entry) => entry.name === name)
+          .outputs.map((field, index) => [field.name, result[index]]),
+      );
+    }
+    return result;
+  };
   const domain = {
     name: "ShadowFloatMainnet",
     version: "1",

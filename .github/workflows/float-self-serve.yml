@@ -23,7 +23,7 @@ on:
       - "app/src/CandidateFundingDesk.tsx"
       - "app/src/candidateFunding.ts"
       - "app/src/selfServicePurchase.mjs"
-      - "app/scripts/self-service-purchase.test.mjs"
+      - "app/scripts/self-service-purchase*.test.mjs"
       - "app/scripts/shadow-v2-cycle-service.test.mjs"
       - "app/src/candidateFunding.css"
       - "app/src/walletCandidateProbePayload.ts"
@@ -97,7 +97,7 @@ jobs:
       - name: Test public testnet self-registration and wallet purchases
         run: |
           forge test --root contracts --match-contract ShadowFloatPublicTestnetTest
-          node --test app/scripts/self-service-purchase.test.mjs app/scripts/shadow-v2-cycle-service.test.mjs
+          node --test --test-concurrency=1 app/scripts/self-service-purchase*.test.mjs app/scripts/shadow-v2-cycle-service.test.mjs
       - name: Test the shared RPC read queue
         run: node --test app/scripts/rpc-read-queue.test.mjs
 
