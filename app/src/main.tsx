@@ -96,6 +96,7 @@ import {
   buildFloatV2OperationalHealth,
   type FloatV2OperationalHealth,
 } from "../floatV2Operations.js";
+import { SHADOW_ORIGIN } from "../shadowUrls.js";
 import "./styles.css";
 
 type PresetKey = "conservative" | "balanced" | "aggressive";
@@ -1757,10 +1758,22 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
   };
 }
 
+const HOME_TITLE = document.title;
+const ROUTE_TITLES: Record<string, string> = {
+  "/float": "Float | Shadow",
+  "/records": "Records | Shadow",
+  "/builders": "Builders | Shadow",
+  "/start": "Fund an agent | Shadow",
+  "/funding": "Earlier candidate | Shadow",
+  "/roadmap": "Roadmap | Shadow",
+};
+
 function App() {
   const { pathname } = useLocation();
-  const isBuilderRoute = pathname === "/builders";
-  const isRecordsRoute = pathname === "/records";
+  const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
+  const isBuilderRoute = route === "/builders";
+  const isRecordsRoute = route === "/records";
+  const isFundingDeskRoute = route === "/funding" || route === "/start";
   const [state, setState] = useState<ShadowState | null>(null);
   const [loading, setLoading] = useState(false);
   const [account, setAccount] = useState<Address>();
@@ -1799,6 +1812,17 @@ function App() {
   const [treasuryState, setTreasuryState] = useState<TreasuryState | null>(null);
   const [treasuryLoading, setTreasuryLoading] = useState(false);
   const [treasuryError, setTreasuryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    document.title = ROUTE_TITLES[route] ?? HOME_TITLE;
+    let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement("link");
+      canonical.rel = "canonical";
+      document.head.append(canonical);
+    }
+    canonical.href = `${SHADOW_ORIGIN}${route}`;
+  }, [route]);
 
   useEffect(() => {
     if (!isRecordsRoute) return;
@@ -2444,7 +2468,6 @@ function App() {
               the agent signs a bounded intent, the contract pays the provider, debt opens, repayment restores capacity,
               and oversized requests are blocked before funds move.
             </p>
-            <HomeTruthStrip floatState={floatV2State} deskState={floatDeskState} deskLoading={floatDeskLoading} />
             <div className="heroActions">
               <Link to="/start" className="heroCtaPrimary">
                 Fund an agent
@@ -2454,6 +2477,7 @@ function App() {
                 View external board
               </Link>
             </div>
+            <HomeTruthStrip floatState={floatV2State} deskState={floatDeskState} deskLoading={floatDeskLoading} />
             <ul className="heroTrust" aria-label="Built on">
               <li><span className="heroTrustDot heroTrustDot--signal" />Arc testnet</li>
               <li><span className="heroTrustDot heroTrustDot--proof" />Arc USDC</li>
@@ -2662,7 +2686,7 @@ function App() {
   );
 
   return (
-    <main className={pathname === "/funding" ? "shell candidateShell" : "shell"}>
+    <main className={isFundingDeskRoute ? "shell candidateShell" : "shell"}>
       <nav className="nav">
         <Link className="brand" to="/" aria-label="Shadow">
           <ShadowMark />
@@ -2689,7 +2713,7 @@ function App() {
           </NavLink>
         </div>
         <div className="navActions">
-          {pathname !== "/funding" && <button
+          {!isFundingDeskRoute && <button
             className={account ? "navWallet connected" : "navWallet"}
             onClick={connectWallet}
             type="button"
@@ -3694,7 +3718,7 @@ function RouteScroll() {
       const id = hash.slice(1);
       requestAnimationFrame(() => {
         const el = document.getElementById(id);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (el) el.scrollIntoView({ block: "start" });
         else window.scrollTo({ top: 0, behavior: "auto" });
       });
     } else {

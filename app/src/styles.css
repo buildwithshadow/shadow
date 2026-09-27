@@ -13,7 +13,7 @@
   --border-accent: rgba(52, 229, 255, 0.28);
   --ink: #f3f7ff;
   --ink-soft: #aebbd0;
-  --ink-faint: #6d7d96;
+  --ink-faint: #8895a9;
   --accent: #34e5ff;
   --signal: #34e5ff;
   --signal-soft: rgba(52, 229, 255, 0.11);
@@ -1494,7 +1494,7 @@ body,
 .floatDeskIntro a {
   border: 1px solid rgba(77, 240, 168, 0.25);
   border-radius: 999px;
-  color: var(--ok);
+  color: var(--copy);
   flex: 0 0 auto;
   font-family: var(--mono);
   font-size: 11px;
@@ -2050,7 +2050,7 @@ body,
 }
 
 .floatCreditRow.block .floatCreditAction strong {
-  color: var(--danger);
+  color: var(--block);
 }
 
 .floatCreditRow.pending .floatCreditAction strong {
@@ -8565,7 +8565,7 @@ h3 {
 }
 
 .liveFeedFilterLabel {
-  color: var(--ink-muted);
+  color: var(--ink-faint);
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.08em;
@@ -8586,7 +8586,7 @@ h3 {
 
 .liveFeedFilterBtn:hover {
   color: var(--ink);
-  border-color: var(--ink-muted);
+  border-color: var(--ink-faint);
 }
 
 .liveFeedFilterBtn.active {
@@ -8597,7 +8597,7 @@ h3 {
 
 .liveFeedFilterCount {
   margin-left: auto;
-  color: var(--ink-muted);
+  color: var(--ink-faint);
   font-size: 11px;
   font-family: var(--mono);
 }
@@ -9354,7 +9354,7 @@ code {
 }
 
 .reputationSignalReason {
-  color: var(--ink-muted);
+  color: var(--ink-faint);
   font-size: 12px;
   margin: -4px 0 0;
   font-family: var(--mono);
@@ -9402,7 +9402,7 @@ code {
 }
 
 .signalBadge--warming {
-  color: var(--ink-muted);
+  color: var(--ink-faint);
   border-color: var(--border);
 }
 
@@ -9441,7 +9441,7 @@ code {
 }
 
 .signalStripHint {
-  color: var(--ink-muted);
+  color: var(--ink-faint);
   font-size: 12px;
   flex: 1;
   min-width: 220px;
@@ -9473,7 +9473,7 @@ code {
 }
 
 .signalStripReason {
-  color: var(--ink-muted);
+  color: var(--ink-faint);
   font-size: 11px;
   font-family: var(--mono);
 }
@@ -12373,7 +12373,7 @@ body {
     padding: 11px 13px;
   }
   .navLinks {
-    gap: 7px 14px;
+    gap: 10px 14px;
   }
   .navLinks a,
   .navLinks .navLink {
@@ -13012,4 +13012,9 @@ body {
     line-height: 1.08;
     max-width: 270px;
   }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }
