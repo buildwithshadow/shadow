@@ -145,7 +145,7 @@ An answer over 16 MiB is refused without being read to its end. `--out` is writt
 When serving the public browser flow, set `PROVIDER_PUBLIC_ORIGIN` to the exact
 HTTPS frontend origin. Requests with another browser origin are rejected; clients
 without an Origin header remain supported. This is CORS, not user authentication.
-The public default admits four active requests, with two reserved for recovery, and 120 requests per caller/route per minute. Unknown routes do not consume those quotas. A
+The public default admits four active requests, with two reserved exclusively for `/serve` result delivery, and 120 requests per caller/route per minute. Status and purchase admission share the other two slots. Each route has its own bounded caller-quota table, so status-table exhaustion cannot deny a new delivery caller. Unknown routes do not consume those quotas. A
 single provider process reserves capacity across distinct digests before signing;
 unresolved admitted, prepared and accepted purchases share the 1,000-purchase admission ceiling. Completed deliveries free capacity while their records remain available for recovery. At capacity, a bounded sweep checks up to 32 records against one finalized block, at most once per 30 seconds. Expired authorizations free capacity only when that finalized receipt proves they are unpaid or blocked; paid but undelivered records stay held. Original records are retained alongside the release evidence. RPC failures leave capacity held. Existing
 accepted and prepared requests remain recoverable at capacity. Do not remove
@@ -157,4 +157,4 @@ and have that proxy overwrite `X-Shadow-Client-IP` with the actual remote addres
 Only a loopback socket may supply this header; otherwise the socket address is
 used. Never forward a caller-supplied value. The hosted Caddy route uses
 `header_up X-Shadow-Client-IP {remote_host}`. One caller may occupy at most one
-public request slot in each of the purchase and recovery lanes.
+public request slot per route.
