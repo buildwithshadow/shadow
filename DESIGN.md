@@ -69,7 +69,7 @@ Mono is for data and labels, not prose. Older pages use it more widely than that
 
 Every page works at 320 CSS pixels wide with no horizontal scrolling and no lost content or function. Check at 320px, not only at desktop widths.
 
-Touch targets aim for 44px (WCAG 2.5.5). The funding desk (nav, buttons, inputs, checkbox rows) and the Builders action buttons are built to it. Elsewhere most controls fall short: nav links (15px), footer links (17px), the nav Wallet and Fund an agent buttons (34px), page call to action links (32 to 43px), standalone links inside panels, and the Builders text inputs (41px) and 16px confirm checkbox. They are brought up as pages are rebuilt. The floor every page must keep is WCAG 2.2 AA (2.5.8): a target is at least 24px, or its centre is at least 24px from its neighbours' centres.
+Touch targets aim for 44px (WCAG 2.5.5). The funding desk (nav, buttons, inputs, checkbox rows) and the Builders action buttons are built to it. Elsewhere most controls fall short: nav links (15px), footer links (17px), the nav Wallet and Fund an agent buttons (34px), page call to action links (32 to 43px), standalone links inside panels, and the Builders text inputs (41px) and 16px confirm checkbox. They are brought up as pages are rebuilt. The floor every page must keep is WCAG 2.2 AA (2.5.8): a target is at least 24px, or its centre is at least 24px from its neighbours' centres. On phones the nav's 10px row gap is what keeps its 15px links above that floor.
 
 ## Participant screens
 
