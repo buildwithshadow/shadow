@@ -414,7 +414,8 @@ async function reconcileCandidatePending(client: CandidateReadClient, rawPending
     const exact = transaction.to !== null && same(transaction.to, pending.to) && same(transaction.input, pending.data) && transaction.value === 0n
     if (!exact) return { status: 'replaced', txHash, message: 'A different transaction consumed this wallet nonce. The saved Shadow action was replaced; refresh current state before preparing any new action.' }
     if (receipt.status !== 'success') return { status: 'reverted', txHash, message: 'The transaction reverted onchain. Its intended action did not complete; refresh before preparing another request.' }
-    if (!hasExpectedEvent(pending, receipt)) return unknown('The transaction succeeded, but its expected Shadow event could not be verified. Keep this record and investigate before retrying.')
+    const registered = pending.kind === 'register' && await read(client, 'sponsorAllowed', [pending.account], receipt.blockNumber) === true
+    if (!registered && !hasExpectedEvent(pending, receipt)) return unknown('The transaction succeeded, but its expected Shadow event could not be verified. Keep this record and investigate before retrying.')
     return { status: 'confirmed', txHash, message: 'The exact transaction and its onchain result are confirmed.', ...(pending.lineId ? { lineId: pending.lineId } : {}) }
   } catch {
     return unknown('Confirmation is pending or the chain could not be read reliably. Keep this transaction record and check again; nothing has been resent.')

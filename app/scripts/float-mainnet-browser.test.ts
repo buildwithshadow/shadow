@@ -457,3 +457,20 @@ test('deployment-specific journal cannot certify a legacy record or accept a non
   assert.equal(f.state.sends, 1)
   await assert.rejects(() => publicKit.executeCandidateCall(publicSession, prepared), /Resolve the saved transaction/)
 })
+
+
+test('an exact successful idempotent registration resolves without a repeated admission event', async () => {
+  const f = fixture()
+  const kit = createCandidateFundingKit({ ...CANDIDATE_FUNDING, selfRegistration: true })
+  f.state.sponsorAllowed = false; f.state.sponsorAdmissionRevoked = false
+  const prepared = await kit.prepareCandidateRegistration(f.client, sponsor)
+  const pending: CandidatePending = { version: 1, chainId: CANDIDATE_FUNDING.chainId, candidate: CANDIDATE_FUNDING.address,
+    account: sponsor, kind: 'register', to: prepared.to, data: prepared.data, value: '0', amount: '0', lineId: null, agent: null,
+    expectedEpoch: null, fromBlock: f.state.block.number.toString(), nonce: f.state.nonce, createdAt: new Date().toISOString(), status: 'pending', txHash }
+  f.state.transactions.set(txHash, { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: pending.nonce, chainId: pending.chainId, blockHash })
+  f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber: f.state.block.number, blockHash, logs: [] })
+  f.state.sponsorAllowed = true
+  assert.equal((await kit.reconcileCandidatePending(f.client, pending)).status, 'confirmed')
+  f.state.sponsorAllowed = false
+  assert.equal((await kit.reconcileCandidatePending(f.client, pending)).status, 'unknown')
+})

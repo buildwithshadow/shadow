@@ -2717,8 +2717,8 @@ function App() {
         <Route path="/float" element={floatPage} />
         <Route path="/proof" element={<Navigate to="/float" replace />} />
         <Route path="/builders" element={buildersPage} />
-        <Route path="/funding" element={<CandidateFundingDesk />} />
-        <Route path="/start" element={<CandidateFundingDesk deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
+        <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
+        <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
         <Route path="/archive" element={<Navigate to="/float" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
