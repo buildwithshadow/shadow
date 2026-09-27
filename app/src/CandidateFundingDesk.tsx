@@ -411,7 +411,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </section>}
 
     {service && <PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} initialLineId={lineId} />}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
     <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 

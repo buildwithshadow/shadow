@@ -4,11 +4,10 @@ import { candidateErrorMessage, candidateFundingChain, type CandidateDeployment 
 import { createSelfServicePurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, initialLineId }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; initialLineId: string;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void;
 }) {
-  const [lineId, setLineId] = useState(initialLineId);
   const [record, setRecord] = useState<PurchaseRecord | null>(null);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
@@ -40,7 +39,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     try {
       if (kind === 'prepare') {
         const job = Array.from(crypto.getRandomValues(new Uint8Array(16)), x => x.toString(16).padStart(2, '0')).join('');
-        await engine.prepare(lineId || initialLineId, `report:${job}:${service.sourcePayment}`);
+        await engine.prepare(lineId, `report:${job}:${service.sourcePayment}`);
         if (revision.current === current) setReviewing(true);
       } else if (kind === 'submit') {
         await engine.submit();
@@ -70,7 +69,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     <p>Connect the agent’s browser wallet to sign and execute the purchase. It pays testnet gas. The sponsor’s line covers the service price and records the repayment obligation.</p>
     {!record && <form onSubmit={event => { event.preventDefault(); void action('prepare'); }}>
       <div className="fundingField"><label htmlFor="purchase-line">Funding line ID</label>
-        <input id="purchase-line" value={lineId || initialLineId} onChange={event => setLineId(event.target.value)} required disabled={Boolean(busy)} autoComplete="off" spellCheck={false} />
+        <input id="purchase-line" value={lineId} onChange={event => onLineIdChange(event.target.value)} required disabled={Boolean(busy)} autoComplete="off" spellCheck={false} />
       </div><button type="submit" className="fundingPrimary" disabled={disabled}>Review service purchase</button>
     </form>}
     {record && <>
