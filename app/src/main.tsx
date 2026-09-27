@@ -1761,6 +1761,7 @@ function App() {
   const { pathname } = useLocation();
   const isBuilderRoute = pathname === "/builders";
   const isRecordsRoute = pathname === "/records";
+  const isFundingDeskRoute = pathname === "/funding" || pathname === "/start";
   const [state, setState] = useState<ShadowState | null>(null);
   const [loading, setLoading] = useState(false);
   const [account, setAccount] = useState<Address>();
@@ -2662,7 +2663,7 @@ function App() {
   );
 
   return (
-    <main className={pathname === "/funding" ? "shell candidateShell" : "shell"}>
+    <main className={isFundingDeskRoute ? "shell candidateShell" : "shell"}>
       <nav className="nav">
         <Link className="brand" to="/" aria-label="Shadow">
           <ShadowMark />
@@ -2689,7 +2690,7 @@ function App() {
           </NavLink>
         </div>
         <div className="navActions">
-          {pathname !== "/funding" && <button
+          {!isFundingDeskRoute && <button
             className={account ? "navWallet connected" : "navWallet"}
             onClick={connectWallet}
             type="button"
@@ -3694,7 +3695,7 @@ function RouteScroll() {
       const id = hash.slice(1);
       requestAnimationFrame(() => {
         const el = document.getElementById(id);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "start" });
+        if (el) el.scrollIntoView({ block: "start" });
         else window.scrollTo({ top: 0, behavior: "auto" });
       });
     } else {
