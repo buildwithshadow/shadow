@@ -156,7 +156,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       return { acceptance: stored, checkedIntent: null };
     }
     // Keep existing recovery available even when new purchase storage is full.
-    if (readdirSync(storeDir).filter(name => name.endsWith('.acceptance.json')).length >= maxStoredPurchases) {
+    if (new Set(readdirSync(storeDir).filter(name => /^0x[0-9a-f]{64}\.(?:prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66))).size >= maxStoredPurchases) {
       throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
     }
     // acceptIntent's checks that need no chain read, made first, so that an

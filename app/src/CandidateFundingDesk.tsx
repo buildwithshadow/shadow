@@ -313,6 +313,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </header>
 
     <p className="fundingScope">{service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
+    {service && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase.</p>}
     {service && account && <section className="fundingPanel" aria-labelledby="agent-invite-title">
       <h2 id="agent-invite-title">Ask a sponsor to fund your agent</h2>
       <p>Share this link with your sponsor. It includes your connected wallet as the agent; they review the address and choose the budget themselves.</p>
