@@ -96,6 +96,7 @@ import {
   buildFloatV2OperationalHealth,
   type FloatV2OperationalHealth,
 } from "../floatV2Operations.js";
+import { SHADOW_ORIGIN } from "../shadowUrls.js";
 import "./styles.css";
 
 type PresetKey = "conservative" | "balanced" | "aggressive";
@@ -1757,11 +1758,22 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
   };
 }
 
+const HOME_TITLE = document.title;
+const ROUTE_TITLES: Record<string, string> = {
+  "/float": "Float | Shadow",
+  "/records": "Records | Shadow",
+  "/builders": "Builders | Shadow",
+  "/start": "Fund an agent | Shadow",
+  "/funding": "Earlier candidate | Shadow",
+  "/roadmap": "Roadmap | Shadow",
+};
+
 function App() {
   const { pathname } = useLocation();
-  const isBuilderRoute = pathname === "/builders";
-  const isRecordsRoute = pathname === "/records";
-  const isFundingDeskRoute = pathname === "/funding" || pathname === "/start";
+  const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
+  const isBuilderRoute = route === "/builders";
+  const isRecordsRoute = route === "/records";
+  const isFundingDeskRoute = route === "/funding" || route === "/start";
   const [state, setState] = useState<ShadowState | null>(null);
   const [loading, setLoading] = useState(false);
   const [account, setAccount] = useState<Address>();
@@ -1800,6 +1812,17 @@ function App() {
   const [treasuryState, setTreasuryState] = useState<TreasuryState | null>(null);
   const [treasuryLoading, setTreasuryLoading] = useState(false);
   const [treasuryError, setTreasuryError] = useState<string | null>(null);
+
+  useEffect(() => {
+    document.title = ROUTE_TITLES[route] ?? HOME_TITLE;
+    let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
+    if (!canonical) {
+      canonical = document.createElement("link");
+      canonical.rel = "canonical";
+      document.head.append(canonical);
+    }
+    canonical.href = `${SHADOW_ORIGIN}${route}`;
+  }, [route]);
 
   useEffect(() => {
     if (!isRecordsRoute) return;
