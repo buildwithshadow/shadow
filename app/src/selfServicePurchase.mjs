@@ -276,9 +276,10 @@ export function createSelfServicePurchase({
     );
     const block = await client.getBlock();
     const minimum = await read("minimumRepaymentWindow");
-    const dueAt = block.timestamp + minimum + 300n;
+    const signatureExpiry = block.timestamp + 600n;
+    const dueAt = signatureExpiry + minimum;
     assert(
-      dueAt <= line.expiry && minimum + 300n <= line.maximumRepaymentWindow,
+      dueAt <= line.expiry && minimum + 600n <= line.maximumRepaymentWindow,
       "Funding line repayment window is too short.",
     );
     const nonce = BigInt(
@@ -296,7 +297,7 @@ export function createSelfServicePurchase({
       maximumTotalDebt: principal,
       dueAt,
       nonce,
-      signatureExpiry: block.timestamp + 600n,
+      signatureExpiry,
       executor: account,
     };
     const typedData = {
@@ -479,16 +480,26 @@ export function createSelfServicePurchase({
   // Completion does not silently erase ambiguous payment state.
   async function archive() {
     const record = load();
-    assert(
-      record?.stage === "delivered",
-      "Only a delivered purchase can be archived.",
-    );
+    assert(record, "No saved purchase.");
     await identity();
-    assert(
-      Number(await read("receiptStatus", [record.intent.digest])) === 2,
-      "Payment needs reconciliation.",
+    const receiptStatus = Number(
+      await read("receiptStatus", [record.intent.digest]),
     );
-    storage.setItem(`${key}:${record.intent.digest}`, serial(record));
+    assert(
+      receiptStatus === 1 ||
+        (record.stage === "delivered" && receiptStatus === 2),
+      "Only a confirmed refusal or delivered purchase can be archived.",
+    );
+    const destination = `${key}:${record.intent.digest}`;
+    const archived = serial({
+      ...record,
+      terminalStatus: receiptStatus === 1 ? "blocked" : "delivered",
+    });
+    storage.setItem(destination, archived);
+    assert(
+      storage.getItem(destination) === archived,
+      "Purchase archive could not be persisted.",
+    );
     storage.removeItem(key);
   }
   return {

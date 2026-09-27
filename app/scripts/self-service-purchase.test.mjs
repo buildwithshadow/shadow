@@ -131,6 +131,7 @@ function setup() {
     client,
     wallet,
     counts: () => ({ sends, signs }),
+    paidStatus: (value) => (status = value),
     lose: () => (lost = true),
     block: () => (policy = false),
     tamperReceipt: () => (receiptTamper = true),
@@ -198,4 +199,26 @@ test("wrong agent, missing persistence and concurrent repeated submissions fail 
   const results = await Promise.allSettled([f.submit(), f.submit()]);
   assert.equal(results.filter((x) => x.status === "fulfilled").length, 1);
   assert.equal(j.counts().sends, 1);
+});
+
+test("repayment deadline remains valid through the complete signature lifetime", async () => {
+  const h = setup(),
+    flow = h.create();
+  const r = await flow.prepare(lineId, "job-deadline");
+  const m = r.intent.typedData.message;
+  assert.equal(BigInt(m.dueAt), BigInt(m.signatureExpiry) + 60n);
+});
+
+test("confirmed refusal can be archived but unresolved payments remain held", async () => {
+  const h = setup(),
+    flow = h.create();
+  await flow.prepare(lineId, "job-refusal");
+  await assert.rejects(flow.archive(), /confirmed refusal/);
+  h.paidStatus(1);
+  assert.equal((await flow.recover()).status, "blocked");
+  await flow.archive();
+  assert.equal(flow.load(), null);
+  h.paidStatus(0);
+  await flow.prepare(lineId, "job-next");
+  assert.equal(flow.load().requestId, "job-next");
 });
