@@ -4,9 +4,9 @@ import { candidateErrorMessage, candidateFundingChain, type CandidateDeployment 
 import { createSelfServicePurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string): Promise<void>;
 }) {
   const [record, setRecord] = useState<PurchaseRecord | null>(null);
   const [error, setError] = useState('');
@@ -56,7 +56,17 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       }
     } catch (cause) { if (revision.current === current) { setError(candidateErrorMessage(cause)); setReviewing(false); } }
     finally {
-      if (revision.current === current) { try { setRecord(engine.load()); } catch (cause) { setError(candidateErrorMessage(cause)); } }
+      if (revision.current === current) {
+        try {
+          const saved = engine.load();
+          setRecord(saved);
+          // Even a delivery failure can follow a confirmed payment. Refresh from
+          // chain after submission/recovery, never infer balances from delivery.
+          if (saved && (kind === 'submit' || kind === 'recover')) {
+            await onPurchaseChanged(saved.intent.typedData.message.lineId);
+          }
+        } catch (cause) { setError(candidateErrorMessage(cause)); }
+      }
       inFlight.current = false; setBusy('');
     }
   }

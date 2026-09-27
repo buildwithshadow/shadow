@@ -217,6 +217,24 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     finally { setBusy(""); }
   }
 
+  // Capture the view that launched the purchase; a late response must not
+  // replace a different line or an account/network selection made meanwhile.
+  const purchaseViewRevision = revision.current;
+  async function refreshPurchaseLine(id: string) {
+    const isCurrent = () => revision.current === purchaseViewRevision &&
+      lineId.toLowerCase() === id.toLowerCase();
+    if (!isCurrent()) return;
+    setLine(null);
+    setError("");
+    setBusy("Updating the funding line balance…");
+    try {
+      const value = await readCandidateLine(client, id);
+      if (isCurrent()) { setLine(value); setMode("manage"); }
+    } catch (cause) {
+      if (isCurrent()) setError(`Could not refresh the line balance. Load the line again when your connection recovers. ${messageOf(cause)}`);
+    }
+  }
+
   async function refreshAfter(result: CandidateResolution, forAccount: Address, currentRevision: number) {
     if (result.status !== "confirmed") return;
     const isCurrent = () => activeAccount.current === forAccount && revision.current === currentRevision;
@@ -411,7 +429,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </section>}
 
     {service && <PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
     <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 
