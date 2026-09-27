@@ -28,6 +28,9 @@ The provider still needs a reachable candidate-compatible HTTP service.
 Retain one stable request ID across failures. `recover()` only checks the original
 payment and retrieves/verifies its result. It never requests a transaction.
 A lost wallet response leaves the attempt unresolved, including after refresh.
+A confirmed refusal or an expired, unpaid authorization can be archived after
+checking receipt status and expiry against the same finalized block. Paid results
+are recovered before archival; unexpired unknown attempts cannot be discarded.
 Browser Web Locks coordinate requests across tabs; unavailable persistence or
 locking blocks a new transaction. A different browser/device can still submit a
 transaction independently, but the onchain nonce and intent digest prevent a

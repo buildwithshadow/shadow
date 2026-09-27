@@ -34,6 +34,7 @@ const acceptanceTypes = {
 };
 function setup() {
   const data = new Map();
+  let now = 1000n;
   let sends = 0,
     signs = 0,
     lost = false,
@@ -48,7 +49,7 @@ function setup() {
   const client = {
     getChainId: async () => 5042002,
     getCode: async () => code,
-    getBlock: async () => ({ timestamp: 1000n }),
+    getBlock: async () => ({ number: 123n, timestamp: now }),
     readContract: async ({ functionName }) =>
       ({
         lines: {
@@ -132,6 +133,7 @@ function setup() {
     wallet,
     counts: () => ({ sends, signs }),
     paidStatus: (value) => (status = value),
+    advance: (value) => (now = value),
     lose: () => (lost = true),
     block: () => (policy = false),
     tamperReceipt: () => (receiptTamper = true),
@@ -221,4 +223,17 @@ test("confirmed refusal can be archived but unresolved payments remain held", as
   h.paidStatus(0);
   await flow.prepare(lineId, "job-next");
   assert.equal(flow.load().requestId, "job-next");
+});
+
+test("lost wallet response remains held until its unpaid authorization expires", async () => {
+  const h = setup(),
+    flow = h.create();
+  await flow.prepare(lineId, "job-expiry");
+  h.lose();
+  await assert.rejects(flow.submit(), /disconnected/);
+  h.advance(1600n);
+  await assert.rejects(flow.archive(), /confirmed refusal/);
+  h.advance(1601n);
+  await flow.archive();
+  assert.equal(flow.load(), null);
 });

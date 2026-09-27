@@ -92,12 +92,13 @@ export function createSelfServicePurchase({
     "Provider must use a fixed HTTPS URL.",
   );
   const key = `shadow.public-purchase.v1:${config.chainId}:${contract}:${account}`;
-  const read = async (name, args = []) => {
+  const read = async (name, args = [], blockNumber) => {
     const result = await client.readContract({
       address: contract,
       abi,
       functionName: name,
       args,
+      blockNumber,
     });
     // Solidity's public mapping getter returns multiple outputs, not a tuple object.
     if (name === "lines" && Array.isArray(result)) {
@@ -482,18 +483,35 @@ export function createSelfServicePurchase({
     const record = load();
     assert(record, "No saved purchase.");
     await identity();
-    const receiptStatus = Number(
-      await read("receiptStatus", [record.intent.digest]),
+    const block = await client.getBlock({ blockTag: "finalized" });
+    assert(
+      typeof block.number === "bigint",
+      "A confirmed block is required to resolve the purchase.",
     );
+    const receiptStatus = Number(
+      await read("receiptStatus", [record.intent.digest], block.number),
+    );
+    // At a block after expiry this authorization can no longer pay. Reading
+    // status at that SAME block prevents a stale RPC response hiding a payment.
+    const expired =
+      receiptStatus === 0 &&
+      block.timestamp > BigInt(record.intent.typedData.message.signatureExpiry);
     assert(
       receiptStatus === 1 ||
+        expired ||
         (record.stage === "delivered" && receiptStatus === 2),
-      "Only a confirmed refusal or delivered purchase can be archived.",
+      "Only a confirmed refusal, expired unpaid intent or delivered purchase can be archived.",
     );
     const destination = `${key}:${record.intent.digest}`;
     const archived = serial({
       ...record,
-      terminalStatus: receiptStatus === 1 ? "blocked" : "delivered",
+      terminalStatus:
+        receiptStatus === 1
+          ? "blocked"
+          : expired
+            ? "expired-unpaid"
+            : "delivered",
+      resolvedAtBlock: block.number,
     });
     storage.setItem(destination, archived);
     assert(
