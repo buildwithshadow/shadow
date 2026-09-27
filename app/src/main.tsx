@@ -2445,7 +2445,6 @@ function App() {
               the agent signs a bounded intent, the contract pays the provider, debt opens, repayment restores capacity,
               and oversized requests are blocked before funds move.
             </p>
-            <HomeTruthStrip floatState={floatV2State} deskState={floatDeskState} deskLoading={floatDeskLoading} />
             <div className="heroActions">
               <Link to="/start" className="heroCtaPrimary">
                 Fund an agent
@@ -2455,6 +2454,7 @@ function App() {
                 View external board
               </Link>
             </div>
+            <HomeTruthStrip floatState={floatV2State} deskState={floatDeskState} deskLoading={floatDeskLoading} />
             <ul className="heroTrust" aria-label="Built on">
               <li><span className="heroTrustDot heroTrustDot--signal" />Arc testnet</li>
               <li><span className="heroTrustDot heroTrustDot--proof" />Arc USDC</li>
