@@ -55,6 +55,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   }));
   const [providerAgreed, setProviderAgreed] = useState(false);
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
+  const [snapshotError, setSnapshotError] = useState("");
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
   const [line, setLine] = useState<CandidateLine | null>(null);
   const [pending, setPending] = useState<CandidatePending | null>(null);
@@ -67,6 +68,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
+  const feedback = useRef<HTMLDivElement>(null);
   const revision = useRef(0);
   const activeAccount = useRef<Address | null>(null);
   const walletReadSequence = useRef(0);
@@ -128,6 +130,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
   useEffect(() => {
     setSnapshot(null);
+    setSnapshotError("");
     setPending(null);
     setJournalError("");
     if (!account) return;
@@ -136,7 +139,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     const changed = () => loadJournal(account);
     window.addEventListener("storage", changed);
     readCandidateSnapshot(client, { sponsor: account }).then((value) => { if (active) setSnapshot(value); })
-      .catch((cause) => { if (active) setError(`Could not read your sponsor status. ${messageOf(cause)}`); });
+      .catch((cause) => { if (active) setSnapshotError(`Could not read your sponsor status. ${messageOf(cause)} Reload the page to try again.`); });
     return () => { active = false; window.removeEventListener("storage", changed); };
   }, [account]);
 
@@ -144,6 +147,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     if (prepared && dialog.current && !dialog.current.open) dialog.current.showModal();
     if (!prepared && dialog.current?.open) dialog.current.close();
   }, [prepared]);
+
+  useEffect(() => {
+    if (error) feedback.current?.scrollIntoView({ block: "nearest" });
+  }, [error]);
 
   async function connect() {
     setError("");
@@ -319,6 +326,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const repayable = line && (line.stateName === "DRAWN" || line.stateName === "DEFAULTED") && line.principalOutstanding > 0n;
   const reclaimable = line && isSponsor && ((line.stateName === "OPEN" && line.principalOutstanding === 0n) ||
     (line.stateName === "DEFAULTED" && line.availableReserve + line.recoveryAvailable > 0n));
+  const openBlocker = !account ? "Connect your wallet to review and fund." : !correctNetwork ? "Switch to Arc testnet to continue."
+    : pending ? "Check the previous transaction above before funding." : journalError ? "Transaction recovery is unavailable in this browser. See the message above."
+    : snapshot?.openingsPaused ? "New lines are currently paused."
+    : snapshot?.sponsorAllowed === false ? (deployment.selfRegistration ? "Register this wallet above before funding." : "This wallet is not approved as a sponsor yet.")
+    : !providerAgreed ? "Confirm the provider agreement above to continue." : null;
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
@@ -348,7 +360,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       <button type="button" aria-pressed={mode === "manage"} onClick={() => { invalidate(); setMode("manage"); }} disabled={Boolean(busy)}>Manage a line</button>
     </div>
 
-    <div className="fundingFeedback" aria-live="polite" aria-atomic="true">
+    <div className="fundingFeedback" ref={feedback} aria-live="polite" aria-atomic="true">
       {busy && <p role="status">{busy}</p>}
       {error && <p className="fundingError" role="alert">{error}</p>}
       {journalError && <p className="fundingError" role="alert">{journalError} New transactions are disabled until recovery is available.</p>}
@@ -357,6 +369,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {resolution.message} {resolution.txHash && <a href={`${explorer}/tx/${resolution.txHash}`} target="_blank" rel="noreferrer">View transaction</a>}
       </p>}
     </div>
+    {snapshotError && !snapshot && <p className="fundingCallout" role="alert">{snapshotError}</p>}
 
     {pending && <section className="fundingRecovery" aria-labelledby="funding-recovery-title">
       <h2 id="funding-recovery-title">Check the previous transaction first</h2>
@@ -396,8 +409,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div></fieldset>
       <label className="fundingCheck"><input type="checkbox" checked={providerAgreed} onChange={(event) => { invalidate(); setProviderAgreed(event.target.checked); }} disabled={Boolean(busy)} />
         <span>The provider has agreed to accept Shadow’s payment proof and deliver this service. A token transfer alone does not guarantee delivery or repayment.</span></label>
-      <div className="fundingActions"><button className="fundingPrimary" type="submit" disabled={!canWrite || !providerAgreed || snapshot?.sponsorAllowed === false || snapshot?.openingsPaused}>Review funding line</button>
-        <small>{!account ? "Connect your wallet to review and fund." : !correctNetwork ? "Switch to Arc testnet to continue." : "Review first. Any USDC approval and funding transaction need separate wallet confirmations."}</small></div>
+      <div className="fundingActions"><button className="fundingPrimary" type="submit" disabled={Boolean(busy) || openBlocker !== null} aria-describedby="funding-open-hint">Review funding line</button>
+        <small id="funding-open-hint">{openBlocker ?? (!snapshot && !snapshotError ? "Checking this wallet’s sponsor status…" : "Review first. Any USDC approval and funding transaction need separate wallet confirmations.")}</small></div>
     </form> : <section className="fundingPanel" aria-labelledby="funding-manage-title">
       <div className="fundingPanelHead"><div><h2 id="funding-manage-title">Find your funding line</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
       <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
