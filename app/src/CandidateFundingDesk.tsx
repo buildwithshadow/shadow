@@ -326,12 +326,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const repayable = line && (line.stateName === "DRAWN" || line.stateName === "DEFAULTED") && line.principalOutstanding > 0n;
   const reclaimable = line && isSponsor && ((line.stateName === "OPEN" && line.principalOutstanding === 0n) ||
     (line.stateName === "DEFAULTED" && line.availableReserve + line.recoveryAvailable > 0n));
-  // selfServicePurchase.prepare() signs for 600 seconds and makes the purchase due the contract minimum after that,
-  // so the agent can only buy while the line has that long left, allows a window at least that long, and holds the price.
-  const purchaseLead = snapshot ? snapshot.minimumRepaymentWindow + 600n : null;
-  const shareable = Boolean(service && line && isSponsor && line.stateName === "OPEN" && line.sponsorAllowed && !line.spendsPaused &&
-    purchaseLead !== null && line.expiry - line.observedTimestamp >= purchaseLead && line.maximumRepaymentWindow >= purchaseLead &&
-    line.availableReserve >= BigInt(service.principal));
+  const shareable = Boolean(service && line && isSponsor && line.stateName === "OPEN" && line.expiry > line.observedTimestamp &&
+    line.sponsorAllowed && !line.spendsPaused);
   const openBlocker = !account ? "Connect your wallet to review and fund." : !correctNetwork ? "Switch to Arc testnet to continue."
     : pending ? "Check the previous transaction above before funding." : journalError ? "Transaction recovery is unavailable in this browser. See the message above."
     : snapshot?.openingsPaused ? "New lines are currently paused."
@@ -440,7 +436,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {shareable &&
           <div className="fundingField"><label htmlFor="line-share-link">Send this link to your agent</label>
           <input id="line-share-link" readOnly aria-describedby="line-share-link-hint" value={`${window.location.origin}${window.location.pathname}?line=${line.lineId}`} />
-          <small id="line-share-link-hint">It opens this page with the line filled in for the agent’s purchase.</small></div>}
+          <small id="line-share-link-hint">It opens this page with the line filled in. The agent’s page checks the line again before any payment is sent.</small></div>}
         <div className="fundingActions">
           {repayable && <button className="fundingPrimary" type="button" disabled={!canWrite} onClick={() => void review("repay")}>Review full repayment</button>}
           {reclaimable && <button className="fundingPrimary" type="button" disabled={!canWrite} onClick={() => void review("reclaim")}>{line.stateName === "DEFAULTED" ? "Review recovery claim" : "Review close and reclaim"}</button>}
