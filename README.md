@@ -22,7 +22,8 @@ Chain: Arc Testnet, chain id `5042002`
 
 Start at [www.shadowbuild.xyz/start](https://www.shadowbuild.xyz/start). Sponsors
 register and fund a bounded line from their own browser wallet; agents sign and
-submit purchases, recover results, repay and reclaim eligible funds. This uses
+submit purchases and recover results. Anyone can repay the debt; only the sponsor
+can reclaim eligible line funds. This uses
 the separate `ShadowFloatPublicTestnet` deployment on Arc testnet, not the V2
 contract described above or the earlier candidate below. See the
 [current browser interface and deployment guide](docs/SELF_SERVICE_TESTNET.md).
