@@ -230,7 +230,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const purchaseViewRevision = revision.current;
   async function refreshPurchaseLine(id: string, transactionHash?: Hex) {
     const isCurrent = () => revision.current === purchaseViewRevision &&
-      (!lineId || lineId.toLowerCase() === id.toLowerCase());
+      (!lineId.trim() || lineId.trim().toLowerCase() === id.trim().toLowerCase());
     if (!isCurrent()) return;
     setLineId(id);
     setLine(null);
