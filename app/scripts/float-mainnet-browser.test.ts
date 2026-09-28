@@ -474,3 +474,10 @@ test('an exact successful idempotent registration resolves without a repeated ad
   f.state.sponsorAllowed = false
   assert.equal((await kit.reconcileCandidatePending(f.client, pending)).status, 'unknown')
 })
+
+
+test('pasted funding line and wallet whitespace is normalized before contract reads', async () => {
+  const f = fixture()
+  assert.equal((await readCandidateLine(f.client, `  ${lineId}\n`)).lineId, lineId)
+  assert.equal((await prepareCandidateOpen(f.client, ` ${sponsor} `, { ...input, agent: ` ${input.agent} ` })).account, sponsor)
+})

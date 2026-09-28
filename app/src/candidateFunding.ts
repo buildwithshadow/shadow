@@ -69,10 +69,12 @@ const memoryLocks = new Set<string>()
 const uintKeys = ['epoch', 'expiry', 'maximumRepaymentWindow', 'day', 'termsVersion', 'reserveCap', 'availableReserve', 'principalOutstanding', 'recoveryAvailable', 'lineSpendCap', 'dailySpendCap', 'cumulativePrincipalPaid', 'spentToday', 'dueAt'] as const
 
 function address(raw: string, label = 'Wallet'): Address {
+  raw = raw.trim()
   if (!isAddress(raw) || isAddressEqual(raw, zeroAddress)) throw new Error(`${label} must be a nonzero wallet address.`)
   return getAddress(raw)
 }
 function hash(raw: string, label = 'Line ID'): Hash {
+  raw = raw.trim()
   if (!/^0x[0-9a-fA-F]{64}$/.test(raw) || raw.toLowerCase() === zeroHash) throw new Error(`${label} must be a nonzero 32-byte hash.`)
   return raw.toLowerCase() as Hash
 }
