@@ -1,4 +1,10 @@
-# Candidate purchase API (Arc testnet)
+# Candidate purchase API (separate backend-executor path)
+
+> For the live public browser flow, start with
+> [Self-service testnet](SELF_SERVICE_TESTNET.md). `/start` uses the agent’s
+> wallet for execution and the hosted provider protocol, not this `/v1` API.
+> This document describes the separate single-enrollment service. Do not request
+> an enrollment token or wait for this service to integrate the current browser UI.
 
 This service connects a participant interface to the candidate `SpendIntent`
 workflow. It does not use the older V2 `FloatSpendIntent` API. It prepares an
