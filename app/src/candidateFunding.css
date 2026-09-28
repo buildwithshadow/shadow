@@ -15,7 +15,9 @@
 .fundingModes { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
 .fundingModes button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
 .fundingFeedback:empty { display: none; }
-.fundingFeedback { margin: 12px 0; }
+.fundingFeedback { margin: 12px 0; scroll-margin-top: 112px; }
+@media (max-width: 880px) { .fundingFeedback { scroll-margin-top: 224px; } }
+@media (max-width: 720px) { .fundingFeedback { scroll-margin-top: 16px; } }
 .fundingFeedback p { padding: 14px 16px; margin: 8px 0; border: 1px solid var(--border-strong); border-radius: 8px; overflow-wrap: anywhere; line-height: 1.5; }
 .fundingFeedback .fundingError { border-color: var(--block); color: var(--ink); }
 .fundingFeedback .fundingSuccess { border-color: var(--accent); }
