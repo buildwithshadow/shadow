@@ -431,6 +431,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {line.principalOutstanding > 0n && <p>Repayment due: <strong>{when(line.dueAt)}</strong>. The obligation remains if service delivery is unresolved.</p>}
         {line.expiry <= line.observedTimestamp && <p className="fundingCallout">The line has expired for new purchases. Existing debt and eligible reclaim remain.</p>}
         {(!line.sponsorAllowed || line.spendsPaused) && <p className="fundingCallout">New purchases are currently restricted. You can still repay and reclaim eligible funds.</p>}
+        {service && isSponsor && line.stateName === "OPEN" && line.expiry > line.observedTimestamp && line.sponsorAllowed && !line.spendsPaused &&
+          <div className="fundingField"><label htmlFor="line-share-link">Send this link to your agent</label>
+          <input id="line-share-link" readOnly aria-describedby="line-share-link-hint" value={`${window.location.origin}${window.location.pathname}?line=${line.lineId}`} />
+          <small id="line-share-link-hint">It opens this page with the line filled in for the agent’s purchase.</small></div>}
         <div className="fundingActions">
           {repayable && <button className="fundingPrimary" type="button" disabled={!canWrite} onClick={() => void review("repay")}>Review full repayment</button>}
           {reclaimable && <button className="fundingPrimary" type="button" disabled={!canWrite} onClick={() => void review("reclaim")}>{line.stateName === "DEFAULTED" ? "Review recovery claim" : "Review close and reclaim"}</button>}
@@ -441,7 +445,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           <dl className="fundingDetails"><div><dt>Line ID</dt><dd><code>{line.lineId}</code></dd></div><div><dt>Sponsor</dt><dd><code>{line.sponsor}</code></dd></div>
             <div><dt>Agent</dt><dd><code>{line.agent}</code></dd></div><div><dt>Expires</dt><dd>{when(line.expiry)}</dd></div>
             <div><dt>Line daily limit</dt><dd>{usdc(line.dailySpendCap)} USDC</dd></div><div><dt>Line epoch</dt><dd>{line.epoch.toString()}</dd></div></dl>
-          <p>The agent signs a purchase and an executor submits it using the <a href="https://github.com/buildwithshadow/shadow/blob/main/docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md" target="_blank" rel="noreferrer">candidate participant tools</a>. This page manages funding, repayment and reclaim.</p>
+          <p>{service ? "The agent buys the service below, signing with its own wallet; this line pays the price. This section manages funding, repayment and reclaim." : <>The agent signs a purchase and an executor submits it using the <a href="https://github.com/buildwithshadow/shadow/blob/main/docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md" target="_blank" rel="noreferrer">candidate participant tools</a>. This page manages funding, repayment and reclaim.</>}</p>
         </details>
       </div>}
     </section>}
