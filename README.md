@@ -18,6 +18,16 @@ Repository: https://github.com/buildwithshadow/shadow
 
 Chain: Arc Testnet, chain id `5042002`
 
+## Public self-service testnet
+
+Start at [www.shadowbuild.xyz/start](https://www.shadowbuild.xyz/start). Sponsors
+register and fund a bounded line from their own browser wallet; agents sign and
+submit purchases and recover results. Anyone can repay the debt; only the sponsor
+can reclaim eligible line funds. This uses
+the separate `ShadowFloatPublicTestnet` deployment on Arc testnet, not the V2
+contract described above or the earlier candidate below. See the
+[current browser interface and deployment guide](docs/SELF_SERVICE_TESTNET.md).
+
 ## Mainnet Candidate
 
 `ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is a separate generation from the V2 contract described below. The candidate is deployed on **Arc testnet**, chain `5042002`, at [`0xFeDb5c8c29792d49947492F357f21dc8405F08fc`](https://testnet.arcscan.app/address/0xFeDb5c8c29792d49947492F357f21dc8405F08fc); its [deployment manifest](contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json) records the source and runtime identity. It is not deployed on mainnet and has not been independently audited.
