@@ -326,6 +326,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const repayable = line && (line.stateName === "DRAWN" || line.stateName === "DEFAULTED") && line.principalOutstanding > 0n;
   const reclaimable = line && isSponsor && ((line.stateName === "OPEN" && line.principalOutstanding === 0n) ||
     (line.stateName === "DEFAULTED" && line.availableReserve + line.recoveryAvailable > 0n));
+  // selfServicePurchase.prepare() signs for 600 seconds and makes the purchase due the contract minimum after that,
+  // so the agent can only buy while the line has that long left and allows a window at least that long.
+  const purchaseLead = snapshot ? snapshot.minimumRepaymentWindow + 600n : null;
+  const shareable = Boolean(service && line && isSponsor && line.stateName === "OPEN" && line.sponsorAllowed && !line.spendsPaused &&
+    purchaseLead !== null && line.expiry - line.observedTimestamp >= purchaseLead && line.maximumRepaymentWindow >= purchaseLead);
   const openBlocker = !account ? "Connect your wallet to review and fund." : !correctNetwork ? "Switch to Arc testnet to continue."
     : pending ? "Check the previous transaction above before funding." : journalError ? "Transaction recovery is unavailable in this browser. See the message above."
     : snapshot?.openingsPaused ? "New lines are currently paused."
@@ -431,7 +436,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {line.principalOutstanding > 0n && <p>Repayment due: <strong>{when(line.dueAt)}</strong>. The obligation remains if service delivery is unresolved.</p>}
         {line.expiry <= line.observedTimestamp && <p className="fundingCallout">The line has expired for new purchases. Existing debt and eligible reclaim remain.</p>}
         {(!line.sponsorAllowed || line.spendsPaused) && <p className="fundingCallout">New purchases are currently restricted. You can still repay and reclaim eligible funds.</p>}
-        {service && isSponsor && line.stateName === "OPEN" && line.expiry > line.observedTimestamp && line.sponsorAllowed && !line.spendsPaused &&
+        {shareable &&
           <div className="fundingField"><label htmlFor="line-share-link">Send this link to your agent</label>
           <input id="line-share-link" readOnly aria-describedby="line-share-link-hint" value={`${window.location.origin}${window.location.pathname}?line=${line.lineId}`} />
           <small id="line-share-link-hint">It opens this page with the line filled in for the agent’s purchase.</small></div>}
