@@ -208,7 +208,8 @@ test("repayment deadline remains valid through the complete signature lifetime",
     flow = h.create();
   const r = await flow.prepare(lineId, "job-deadline");
   const m = r.intent.typedData.message;
-  assert.equal(BigInt(m.dueAt), BigInt(m.signatureExpiry) + 60n);
+  assert.equal(BigInt(m.dueAt), 4600n);
+  assert.ok(BigInt(m.dueAt) >= BigInt(m.signatureExpiry) + 60n);
 });
 
 test("confirmed refusal can be archived but unresolved payments remain held", async () => {
@@ -236,4 +237,19 @@ test("lost wallet response remains held until its unpaid authorization expires",
   h.advance(1601n);
   await flow.archive();
   assert.equal(flow.load(), null);
+});
+
+test("purchase caps the due time at line expiry and rejects an unusable minimum window", async () => {
+  const h=setup();
+  const original=h.client.readContract;
+  let expiry=3000n;
+  h.client.readContract=async (args)=>args.functionName==='lines'?{...await original(args),expiry}:original(args);
+  const record=await h.create().prepare(`  ${lineId}\n`, 'job-expiry');
+  assert.equal(record.intent.typedData.message.lineId,lineId);
+  assert.equal(BigInt(record.intent.typedData.message.dueAt),3000n);
+  const short=setup();
+  const read=short.client.readContract;
+  short.client.readContract=async(args)=>args.functionName==='lines'?{...await read(args),expiry:1659n}:read(args);
+  await assert.rejects(short.create().prepare(lineId,'job-too-short'),/repayment window is too short/);
+  assert.equal(short.counts().signs,0);
 });

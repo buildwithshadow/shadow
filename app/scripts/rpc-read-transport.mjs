@@ -1,5 +1,5 @@
 import { BaseError, createTransport, http } from "viem";
-import { createRpcReadQueue } from "./rpc-read-queue.mjs";
+import { createRpcReadQueue, isTransientRpcReadError } from "./rpc-read-queue.mjs";
 
 // A separate read-only transport: never attach retry policy to a wallet/send
 // transport. The queue owns retries, so neither inner nor outer viem layers
@@ -52,13 +52,20 @@ function safeCause(error) {
   return sanitized;
 }
 
-export function createRpcReadTransport(url, { queueOptions = {}, ...httpOptions } = {}) {
+export function createRpcReadTransport(url, { queueOptions = {}, fallbackUrls = [], expectedChainId, ...httpOptions } = {}) {
+  const urls = [...new Set([url, ...fallbackUrls])];
+  if (urls.length > 1 && (!Number.isSafeInteger(expectedChainId) || expectedChainId <= 0)) {
+    throw new TypeError("RPC fallback requires an expected chain ID");
+  }
   const host = new URL(url).hostname;
   // Local Anvil has no shared provider quota; retain serialized reads/retries
   // without adding remote pacing to every contract regression test.
   const spacingMs = ["localhost", "127.0.0.1", "[::1]"].includes(host) ? 0 : 350;
   return (options) => {
-    const base = http(url, { timeout: 30_000, ...httpOptions, retryCount: 0 })(options);
+    const bases = urls.map((endpoint) => http(endpoint, { timeout: 30_000, ...httpOptions, retryCount: 0 })(options));
+    const base = bases[0];
+    const verified = new Set();
+    let active = 0;
     const queue = createRpcReadQueue({ spacingMs, ...queueOptions });
     return createTransport({
       ...base.config,
@@ -68,7 +75,22 @@ export function createRpcReadTransport(url, { queueOptions = {}, ...httpOptions 
       async request(request) {
         if (!READ_METHODS.has(request.method)) throw new BaseError(`read-only RPC transport refuses ${request.method}`);
         try {
-          return await queue(request.method, () => base.request(request, { retryCount: 0 }));
+          return await queue(request.method, async () => {
+            const index = active;
+            try {
+              if (expectedChainId !== undefined && !verified.has(index)) {
+                const chain = await bases[index].request({ method: "eth_chainId" }, { retryCount: 0 });
+                if (BigInt(chain) !== BigInt(expectedChainId)) throw new BaseError("RPC returned an unexpected chain ID");
+                verified.add(index);
+              }
+              return await bases[index].request(request, { retryCount: 0 });
+            } catch (error) {
+              // Switch only on temporary transport/quota failures. Reverts and
+              // wrong-chain responses must not be hidden by another provider.
+              if (isTransientRpcReadError(error)) active = (index + 1) % bases.length;
+              throw error;
+            }
+          });
         } catch (error) {
           const failure = new BaseError(`RPC read ${request.method} failed: ${safeMessage(error)}`, { cause: safeCause(error) });
           // Preserve classification by the bounded log-range adapter without
