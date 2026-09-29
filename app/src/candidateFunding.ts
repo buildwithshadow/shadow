@@ -418,7 +418,12 @@ async function reconcileCandidatePending(client: CandidateReadClient, rawPending
     if (receipt.status !== 'success') return { status: 'reverted', txHash, message: 'The transaction reverted onchain. Its intended action did not complete; refresh before preparing another request.' }
     const registered = pending.kind === 'register' && await read(client, 'sponsorAllowed', [pending.account], receipt.blockNumber) === true
     if (!registered && !hasExpectedEvent(pending, receipt)) return unknown('The transaction succeeded, but its expected Shadow event could not be verified. Keep this record and investigate before retrying.')
-    return { status: 'confirmed', txHash, message: 'The exact transaction and its onchain result are confirmed.', ...(pending.lineId ? { lineId: pending.lineId } : {}) }
+    const action: Record<CandidateAction, string> = {
+      register: 'Sponsor registration', approve: 'USDC approval', open: 'Opening',
+      repay: 'Repayment', close: 'Close', 'claim-defaulted': 'Recovery claim',
+    }
+    const lineLabel = pending.lineId ? ` for line ${pending.lineId.slice(0, 8)}…${pending.lineId.slice(-4)}` : ''
+    return { status: 'confirmed', txHash, message: `${action[pending.kind]}${lineLabel} is confirmed onchain.`, ...(pending.lineId ? { lineId: pending.lineId } : {}) }
   } catch {
     return unknown('Confirmation is pending or the chain could not be read reliably. Keep this transaction record and check again; nothing has been resent.')
   }
