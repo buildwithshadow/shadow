@@ -198,5 +198,5 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       return observe(key, record, response);
     });
   }
-  return { execute, reconcile };
+  return { execute, reconcile, operationKey: requestKey };
 }

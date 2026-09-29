@@ -55,6 +55,10 @@
 .fundingMetrics dd small { font-size: 12px; color: var(--ink-soft); }
 .fundingDesk details { margin-top: 28px; border-top: 1px solid var(--border-strong); padding-top: 8px; }
 .fundingDesk summary { padding: 14px 0; min-height: 44px; cursor: pointer; }
+.circleAgentHandoff .fundingField { margin: 16px 0; }
+.circleAgentHandoff textarea { width: 100%; min-height: 96px; padding: 12px; resize: vertical; font: 16px/1.5 monospace; color: var(--ink); background: var(--bg-2); border: 1px solid var(--border-strong); border-radius: 8px; overflow-wrap: anywhere; }
+.circleAgentHandoff textarea:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.circleAgentHandoff a { text-decoration: underline; }
 .fundingDetails { display: grid; gap: 14px; margin: 20px 0; }
 .fundingDetails > div { display: grid; grid-template-columns: minmax(120px, .4fr) minmax(0, 1fr); gap: 16px; }
 .fundingDetails dt { color: var(--ink-soft); font-size: 13px; }

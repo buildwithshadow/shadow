@@ -9,6 +9,7 @@ import {
 } from "./candidateFunding";
 import "./candidateFunding.css";
 import { PublicPurchase, type PublicService } from "./PublicPurchase";
+import { CircleAgentHandoff } from "./CircleAgentHandoff";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport("https://rpc.testnet.arc.network", {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -444,6 +445,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
             <div><dt>Line daily limit</dt><dd>{usdc(line.dailySpendCap)} USDC</dd></div><div><dt>Line epoch</dt><dd>{line.epoch.toString()}</dd></div></dl>
           <p>The agent signs a purchase and an executor submits it using the <a href="https://github.com/buildwithshadow/shadow/blob/main/docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md" target="_blank" rel="noreferrer">candidate participant tools</a>. This page manages funding, repayment and reclaim.</p>
         </details>
+        {service && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} />}
       </div>}
     </section>}
 
