@@ -20,7 +20,7 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
   requireThat(cap > 0n && cap <= 1_000_000n && feeCap > 0n && feeCap <= parseUnits('0.1', 18), 'Invalid testnet limits.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.runtimeHash), 'Pin the deployed runtime hash.');
   requireThat(['get', 'put', 'withLock'].every(k => typeof journal[k] === 'function'), 'A durable locked journal is required.');
-  const namespace = hash({ chainId: CHAIN, agent, contract });
+  const namespace = hash({ chainId: CHAIN, agent });
   const activeKey = `${namespace}:active`;
 
   async function identity() {
@@ -56,7 +56,8 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     const decoded = decode(request);
     if (decoded.lineId) {
       const line = await client.readContract({ address: contract, abi, functionName: 'lines', args: [decoded.lineId] });
-      requireThat(same(line.agent, agent), 'Funding line belongs to another agent.');
+      const owner = Array.isArray(line) ? line[abi.find(x => x.name === 'lines').outputs.findIndex(x => x.name === 'agent')] : line.agent;
+      requireThat(same(owner, agent), 'Funding line belongs to another agent.');
     }
     if (decoded.functionName === 'executeSpend') {
       decoded.digest = await client.readContract({ address: contract, abi, functionName: 'hashSpendIntent', args: [decoded.args[0]] });

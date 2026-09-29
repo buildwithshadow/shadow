@@ -24,7 +24,7 @@ function setup(overrides = {}) {
     receipt: { status: 'success', blockNumber: 101n, logs: [eventLog('Repaid', { lineId, payer: agent, amount: 50000n, principalRemaining: 0n })] } };
   const client = {
     getChainId: async()=>state.chainId, getCode: async()=>state.code, getBlock: async()=>({number:100n}),
-    readContract: async({functionName})=>({ lines:{agent:state.lineAgent}, hashSpendIntent:digest, receiptStatus:state.receiptStatus })[functionName],
+    readContract: async({functionName})=>({ lines:[provider,state.lineAgent], hashSpendIntent:digest, receiptStatus:state.receiptStatus })[functionName],
     simulateContract: async()=>({result:[state.policy,0]}), getTransactionReceipt: async()=>state.receipt,
   };
   const response = request => ({ idempotencyKey: request.idempotencyKey, id:'circle-tx-1', state:'COMPLETE', blockchain:'ARC-TESTNET', sourceAddress:agent, contractAddress:request.contractAddress, txHash });
