@@ -7,6 +7,7 @@ import { existsSync, readFileSync, openSync, writeFileSync, fsyncSync, closeSync
 import { createPublicClient, encodeFunctionData, erc20Abi, getAddress, keccak256, stringToHex } from 'viem';
 import { createCircleAgentExecutor } from './circle-agent-execution.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
+import { setupCircleAgentWallet } from './circle-agent-setup.mjs';
 import { createCircleCliTransport } from './circle-agent-cli-transport.mjs';
 import { createRpcReadTransport } from './rpc-read-transport.mjs';
 import { createCandidateFundingKit, CANDIDATE_FUNDING, candidateFundingChain } from '../src/candidateFunding.ts';
@@ -20,7 +21,7 @@ const must = (ok, message) => { if (!ok) throw new Error(message); };
 const serial = value => JSON.stringify(value, (_,v)=>typeof v==='bigint'?v.toString():v, 2);
 export function parseAgentArgs(args) {
   const [command='help', ...rest] = args;
-  must(['help','doctor','inspect','purchase','recover','repay'].includes(command), 'Unknown command. Use help.');
+  must(['help','doctor','setup','inspect','purchase','recover','repay'].includes(command), 'Unknown command. Use help.');
   const flags = {};
   for (let i=0;i<rest.length;i++) {
     const k=rest[i];must(['--agent','--line','--state','--runtime','--confirm'].includes(k), `Unknown option: ${k}`);
@@ -31,8 +32,8 @@ export function parseAgentArgs(args) {
   if(command==='help')return {command};
   const agent=getAddress(flags['--agent']);
   const line=flags['--line']?.trim().toLowerCase();
-  if(command!=='doctor')must(/^0x[0-9a-fA-F]{64}$/.test(line),'A valid funding line ID is required.');
-  must(!flags['--confirm'] || ['purchase','repay'].includes(command),'This command is read-only; --confirm is not allowed.');
+  if(!['doctor','setup'].includes(command))must(/^0x[0-9a-fA-F]{64}$/.test(line),'A valid funding line ID is required.');
+  must(!flags['--confirm'] || ['purchase','repay','setup'].includes(command),'This command is read-only; --confirm is not allowed.');
   return {command,agent,line,confirm:flags['--confirm']===true,state:resolve(flags['--state']??join(homedir(),'.local/share/shadow/agent-testnet')),runtime:resolve(flags['--runtime']??join(homedir(),'.local/share/shadow/circle-runtime'))};
 }
 export async function recoverAgentPurchase({executor,state,engine,client,save}) {
@@ -58,18 +59,22 @@ export async function recoverAgentPurchase({executor,state,engine,client,save}) 
   return {operations,delivery:delivery?.status??'No saved purchase',report:delivery?.bytes?new TextDecoder().decode(delivery.bytes):undefined,next};
 }
 export async function runAgent(options) {
-  if(options.command==='help')return {help:'Node 22.18+ required. Commands: doctor --agent 0x…; inspect|purchase|recover|repay --agent 0x… --line 0x…. purchase and repay only send with --confirm. Install the isolated Circle runtime using docs/circle-agent-onboarding.md. All operations are Arc testnet only.'};
+  if(options.command==='help')return {help:'Node 22.18+ required. Commands: doctor|setup --agent 0x…; inspect|purchase|recover|repay --agent 0x… --line 0x…. setup, purchase and repay only send with --confirm. setup checks/activates the agent wallet with a zero-value self-transfer; testnet gas still applies. Install the isolated Circle runtime using docs/circle-agent-onboarding.md. All operations are Arc testnet only.'};
   must(manifest.ok && manifest.chainId==='5042002' && manifest.contract.name==='ShadowFloatPublicTestnet','Invalid deployment manifest.');
   const {agent,line,command}=options;
   const client=createPublicClient({chain:candidateFundingChain,transport:createRpcReadTransport('https://rpc.testnet.arc.network',{expectedChainId:5042002,fallbackUrls:['https://rpc.blockdaemon.testnet.arc.network','https://rpc.drpc.testnet.arc.network'],timeout:15000,queueOptions:{maxAttempts:3,spacingMs:150,baseDelayMs:750,maxDelayMs:3000}})});
   const kit=createCandidateFundingKit({...CANDIDATE_FUNDING,address:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,selfRegistration:true});
   await kit.verifyCandidate(client);
   const journal=await createCircleAgentJournal(options.state);
+  if(command==='setup') {
+    const transport=await createCircleCliTransport({entrypoint:join(options.runtime,'node_modules/@circle-fin/cli/dist/index.js'),agent,journal});
+    return setupCircleAgentWallet({agent,client,circle:transport,journal,confirm:options.confirm});
+  }
   if(command==='doctor') {
     const transport=await createCircleCliTransport({entrypoint:join(options.runtime,'node_modules/@circle-fin/cli/dist/index.js'),agent,journal});
     const session=await transport.session();
     const [code,balance]=await Promise.all([client.getCode({address:agent}),client.getBalance({address:agent})]);
-    return {...session,deployed:Boolean(code&&code!=='0x'),nativeBalance:balance.toString(),sponsorLink:`https://www.shadowbuild.xyz/start?agent=${agent}`,next:!code||code==='0x'?'Deploy this Circle wallet with a zero-value self-transfer on Arc testnet after funding it. Review that transaction in your own agent environment.':'Share the sponsor link. Your sponsor chooses and authorizes the budget.'};
+    return {...session,deployed:Boolean(code&&code!=='0x'),nativeBalance:balance.toString(),sponsorLink:`https://www.shadowbuild.xyz/start?agent=${agent}`,next:!code||code==='0x'?'Run setup with this agent address to check funding and review activation. Nothing was sent.':'Share the sponsor link. Your sponsor chooses and authorizes the budget.'};
   }
   const current=await kit.readCandidateLine(client,line);
   must(current.agent.toLowerCase()===agent.toLowerCase(),'This funding line belongs to a different agent.');
