@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { createCircleCliDriver, rawCalldataCompatibility, unwrapCircle } from './circle-agent-cli-transport.mjs';
-import { parseAgentArgs } from './shadow-circle-agent.mjs';
+import { parseAgentArgs, recoverAgentPurchase } from './shadow-circle-agent.mjs';
 import { circleAgentCommands } from '../src/circleAgentCommands.ts';
 import abi from './float-mainnet-abi.json' with { type:'json' };
 const agent=`0x${'11'.repeat(20)}`,other=`0x${'22'.repeat(20)}`,line=`0x${'33'.repeat(32)}`;
@@ -69,4 +69,19 @@ test('CLI actions need explicit confirmation; recovery cannot accept it',()=>{
 test('website commands contain only validated public identifiers and recovery is read-only',()=>{
   const c=circleAgentCommands(line,agent);assert(!c.inspect.includes('--confirm'));assert(!c.recover.includes('--confirm'));assert(c.purchase.includes('--confirm'));
   assert.throws(()=>circleAgentCommands(line+';touch /tmp/injected',agent));assert.throws(()=>circleAgentCommands(line,agent+'$(echo bad)'));
+});
+
+test('runner reaches recovery after preflight rejection and releases only expired unpaid authorization',async()=>{
+  let now=9n,archives=0,saves=0,recoveries=0;
+  const state={requests:{purchase:{key:'never-sent'}}};
+  const engine={load:()=>({}),recover:async()=>{recoveries++;return {status:'unconfirmed',record:{intent:{typedData:{message:{signatureExpiry:'10'}}}}};},archive:async()=>{archives++;}};
+  const options={executor:{reconcile:async()=>({status:'not-submitted'})},state,engine,client:{getBlock:async()=>({timestamp:now})},save:()=>{saves++;}};
+  const before=await recoverAgentPurchase(options);assert.match(before.next,/after the signed authorization expires/);assert.equal(recoveries,1);assert.equal(archives,0);assert(state.requests.purchase);
+  now=11n;const after=await recoverAgentPurchase(options);assert.match(after.next,/prepare a new request/);assert.equal(archives,1);assert.equal(saves,1);assert.equal(state.requests.purchase,undefined);
+});
+test('runner never releases an unknown send or an authorization whose archive check fails',async()=>{
+  let archives=0;const state={requests:{purchase:{key:'held'}}};
+  const options={executor:{reconcile:async()=>({status:'unknown'})},state,engine:{load:()=>({}),recover:async()=>({status:'unconfirmed',record:{intent:{typedData:{message:{signatureExpiry:'10'}}}}}),archive:async()=>{archives++;throw new Error('receipt is paid');}},client:{getBlock:async()=>({timestamp:11n})},save:()=>assert.fail('must not clear state')};
+  await recoverAgentPurchase(options);assert.equal(archives,0);assert(state.requests.purchase);
+  options.executor.reconcile=async()=>({status:'not-submitted'});await assert.rejects(()=>recoverAgentPurchase(options),/receipt is paid/);assert(state.requests.purchase);
 });

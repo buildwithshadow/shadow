@@ -158,3 +158,18 @@ test('file journal survives recreation, restricts file permissions and serialize
     await b.withLock('wallet',async()=>{});
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('preflight rejection can be reconciled as unsent without a Circle request',async()=>{
+  const {adapter,state}=setup();state.fee='1';
+  await assert.rejects(()=>adapter.execute(repay),/Estimated fee/);
+  assert.equal((await adapter.reconcile(adapter.operationKey(repay))).status,'not-submitted');
+  assert.equal(state.sends,0);assert.equal(state.reads,0);
+  state.fee='0.01';assert.equal((await adapter.execute(repay)).status,'confirmed');assert.equal(state.sends,1);
+});
+test('a partial durable barrier cannot be classified as an unsent operation',async()=>{
+  const {adapter,state,options}=setup();const put=options.journal.put;
+  options.journal.put=async(k,v)=>{if(v?.request)throw new Error('disk failure');return put(k,v);};
+  await assert.rejects(()=>adapter.execute(repay),/disk failure/);
+  await assert.rejects(()=>adapter.reconcile(adapter.operationKey(repay)),/barrier exists/);
+  assert.equal(state.sends,0);
+});

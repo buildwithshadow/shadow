@@ -180,7 +180,11 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     return journal.withLock(namespace, async () => {
       await identity();
       const record = await journal.get(key);
-      requireThat(record && record.namespace === namespace && hash(record.request) === record.requestHash, 'Unknown or altered execution journal.');
+      if (!record) {
+        requireThat(await journal.get(activeKey) !== key, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
+        return { status: 'not-submitted', key };
+      }
+      requireThat(record.namespace === namespace && hash(record.request) === record.requestHash, 'Unknown or altered execution journal.');
       requireThat(requestKey({ operationId: record.operationId }) === key, 'Journal request key mismatch.');
       if (record.result) {
         const verified = await verifyReceipt(record, record.txHash);

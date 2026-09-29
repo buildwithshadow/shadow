@@ -62,7 +62,7 @@ This first runner supports one purchase per line. Running purchase again on a re
 
 State defaults to `~/.local/share/shadow/agent-testnet`. Keep it private: purchase records include signed authorizations. The runner uses file locks and durable writes, and the execution adapter stores Circle idempotency keys before requesting transactions. Do not delete state or run from another machine/state directory to get past an unresolved request.
 
-`recover` does not execute or sign a transaction. It reconciles saved Circle IDs/hashes and retrieves an already-paid result. If the Circle response was lost before any transaction identity was saved, automatic recovery may remain unresolved. Check the original request in Circle; do not submit a replacement. See [execution recovery](circle-agent-execution.md) for lock and finality requirements.
+`recover` does not execute or sign a transaction. If preflight or fee estimation failed before the execution journal was created, recovery reports that nothing was submitted. Because the provider already received the signed authorization, retain it until expiry; recovery then verifies it is unpaid at a finalized block and archives it so a new purchase can be prepared. A partial journal barrier remains blocked for inspection. It reconciles saved Circle IDs/hashes and retrieves an already-paid result. If the Circle response was lost before any transaction identity was saved, automatic recovery may remain unresolved. Check the original request in Circle; do not submit a replacement. See [execution recovery](circle-agent-execution.md) for lock and finality requirements.
 
 ## Circle CLI compatibility
 

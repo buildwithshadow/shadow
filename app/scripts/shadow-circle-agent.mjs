@@ -35,6 +35,23 @@ export function parseAgentArgs(args) {
   must(!flags['--confirm'] || ['purchase','repay'].includes(command),'This command is read-only; --confirm is not allowed.');
   return {command,agent,line,confirm:flags['--confirm']===true,state:resolve(flags['--state']??join(homedir(),'.local/share/shadow/agent-testnet')),runtime:resolve(flags['--runtime']??join(homedir(),'.local/share/shadow/circle-runtime'))};
 }
+export async function recoverAgentPurchase({executor,state,engine,client,save}) {
+  const operations={};
+  for(const [name,request] of Object.entries(state.requests))operations[name]=await executor.reconcile(request.key);
+  const delivery=engine.load()?await engine.recover():null;
+  let next;
+  if(operations.purchase?.status==='not-submitted' && delivery?.status==='unconfirmed') {
+    // The signed authorization was already given to the provider. Even though this
+    // executor never sent it, retain it until expiry and verify unpaid finality.
+    const block=await client.getBlock({blockTag:'finalized'});
+    if(block.timestamp>BigInt(delivery.record.intent.typedData.message.signatureExpiry)) {
+      await engine.archive();
+      delete state.requests.purchase;save();
+      next='The unsent authorization expired and was verified unpaid. Run purchase --confirm to prepare a new request.';
+    } else next='No execution was submitted. Keep this record and run recover after the signed authorization expires; no payment was retried.';
+  }
+  return {operations,delivery:delivery?.status??'No saved purchase',report:delivery?.bytes?new TextDecoder().decode(delivery.bytes):undefined,next};
+}
 export async function runAgent(options) {
   if(options.command==='help')return {help:'Node 22.18+ required. Commands: doctor --agent 0x…; inspect|purchase|recover|repay --agent 0x… --line 0x…. purchase and repay only send with --confirm. Install the isolated Circle runtime using docs/circle-agent-onboarding.md. All operations are Arc testnet only.'};
   must(manifest.ok && manifest.chainId==='5042002' && manifest.contract.name==='ShadowFloatPublicTestnet','Invalid deployment manifest.');
@@ -76,10 +93,8 @@ export async function runAgent(options) {
     },sendTransaction:async request=>{must(getAddress(request.account)===agent&&getAddress(request.to)===CONTRACT&&BigInt(request.value)===0n,'Unexpected purchase transaction.');return execute('purchase',request.to,request.data);}};
     const engine=createSelfServicePurchase({client,wallet,storage,withLock:async(_key,work)=>work(),config:{chainId:5042002,account:agent,contract:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,...SERVICE}});
     if(command==='recover') {
-      const operations={};
-      for(const [name,request] of Object.entries(state.requests))operations[name]=await executor.reconcile(request.key);
-      const delivery=engine.load()?await engine.recover():null;
-      return {...await freshSummary(),operations,delivery:delivery?.status??'No saved purchase',report:delivery?.bytes?new TextDecoder().decode(delivery.bytes):undefined};
+      const recovery=await recoverAgentPurchase({executor,state,engine,client,save});
+      return {...await freshSummary(),...recovery};
     }
     await transport.session();
     if(command==='purchase') {
