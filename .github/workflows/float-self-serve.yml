@@ -21,6 +21,8 @@ on:
       - "app/src/main.tsx"
       - "app/src/CircleWalletDiagnostic.tsx"
       - "app/src/CandidateFundingDesk.tsx"
+      - "app/src/savedTransactionLookup.ts"
+      - "app/scripts/saved-transaction-lookup.test.ts"
       - "app/src/candidateFunding.ts"
       - "app/src/selfServicePurchase.mjs"
       - "app/src/selfServicePurchase.d.mts"
@@ -102,6 +104,8 @@ jobs:
         run: |
           forge test --root contracts --match-contract ShadowFloatPublicTestnetTest
           node --test --test-concurrency=1 app/scripts/self-service-purchase*.test.mjs app/scripts/shadow-v2-cycle-service.test.mjs
+      - name: Test saved transaction hash lookup
+        run: node --test app/scripts/saved-transaction-lookup.test.ts
       - name: Test the shared RPC read queue
         run: node --test app/scripts/rpc-read-queue.test.mjs
 
