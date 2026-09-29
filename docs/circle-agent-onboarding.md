@@ -27,13 +27,31 @@ node "$HOME/.local/share/shadow/circle-runtime/node_modules/@circle-fin/cli/dist
 
 If you already have a valid testnet Circle session, skip login. Do not repeatedly request OTPs. Testnet and mainnet sessions are separate.
 
-For a new wallet, use Circle's testnet faucet funding command. The first transaction deploys the smart account; a zero-value self-transfer can activate it. Review those operations in your own environment. The runner does not automatically create, fund, or deploy wallets.
+Check the selected wallet with one read-only command:
 
 ```sh
-node "$HOME/.local/share/shadow/circle-runtime/node_modules/@circle-fin/cli/dist/index.js" wallet fund --address YOUR_AGENT_ADDRESS --chain ARC-TESTNET
-node "$HOME/.local/share/shadow/circle-runtime/node_modules/@circle-fin/cli/dist/index.js" wallet transfer YOUR_AGENT_ADDRESS --amount 0 --address YOUR_AGENT_ADDRESS --chain ARC-TESTNET --estimate
-# After reviewing the estimate, repeat the transfer command without --estimate.
+node app/scripts/shadow-circle-agent.mjs setup --agent YOUR_AGENT_ADDRESS
 ```
+
+If already deployed, it returns `ready` and a sponsor link without sending anything.
+If it needs gas, fund that exact address using the [Circle faucet](https://faucet.circle.com)
+on **Arc testnet**, then run `setup` again. It never creates a wallet, requests an OTP,
+or funds it automatically.
+
+For a funded, undeployed wallet, `setup` estimates a **zero-value self-transfer**
+and displays the source, destination, network and fee. Review that output, then explicitly authorize:
+
+```sh
+node app/scripts/shadow-circle-agent.mjs setup --agent YOUR_AGENT_ADDRESS --confirm
+```
+
+The transfer uses the original Circle CLI and may activate the smart account. Gas
+still costs test USDC. Estimates above 0.1 test USDC are refused; this is an estimate
+threshold, not a guaranteed final fee cap. `ready` requires wallet code at a finalized
+block. If the response is uncertain, run `setup` again: it checks deployment without
+resending the recorded attempt. Keep the same state directory. An unresolved attempt
+may require checking Circle transaction history; never clear the journal to bypass it.
+A definite session-validation failure before submission permits a fresh explicit attempt.
 
 ## Ask a sponsor to fund the agent
 

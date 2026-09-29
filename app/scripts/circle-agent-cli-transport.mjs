@@ -73,6 +73,18 @@ export function createCircleCliDriver({ entrypoint, compatibility, agent, journa
   return {
     session,
     command,
+    async estimateActivation() {
+      await session();
+      const result = await command(['wallet', 'transfer', address, '--amount', '0', '--address', address, '--chain', 'ARC-TESTNET', '--estimate']);
+      requireThat(result?.blockchain === 'ARC-TESTNET', 'Unexpected activation estimate network.');
+      return { networkFee: result?.medium?.networkFee };
+    },
+    async activate({ idempotencyKey }) {
+      requireThat(typeof idempotencyKey === 'string' && /^[0-9a-f-]{36}$/i.test(idempotencyKey), 'Invalid activation request key.');
+      try { await session(); }
+      catch { const error = new Error('Circle session check failed before activation submission.'); error.beforeSubmission = true; throw error; }
+      return command(['wallet', 'transfer', address, '--amount', '0', '--address', address, '--chain', 'ARC-TESTNET', '--idempotency-key', idempotencyKey]);
+    },
     async estimate(request) { await session(); const r = await command([...args(request), '--estimate'], true); return { networkFee: r?.medium?.networkFee }; },
     async execute(request) {
       try { await session(); }
