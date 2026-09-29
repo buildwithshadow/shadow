@@ -40,6 +40,11 @@ export async function recoverAgentPurchase({executor,state,engine,client,save}) 
   for(const [name,request] of Object.entries(state.requests))operations[name]=await executor.reconcile(request.key);
   const delivery=engine.load()?await engine.recover():null;
   let next;
+  if(operations.purchase?.status==='blocked' && delivery?.status==='blocked') {
+    await engine.archive();
+    delete state.requests.purchase;save();
+    next='The exact purchase was refused on chain without payment and archived. Review the funding limits before preparing another purchase.';
+  }
   if(operations.purchase?.status==='not-submitted' && delivery?.status==='unconfirmed') {
     // The signed authorization was already given to the provider. Even though this
     // executor never sent it, retain it until expiry and verify unpaid finality.
@@ -81,7 +86,7 @@ export async function runAgent(options) {
     const transport=await createCircleCliTransport({entrypoint:join(options.runtime,'node_modules/@circle-fin/cli/dist/index.js'),agent,journal});
     const executor=createCircleAgentExecutor({client,circle:transport,journal,config:{chainId:5042002,agent,contract:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,provider:SERVICE.provider,endpointHash:keccak256(stringToHex(SERVICE.endpoint)),maxAmount:'50000',maxNetworkFee:'100000000000000000'}});
     async function execute(name,to,data) {
-      const request={operationId:`${line}:${name}`,to,data,value:0n};
+      const request={operationId:name==='purchase'?`purchase:${keccak256(data)}`:`${line}:${name}`,to,data,value:0n};
       state.requests[name]={key:executor.operationKey(request)};save();
       const result=await executor.execute(request);
       must(result.status==='confirmed','Operation is unresolved. Run recover; do not start another payment.');

@@ -85,3 +85,15 @@ test('runner never releases an unknown send or an authorization whose archive ch
   await recoverAgentPurchase(options);assert.equal(archives,0);assert(state.requests.purchase);
   options.executor.reconcile=async()=>({status:'not-submitted'});await assert.rejects(()=>recoverAgentPurchase(options),/receipt is paid/);assert(state.requests.purchase);
 });
+
+test('expired session before execute is definite while execute-command errors stay ambiguous',async()=>{
+  const x=setup();x.state.valid=false;
+  await assert.rejects(()=>x.driver.execute(request),e=>e.beforeSubmission===true);assert(!x.calls.some(c=>c.includes('execute')));
+  x.state.valid=true;x.state.throwOnExecute=true;
+  await assert.rejects(()=>x.driver.execute(request),e=>e.beforeSubmission!==true);
+});
+test('runner archives an exact onchain refusal so a new intent can be prepared',async()=>{
+  let archives=0,saves=0;const state={requests:{purchase:{key:'refused'}}};
+  const r=await recoverAgentPurchase({state,executor:{reconcile:async()=>({status:'blocked'})},engine:{load:()=>({}),recover:async()=>({status:'blocked'}),archive:async()=>{archives++;}},client:{},save:()=>{saves++;}});
+  assert.equal(r.delivery,'blocked');assert.equal(archives,1);assert.equal(saves,1);assert.equal(state.requests.purchase,undefined);assert.match(r.next,/refused on chain/);
+});

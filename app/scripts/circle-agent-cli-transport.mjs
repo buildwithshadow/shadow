@@ -75,7 +75,8 @@ export function createCircleCliDriver({ entrypoint, compatibility, agent, journa
     command,
     async estimate(request) { await session(); const r = await command([...args(request), '--estimate'], true); return { networkFee: r?.medium?.networkFee }; },
     async execute(request) {
-      await session();
+      try { await session(); }
+      catch { const error = new Error('Circle session check failed before submission. Restore the local testnet session and recover the saved request.'); error.beforeSubmission = true; throw error; }
       const key = `circle-response:${request.idempotencyKey}`;
       const response = await command([...args(request), '--idempotency-key', request.idempotencyKey], true);
       // Keep a second durable copy before handing the response to the execution adapter.
