@@ -7,6 +7,7 @@ import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, k
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
 import abi from './float-mainnet-abi.json' with { type: 'json' };
 import { createCircleAgentExecutor } from './circle-agent-execution.mjs';
+import { setupCircleAgentWallet } from './circle-agent-setup.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 const agent = `0x${'11'.repeat(20)}`, contract = `0x${'22'.repeat(20)}`, provider = `0x${'33'.repeat(20)}`;
 const lineId = `0x${'44'.repeat(32)}`, digest = `0x${'55'.repeat(32)}`, endpointHash = `0x${'66'.repeat(32)}`, txHash = `0x${'77'.repeat(32)}`;
@@ -195,4 +196,29 @@ test('an exact finalized SpendBlocked is terminal without accepting unrelated re
     x.state.receipt.logs=[eventLog('Repaid',{lineId,payer:agent,amount:50000n,principalRemaining:0n})];
     assert.equal((await x.adapter.execute(repay)).status,'confirmed');
   }
+});
+
+test('ambiguous activation blocks later executor writes until wallet deployment is finalized', async () => {
+  const { adapter, state, options } = setup();
+  let deployed = false;
+  options.client.getCode = async ({ address, blockTag }) => {
+    if (address === agent) {
+      assert.equal(blockTag, 'finalized');
+      return deployed ? code : '0x';
+    }
+    return code;
+  };
+  options.client.getBalance = async () => parseUnits('1', 18);
+  let activations = 0;
+  const activationCircle = {
+    session: async () => {}, estimateActivation: async () => ({ networkFee: '0.01' }),
+    activate: async () => { activations++; throw new Error('response lost'); },
+  };
+  assert.equal((await setupCircleAgentWallet({ ...options, agent, circle: activationCircle, confirm: true })).status, 'unknown');
+  // Recreating the executor must not remove the persistent activation barrier.
+  await assert.rejects(() => createCircleAgentExecutor(options).execute(repay), /activation to finalize/);
+  assert.equal(state.estimates, 0); assert.equal(state.sends, 0); assert.equal(activations, 1);
+  deployed = true;
+  assert.equal((await adapter.execute(repay)).status, 'confirmed');
+  assert.equal(state.sends, 1); assert.equal(activations, 1);
 });

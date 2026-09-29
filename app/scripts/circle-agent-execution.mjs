@@ -170,6 +170,15 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       }
       const active = await journal.get(activeKey);
       requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
+      const activation = await journal.get(`${namespace}:activation`);
+      if (activation) {
+        requireThat(activation.version === 1 && activation.chainId === CHAIN && activation.agent === agent
+          && ['unknown', 'not-submitted'].includes(activation.status), 'Activation journal identity or status mismatch.');
+        if (activation.status === 'unknown') {
+          const walletCode = await client.getCode({ address: agent, blockTag: 'finalized' });
+          requireThat(walletCode && walletCode !== '0x', 'Wait for the previous Circle activation to finalize before another wallet operation.');
+        }
+      }
       const expected = await prepare(request);
       const payload = envelope(request, randomUUID());
       const estimate = await circle.estimate(payload);
