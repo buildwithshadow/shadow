@@ -336,6 +336,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           readNextNonce: () => client.getTransactionCount({ address: saved.account, blockTag: "latest" }),
         }).then((hash) => hash ?? undefined, () => { lookupFailed = true; return undefined; });
         const result = await reconcileCandidatePending(client, saved, typed || found);
+        if (result.status === "confirmed") result.message = `Earlier transaction: ${result.message} No new transaction was sent during recovery.`;
         // A found hash that belongs to a different transaction could mean the wallet sent this action
         // with another nonce, so only the person, after checking the wallet, may clear it as replaced.
         const foundOther = found !== undefined && result.status === "replaced";
