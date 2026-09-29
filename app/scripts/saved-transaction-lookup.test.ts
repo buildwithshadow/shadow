@@ -66,7 +66,6 @@ test("a used nonce returns the transaction from the saved account", async () => 
 
 test("older nonces are found by following the explorer's page parameters", async () => {
   const next = {
-    filter: "from",
     block_number: 64389445,
     index: 17,
     items_count: 50,
@@ -81,6 +80,7 @@ test("older nonces are found by following the explorer's page parameters", async
   );
   assert.equal(urls.length, 2);
   const query = new URL(urls[1]).searchParams;
+  assert.equal(query.get("filter"), "from");
   assert.equal(query.get("block_number"), "64389445");
   assert.equal(query.get("index"), "17");
   assert.equal(query.get("items_count"), "50");

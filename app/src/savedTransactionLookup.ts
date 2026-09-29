@@ -64,7 +64,7 @@ export async function findSentTransactionHash(input: {
       oldest < input.nonce
     )
       return null;
-    params = data.next_page_params;
+    params = { ...data.next_page_params, filter: "from" };
   }
   return null;
 }
