@@ -187,3 +187,43 @@ test("candidate connections pace reads even in write mode, while broadcasts are 
   await assert.rejects(readonlyWallet.sendRawTransaction({ serializedTransaction: "0x1234" }), /read-only RPC transport refuses/);
   assert.equal(sends, 1);
 });
+
+
+test("read transport fails over a quota-limited provider without retrying writes", async () => {
+  const seen = [];
+  const client = createPublicClient({ transport: createRpcReadTransport("https://primary.example", {
+    fallbackUrls: ["https://secondary.example"], expectedChainId: 5042002,
+    queueOptions: { ...queueOptions, maxAttempts: 2 },
+    fetchFn: async (url, options) => {
+      const body = JSON.parse(options.body); seen.push([String(url), body.method]);
+      if (String(url).includes("primary")) return failure(body, "rate limit exceeded");
+      return reply(body, body.method === "eth_chainId" ? "0x4cef52" : "0x6000");
+    },
+  }) });
+  assert.equal(await client.getCode({address: "0x0000000000000000000000000000000000000001"}), "0x6000");
+  assert.ok(seen.some(([url]) => url.includes("secondary")));
+  const count=seen.length;
+  await assert.rejects(client.request({method:"eth_sendRawTransaction",params:["0x00"]}), /refuses/);
+  assert.equal(seen.length,count);
+});
+
+test("fallback rejects the wrong chain before reading contract code", async () => {
+  const seen=[];
+  const client=createPublicClient({transport:createRpcReadTransport('https://primary.example',{
+    fallbackUrls:['https://secondary.example'], expectedChainId:5042002,
+    queueOptions:{...queueOptions,maxAttempts:3},
+    fetchFn:async(url,options)=>{const body=JSON.parse(options.body);seen.push([String(url),body.method]);return String(url).includes('primary')?failure(body,'rate limit exceeded'):reply(body,'0x1');},
+  })});
+  await assert.rejects(client.getCode({address:'0x0000000000000000000000000000000000000001'}),/unexpected chain ID/);
+  assert.deepEqual(seen.map(x=>x[1]),['eth_chainId','eth_chainId']);
+});
+
+test("fallback retains bounded attempts when every provider is unavailable", async () => {
+  let calls=0;
+  const client=createPublicClient({transport:createRpcReadTransport('https://primary.example',{
+    fallbackUrls:['https://secondary.example'],expectedChainId:5042002,queueOptions:{...queueOptions,maxAttempts:3},
+    fetchFn:async(_url,options)=>{calls++;return failure(JSON.parse(options.body),'rate limit exceeded');},
+  })});
+  await assert.rejects(client.request({method:'eth_blockNumber'}),/rate limit/);
+  assert.equal(calls,3);
+});

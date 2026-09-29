@@ -248,6 +248,8 @@ export function createSelfServicePurchase({
     return file.typedData.message;
   }
   async function prepare(lineId, requestId) {
+    lineId = typeof lineId === "string" ? lineId.trim() : lineId;
+    assert(typeof lineId === "string" && /^0x[0-9a-fA-F]{64}$/.test(lineId), "Use the full funding line ID (0x followed by 64 hexadecimal characters).");
     await connected();
     assert(!load(), "Recover the existing purchase before starting another.");
     assert(
@@ -278,9 +280,13 @@ export function createSelfServicePurchase({
     const block = await client.getBlock();
     const minimum = await read("minimumRepaymentWindow");
     const signatureExpiry = block.timestamp + 600n;
-    const dueAt = signatureExpiry + minimum;
+    // Give the purchase the sponsor-authorized window, capped by line expiry.
+    // The earliest possible execution is now; later execution only widens its
+    // maximum permitted due time. Preserve the minimum through signature expiry.
+    const maximumDueAt = block.timestamp + line.maximumRepaymentWindow;
+    const dueAt = maximumDueAt < line.expiry ? maximumDueAt : line.expiry;
     assert(
-      dueAt <= line.expiry && minimum + 600n <= line.maximumRepaymentWindow,
+      dueAt >= signatureExpiry + minimum,
       "Funding line repayment window is too short.",
     );
     const nonce = BigInt(

@@ -44,7 +44,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
     readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => createCandidateFundingKit(deployment), [deployment]);
   const client = useMemo(() => deployment.selfRegistration ? createPublicClient({ chain: candidateFundingChain,
-    transport: createRpcReadTransport("https://rpc.quicknode.testnet.arc.io", { timeout: 15_000,
+    transport: createRpcReadTransport("https://rpc.drpc.testnet.arc.io", { timeout: 15_000,
+      fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", "https://rpc.testnet.arc.network"], expectedChainId: deployment.chainId,
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment]);
   const [mode, setMode] = useState<"open" | "manage">(() => new URLSearchParams(window.location.search).has("line") ? "manage" : "open");
   const [account, setAccount] = useState<Address | null>(null);
@@ -229,7 +230,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const purchaseViewRevision = revision.current;
   async function refreshPurchaseLine(id: string, transactionHash?: Hex) {
     const isCurrent = () => revision.current === purchaseViewRevision &&
-      (!lineId || lineId.toLowerCase() === id.toLowerCase());
+      (!lineId.trim() || lineId.trim().toLowerCase() === id.trim().toLowerCase());
     if (!isCurrent()) return;
     setLineId(id);
     setLine(null);

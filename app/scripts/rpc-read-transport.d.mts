@@ -1,6 +1,8 @@
 import type { HttpTransportConfig, Transport } from "viem";
 
 export function createRpcReadTransport(url: string, options?: Omit<HttpTransportConfig, "retryCount"> & {
+  fallbackUrls?: string[];
+  expectedChainId?: number;
   queueOptions?: {
     maxAttempts?: number;
     baseDelayMs?: number;
