@@ -3,7 +3,8 @@ import { test } from 'node:test';
 import { mkdtemp, rm, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseUnits } from 'viem';
+import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
+import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
 import abi from './float-mainnet-abi.json' with { type: 'json' };
 import { createCircleAgentExecutor } from './circle-agent-execution.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
@@ -11,6 +12,8 @@ const agent = `0x${'11'.repeat(20)}`, contract = `0x${'22'.repeat(20)}`, provide
 const lineId = `0x${'44'.repeat(32)}`, digest = `0x${'55'.repeat(32)}`, endpointHash = `0x${'66'.repeat(32)}`, txHash = `0x${'77'.repeat(32)}`;
 const usdc = '0x3600000000000000000000000000000000000000';
 const code = '0x6000';
+const blockHash = `0x${'88'.repeat(32)}`;
+const accountAbi = parseAbi(['function execute(address target,uint256 value,bytes data)']);
 const config = { chainId: 5042002, agent, contract, provider, endpointHash, runtimeHash: keccak256(code), maxAmount: '50000', maxNetworkFee: parseUnits('0.05', 18).toString() };
 const repay = { operationId: 'repay:one', to: contract, data: encodeFunctionData({ abi, functionName: 'repay', args: [lineId, 50000n] }) };
 function eventLog(eventName, args, address = contract, eventAbi = abi) {
@@ -21,11 +24,19 @@ function setup(overrides = {}) {
   const values = new Map(); let locked = false;
   const journal = { get: async k => structuredClone(values.get(k) ?? null), put: async(k,v) => { values.set(k, structuredClone(v)); }, withLock: async(_k,f) => { assert(!locked); locked=true; try{return await f();}finally{locked=false;} } };
   const state = { sends: 0, estimates: 0, reads: 0, lose: false, pending: false, fee: '0.01', chainId: 5042002, policy: true, receiptStatus: 0, lineAgent: agent, code,
+    finalized: 110n, canonicalHash: blockHash, userOpSuccess: true,
     receipt: { status: 'success', blockNumber: 101n, logs: [eventLog('Repaid', { lineId, payer: agent, amount: 50000n, principalRemaining: 0n })] } };
+  const operation = () => ({sender:agent,nonce:1n,initCode:'0x',callData:encodeFunctionData({abi:accountAbi,functionName:'execute',args:[state.request.contractAddress,0n,state.request.callData]}),accountGasLimits:`0x${'00'.repeat(32)}`,preVerificationGas:1n,gasFees:`0x${'00'.repeat(32)}`,paymasterAndData:'0x',signature:'0x1234'});
+  const boundary = (userOpHash=digest,success=state.userOpSuccess) => eventLog('UserOperationEvent',{userOpHash,sender:agent,paymaster:provider,nonce:1n,success,actualGasCost:1n,actualGasUsed:1n},entryPoint07Address,entryPoint07Abi);
+  state.boundary=boundary;
+  const before = () => eventLog('BeforeExecution',{},entryPoint07Address,entryPoint07Abi);
   const client = {
-    getChainId: async()=>state.chainId, getCode: async()=>state.code, getBlock: async()=>({number:100n}),
-    readContract: async({functionName})=>({ lines:[provider,state.lineAgent], hashSpendIntent:digest, receiptStatus:state.receiptStatus })[functionName],
-    simulateContract: async()=>({result:[state.policy,0]}), getTransactionReceipt: async()=>state.receipt,
+    getChainId: async()=>state.chainId, getCode: async()=>state.code,
+    getBlock: async args=>args?.blockTag==='finalized'?{number:state.finalized}:args?.blockNumber?{number:args.blockNumber,hash:state.canonicalHash}:{number:100n},
+    getTransaction: async()=>({to:entryPoint07Address,blockHash,input:encodeFunctionData({abi:entryPoint07Abi,functionName:'handleOps',args:[state.duplicateOps?[operation(),operation()]:[operation()],provider]})}),
+    readContract: async({functionName})=>({ lines:[provider,state.lineAgent], hashSpendIntent:digest, getUserOpHash:digest, receiptStatus:state.receiptStatus })[functionName],
+    simulateContract: async()=>({result:[state.policy,0]}),
+    getTransactionReceipt: async()=>({...state.receipt,blockHash,logs:state.bundleLogs??[before(),...state.receipt.logs,boundary()]}),
   };
   const response = request => ({ idempotencyKey: request.idempotencyKey, id:'circle-tx-1', state:'COMPLETE', blockchain:'ARC-TESTNET', sourceAddress:agent, contractAddress:request.contractAddress, txHash });
   const circle = {
@@ -108,6 +119,34 @@ test('purchase tuple is forwarded intact as calldata and matches the exact Provi
 test('journal write failure prevents any Circle send',async()=>{
   const x=setup();x.options.journal.put=async()=>{throw new Error('disk full');};
   await assert.rejects(()=>x.adapter.execute(repay),/disk full/);assert.equal(x.state.sends,0);
+});
+test('an identical event in another bundled operation cannot prove the requested operation',async()=>{
+  const {adapter,state}=setup();
+  const before=eventLog('BeforeExecution',{},entryPoint07Address,entryPoint07Abi);
+  const other=`0x${'99'.repeat(32)}`;
+  state.bundleLogs=[before,...state.receipt.logs,state.boundary(other,true),state.boundary(digest,false)];
+  await assert.rejects(()=>adapter.execute(repay),/user operation did not succeed/);
+  // Even a successful requested operation with no own Repaid log cannot borrow another operation's event.
+  state.bundleLogs=[before,...state.receipt.logs,state.boundary(other,true),state.boundary(digest,true)];
+  const result=await adapter.execute(repay);assert.equal(result.status,'unknown');
+  await assert.rejects(()=>adapter.reconcile(result.key),/exact requested operation/);assert.equal(state.sends,1);
+});
+test('duplicate identical calls in a bundle remain ambiguous',async()=>{
+  const {adapter,state}=setup();state.duplicateOps=true;
+  await assert.rejects(()=>adapter.execute(repay),/unique matching user operation/);
+});
+test('unfinalized inclusion retains the barrier and can be reconciled after finality',async()=>{
+  const {adapter,state}=setup();state.finalized=100n;
+  await assert.rejects(()=>adapter.execute(repay),/canonical and finalized/);
+  const held=await adapter.execute(repay);assert.equal(held.status,'unknown');
+  await assert.rejects(()=>adapter.execute({...repay,operationId:'other'}),/previous Circle operation/);
+  state.finalized=110n;assert.equal((await adapter.reconcile(held.key)).status,'confirmed');assert.equal(state.sends,1);
+});
+test('cached success is revalidated against canonical chain before being returned',async()=>{
+  const {adapter,state}=setup();const done=await adapter.execute(repay);
+  state.canonicalHash=`0x${'99'.repeat(32)}`;
+  await assert.rejects(()=>adapter.execute(repay),/canonical and finalized/);
+  await assert.rejects(()=>adapter.reconcile(done.key),/canonical and finalized/);assert.equal(state.sends,1);
 });
 test('file journal survives recreation, restricts file permissions and serializes independent instances',async()=>{
   const dir=await mkdtemp(join(tmpdir(),'shadow-circle-journal-'));

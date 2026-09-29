@@ -1,9 +1,11 @@
 import { randomUUID } from 'node:crypto';
-import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, getAddress, keccak256, parseUnits, stringToHex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
+import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
 import abi from './float-mainnet-abi.json' with { type: 'json' };
 
 const CHAIN = 5042002;
 const USDC = '0x3600000000000000000000000000000000000000';
+const accountAbi = parseAbi(['function execute(address target,uint256 value,bytes data)']);
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 const requireThat = (value, message) => { if (!value) throw new Error(message); };
 const hash = (value) => keccak256(stringToHex(JSON.stringify(value)));
@@ -84,7 +86,36 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     requireThat(receipt.blockNumber >= BigInt(record.expected.fromBlock), 'Receipt predates the request.');
     requireThat(receipt.status === 'success', 'Transaction reverted.');
-    const matches = receipt.logs.flatMap(log => {
+    const [finalized, canonical, transaction] = await Promise.all([
+      client.getBlock({ blockTag: 'finalized' }),
+      client.getBlock({ blockNumber: receipt.blockNumber }),
+      client.getTransaction({ hash: txHash }),
+    ]);
+    requireThat(finalized.number >= receipt.blockNumber && same(canonical.hash, receipt.blockHash), 'Receipt is not canonical and finalized.');
+    requireThat(same(transaction.to, entryPoint07Address) && same(transaction.blockHash, receipt.blockHash), 'Unsupported or reorganized account-abstraction transaction.');
+    const bundle = decodeFunctionData({ abi: entryPoint07Abi, data: transaction.input });
+    requireThat(bundle.functionName === 'handleOps', 'Only EntryPoint v0.7 handleOps bundles are supported.');
+    const operations = bundle.args[0].filter(op => {
+      if (!same(op.sender, agent)) return false;
+      try {
+        const call = decodeFunctionData({ abi: accountAbi, data: op.callData });
+        return same(encodeFunctionData({ abi: accountAbi, ...call }), op.callData) && same(call.args[0], record.request.contractAddress) && call.args[1] === 0n && same(call.args[2], record.request.callData);
+      } catch { return false; }
+    });
+    requireThat(operations.length === 1, 'Circle transaction does not identify a unique matching user operation.');
+    const userOpHash = await client.readContract({ address: entryPoint07Address, abi: entryPoint07Abi, functionName: 'getUserOpHash', args: [operations[0]], blockNumber: receipt.blockNumber });
+    const boundaries = receipt.logs.flatMap((log, index) => {
+      if (!same(log.address, entryPoint07Address)) return [];
+      try {
+        const event = decodeEventLog({ abi: entryPoint07Abi, data: log.data, topics: log.topics });
+        return ['UserOperationEvent', 'BeforeExecution'].includes(event.eventName) ? [{ ...event, index }] : [];
+      } catch { return []; }
+    });
+    const ends = boundaries.filter(x => x.eventName === 'UserOperationEvent' && same(x.args.userOpHash, userOpHash));
+    requireThat(ends.length === 1 && same(ends[0].args.sender, agent) && ends[0].args.success === true, 'The requested user operation did not succeed.');
+    const end = ends[0].index, start = boundaries.filter(x => x.index < end).at(-1)?.index;
+    requireThat(start !== undefined, 'Missing user-operation log boundary.');
+    const matches = receipt.logs.slice(start + 1, end).flatMap(log => {
       if (!same(log.address, record.request.contractAddress)) return [];
       try { return [decodeEventLog({ abi: record.expected.operation === 'approve' ? erc20Abi : abi, data: log.data, topics: log.topics })]; } catch { return []; }
     }).filter(event => {
@@ -94,7 +125,7 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       return event.eventName === 'ProviderPaid' && same(a.digest, record.expected.digest) && same(a.lineId, record.expected.lineId) && same(a.provider, config.provider) && a.principal === amount;
     });
     requireThat(matches.length === 1, 'Receipt does not prove the exact requested operation.');
-    return { status: 'confirmed', txHash, blockNumber: receipt.blockNumber.toString() };
+    return { status: 'confirmed', txHash, userOpHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() };
   }
   async function observe(key, record, response) {
     if (!response) return { status: 'unknown', key, transactionId: record.transactionId ?? null };
@@ -123,7 +154,8 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       if (existing) {
         requireThat(existing.namespace === namespace && hash(existing.request) === existing.requestHash, 'Execution journal was altered.');
         requireThat(same(existing.request.contractAddress, request.to) && same(existing.request.callData, request.data), 'Operation ID was reused for different calldata.');
-        return { ...(existing.result ?? { status: 'unknown' }), key, transactionId: existing.transactionId ?? null };
+        const result = existing.result ? await verifyReceipt(existing, existing.txHash) : { status: 'unknown' };
+        return { ...result, key, transactionId: existing.transactionId ?? null };
       }
       const active = await journal.get(activeKey);
       requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
@@ -151,8 +183,9 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       requireThat(record && record.namespace === namespace && hash(record.request) === record.requestHash, 'Unknown or altered execution journal.');
       requireThat(requestKey({ operationId: record.operationId }) === key, 'Journal request key mismatch.');
       if (record.result) {
+        const verified = await verifyReceipt(record, record.txHash);
         if (await journal.get(activeKey) === key) await journal.put(activeKey, null);
-        return { ...record.result, key, transactionId: record.transactionId };
+        return { ...verified, key, transactionId: record.transactionId };
       }
       if (record.txHash) {
         record.result = await verifyReceipt(record, record.txHash);

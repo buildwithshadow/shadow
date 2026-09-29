@@ -16,6 +16,10 @@ The request is `{ blockchain: "ARC-TESTNET", sourceAddress, contractAddress, cal
 
 Normalize returned metadata to `{ idempotencyKey, id, blockchain, sourceAddress, contractAddress, state, txHash? }`. Bind this metadata to the actual original request, never stamp an arbitrary history transaction with its key. A missing ID/hash remains unresolved. A successful outer smart-account transaction alone is insufficient: the adapter checks the exact Shadow `ProviderPaid`/`Repaid` or USDC `Approval` event, its amount, identity, and block range.
 
+Receipt verification supports EntryPoint v0.7 `handleOps` with the account's single-call `execute(address,uint256,bytes)` envelope. It decodes the bundle, requires exactly one operation matching the agent, destination, value and complete calldata, computes that operation's hash through EntryPoint, and checks its successful `UserOperationEvent`. Only logs between that operation's boundaries may prove the action. Duplicate matching operations, batch envelopes, aggregated bundles, and other EntryPoint versions fail closed until explicitly supported.
+
+The receipt must be in a canonical block at or below the RPC's `finalized` head. Cached completion is revalidated on subsequent execute/reconcile calls. RPC providers that do not support finalized blocks cannot finalize this adapter's journal.
+
 Circle CLI 1.1.4's stock tuple execution command is not sufficient for this path. The library intentionally does not patch installed CLI files or import private authentication internals. Supply an authenticated raw-calldata transport. This remains an integration prerequisite before customer rollout.
 
 ## Durable operation lifecycle
