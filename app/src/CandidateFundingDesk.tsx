@@ -10,6 +10,7 @@ import {
 import "./candidateFunding.css";
 import { PublicPurchase, type PublicService } from "./PublicPurchase";
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
+import { findSentTransactionHash } from "./savedTransactionLookup";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport("https://rpc.testnet.arc.network", {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -75,6 +76,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const activeAccount = useRef<Address | null>(null);
   const walletReadSequence = useRef(0);
   const submitting = useRef(false);
+  const autoChecked = useRef("");
   const correctNetwork = chainId === CANDIDATE_FUNDING.chainId;
   const canWrite = Boolean(account && correctNetwork && !busy && !pending && !journalError);
 
@@ -93,7 +95,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   function loadJournal(forAccount: Address) {
     if (activeAccount.current !== forAccount) return;
     try {
-      setPending(createCandidateJournal(window.localStorage, forAccount).load());
+      const saved = createCandidateJournal(window.localStorage, forAccount).load();
+      setPending(saved);
+      if (!saved) setRecoveryHash("");
       setJournalError("");
     } catch (cause) {
       setJournalError(`Transaction recovery is unavailable. ${messageOf(cause)}`);
@@ -134,6 +138,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setSnapshot(null);
     setSnapshotError("");
     setPending(null);
+    setRecoveryHash("");
     setJournalError("");
     if (!account) return;
     let active = true;
@@ -153,6 +158,15 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   useEffect(() => {
     if (error) feedback.current?.scrollIntoView({ block: "nearest" });
   }, [error]);
+
+  // Check a saved transaction once when it appears. recover() only reads and reconciles; it never resends.
+  useEffect(() => {
+    if (!pending || busy) return;
+    const key = `${pending.account}:${pending.nonce}`;
+    if (autoChecked.current === key) return;
+    autoChecked.current = key;
+    void recover();
+  }, [pending, busy]);
 
   async function connect() {
     setError("");
@@ -305,18 +319,32 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     if (!account || busy) return;
     const currentRevision = revision.current;
     const isCurrent = () => activeAccount.current === account && revision.current === currentRevision;
-    setError(""); setBusy("Checking the recorded transaction…");
+    setError(""); setNotice(""); setBusy("Checking the recorded transaction…");
     try {
       if (!navigator.locks) throw new Error("Use a current browser over HTTPS to check transaction recovery.");
       const journal = createCandidateJournal(window.localStorage, account);
       await navigator.locks.request(journal.key, { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("A wallet request is still open in another Shadow tab. Finish it there first.");
         const saved = journal.load();
-        if (!saved) { if (isCurrent()) setPending(null); return; }
-        const result = await reconcileCandidatePending(client, saved, recoveryHash.trim() || undefined);
-        if (result.status !== "unknown") journal.clear();
+        if (!saved) { if (isCurrent()) { setPending(null); setRecoveryHash(""); } return; }
+        // With no hash saved or entered, look up the transaction that used the saved nonce. A failed
+        // lookup leaves the hash field as the way to resolve it.
+        const typed = recoveryHash.trim();
+        let lookupFailed = false;
+        const found = (typed || saved.txHash) ? undefined : await findSentTransactionHash({
+          chainId: saved.chainId, account: saved.account, nonce: saved.nonce,
+          readNextNonce: () => client.getTransactionCount({ address: saved.account, blockTag: "latest" }),
+        }).then((hash) => hash ?? undefined, () => { lookupFailed = true; return undefined; });
+        const result = await reconcileCandidatePending(client, saved, typed || found);
+        // A found hash that belongs to a different transaction could mean the wallet sent this action
+        // with another nonce, so only the person, after checking the wallet, may clear it as replaced.
+        const foundOther = found !== undefined && result.status === "replaced";
+        if (result.status !== "unknown" && !foundOther) journal.clear();
         if (!isCurrent()) return;
-        setResolution(result); loadJournal(account);
+        if (foundOther) setRecoveryHash(found);
+        if (lookupFailed) setNotice("The automatic lookup failed. Paste the transaction hash from your wallet instead.");
+        setResolution(foundOther ? { status: "unknown", txHash: found, message: "Another transaction used this wallet’s saved nonce. Check your wallet activity for this Shadow action before continuing. If it was never sent, choose Check confirmation to clear this record with the hash filled in." } : result);
+        loadJournal(account);
         await refreshAfter(result, account, currentRevision);
       });
     } catch (cause) { if (isCurrent()) setError(messageOf(cause)); }
@@ -378,8 +406,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       <p>A {pending.kind === "register" ? "sponsor registration" : pending.kind === "approve" ? "USDC approval" : pending.kind === "open" ? "line opening" : pending.kind === "repay" ? "repayment" : "reclaim"} has not been resolved. New transactions from this wallet are paused here so a retry cannot accidentally send it again.</p>
       <p>Finish any open wallet prompt. Then check its status. Keep this browser’s site data until it is resolved.</p>
       {pending.txHash && <a href={`${explorer}/tx/${pending.txHash}`} target="_blank" rel="noreferrer">Open the saved transaction</a>}
-      <Field name="recovery-hash" label="Transaction hash from your wallet (optional)" value={recoveryHash} onChange={setRecoveryHash} required={false}
-        hint="Use the original transaction, or its confirmed replacement. An unrelated payment cannot clear this check." />
+      <Field name="recovery-hash" label="Transaction hash from your wallet (optional)" value={recoveryHash} onChange={setRecoveryHash} required={false} disabled={Boolean(busy)}
+        hint="If your wallet already sent it, leave this empty and the page looks it up on the Arc explorer. Otherwise paste the original transaction or its confirmed replacement. An unrelated payment cannot clear this check." />
       <button type="button" onClick={recover} disabled={Boolean(busy)}>Check confirmation</button>
       <details><summary>No transaction hash in your wallet?</summary>
         <p>The request may not have been sent, but a missing hash cannot prove that. In your wallet, cancel or replace the request using this account and nonce, then enter the confirmed replacement hash above. That prevents the original nonce from executing later. Ask the Shadow operator for help if your wallet does not offer replacement controls.</p>
