@@ -158,3 +158,41 @@ test('file journal survives recreation, restricts file permissions and serialize
     await b.withLock('wallet',async()=>{});
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+test('preflight rejection can be reconciled as unsent without a Circle request',async()=>{
+  const {adapter,state}=setup();state.fee='1';
+  await assert.rejects(()=>adapter.execute(repay),/Estimated fee/);
+  assert.equal((await adapter.reconcile(adapter.operationKey(repay))).status,'not-submitted');
+  assert.equal(state.sends,0);assert.equal(state.reads,0);
+  state.fee='0.01';assert.equal((await adapter.execute(repay)).status,'confirmed');assert.equal(state.sends,1);
+});
+test('a partial durable barrier cannot be classified as an unsent operation',async()=>{
+  const {adapter,state,options}=setup();const put=options.journal.put;
+  options.journal.put=async(k,v)=>{if(v?.request)throw new Error('disk failure');return put(k,v);};
+  await assert.rejects(()=>adapter.execute(repay),/disk failure/);
+  await assert.rejects(()=>adapter.reconcile(adapter.operationKey(repay)),/barrier exists/);
+  assert.equal(state.sends,0);
+});
+
+test('definite transport pre-send failure releases barrier and survives recreation',async()=>{
+  const x=setup();const send=x.options.circle.execute;
+  x.options.circle.execute=async()=>{const e=new Error('session expired');e.beforeSubmission=true;throw e;};
+  const first=await x.adapter.execute(repay);assert.equal(first.status,'not-submitted');assert.equal(x.state.sends,0);
+  const recovered=createCircleAgentExecutor(x.options);assert.equal((await recovered.reconcile(first.key)).status,'not-submitted');
+  x.options.circle.execute=send;
+  assert.equal((await recovered.execute(repay)).status,'confirmed');assert.equal(x.state.sends,1);
+});
+test('an exact finalized SpendBlocked is terminal without accepting unrelated refusals',async()=>{
+  const intent={agent,sponsor:provider,lineId,lineEpoch:1n,termsHash:digest,provider,endpointHash,principal:50000n,maximumTotalDebt:50000n,dueAt:1000n,nonce:1n,signatureExpiry:900n,executor:agent};
+  const request={operationId:'blocked:one',to:contract,data:encodeFunctionData({abi,functionName:'executeSpend',args:[intent,'0x1234']})};
+  for(const wrong of [false,true]){
+    const x=setup();const send=x.options.circle.execute;
+    x.options.circle.execute=async r=>{const out=await send(r);x.state.receiptStatus=1;return out;};
+    x.state.receipt.logs=[eventLog('SpendBlocked',{digest:wrong?endpointHash:digest,lineId,nonce:1n,reason:1})];
+    if(wrong){await assert.rejects(()=>x.adapter.execute(request),/exact requested/);continue;}
+    const result=await x.adapter.execute(request);assert.equal(result.status,'blocked');
+    assert.equal((await createCircleAgentExecutor(x.options).reconcile(result.key)).status,'blocked');assert.equal(x.state.sends,1);
+    x.state.receipt.logs=[eventLog('Repaid',{lineId,payer:agent,amount:50000n,principalRemaining:0n})];
+    assert.equal((await x.adapter.execute(repay)).status,'confirmed');
+  }
+});

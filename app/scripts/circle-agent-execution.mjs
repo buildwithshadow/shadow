@@ -115,16 +115,22 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     requireThat(ends.length === 1 && same(ends[0].args.sender, agent) && ends[0].args.success === true, 'The requested user operation did not succeed.');
     const end = ends[0].index, start = boundaries.filter(x => x.index < end).at(-1)?.index;
     requireThat(start !== undefined, 'Missing user-operation log boundary.');
-    const matches = receipt.logs.slice(start + 1, end).flatMap(log => {
+    const events = receipt.logs.slice(start + 1, end).flatMap(log => {
       if (!same(log.address, record.request.contractAddress)) return [];
       try { return [decodeEventLog({ abi: record.expected.operation === 'approve' ? erc20Abi : abi, data: log.data, topics: log.topics })]; } catch { return []; }
-    }).filter(event => {
+    });
+    const matches = events.filter(event => {
       const a = event.args, amount = BigInt(record.expected.amount);
       if (record.expected.operation === 'approve') return event.eventName === 'Approval' && same(a.owner, agent) && same(a.spender, contract) && a.value === amount;
       if (record.expected.operation === 'repay') return event.eventName === 'Repaid' && same(a.lineId, record.expected.lineId) && same(a.payer, agent) && a.amount === amount;
       return event.eventName === 'ProviderPaid' && same(a.digest, record.expected.digest) && same(a.lineId, record.expected.lineId) && same(a.provider, config.provider) && a.principal === amount;
     });
-    requireThat(matches.length === 1, 'Receipt does not prove the exact requested operation.');
+    const blocked = record.expected.operation === 'executeSpend' ? events.filter(event => event.eventName === 'SpendBlocked' && same(event.args.digest, record.expected.digest) && same(event.args.lineId, record.expected.lineId)) : [];
+    if (blocked.length === 1 && matches.length === 0) {
+      requireThat(Number(await client.readContract({ address: contract, abi, functionName: 'receiptStatus', args: [record.expected.digest], blockNumber: receipt.blockNumber })) === 1, 'Blocked receipt is not terminal on chain.');
+      return { status: 'blocked', txHash, userOpHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() };
+    }
+    requireThat(matches.length === 1 && blocked.length === 0, 'Receipt does not prove the exact requested operation.');
     return { status: 'confirmed', txHash, userOpHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() };
   }
   async function observe(key, record, response) {
@@ -154,8 +160,13 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       if (existing) {
         requireThat(existing.namespace === namespace && hash(existing.request) === existing.requestHash, 'Execution journal was altered.');
         requireThat(same(existing.request.contractAddress, request.to) && same(existing.request.callData, request.data), 'Operation ID was reused for different calldata.');
-        const result = existing.result ? await verifyReceipt(existing, existing.txHash) : { status: 'unknown' };
-        return { ...result, key, transactionId: existing.transactionId ?? null };
+        if (existing.notSubmitted !== true) {
+          const result = existing.result ? await verifyReceipt(existing, existing.txHash) : { status: 'unknown' };
+          return { ...result, key, transactionId: existing.transactionId ?? null };
+        }
+        requireThat(!existing.transactionId && !existing.txHash && !existing.result, 'Contradictory pre-send journal.');
+        // A durable definite pre-send failure permits a fresh explicit attempt.
+        // Re-run all policy and fee checks, and create a new Circle idempotency key.
       }
       const active = await journal.get(activeKey);
       requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
@@ -172,7 +183,15 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       await journal.put(key, record); // A crash/timeout from here never permits automatic resubmission.
       let response;
       try { response = await circle.execute(payload); }
-      catch { return { status: 'unknown', key, transactionId: null }; }
+      catch (error) {
+        if (error?.beforeSubmission === true) {
+          record.notSubmitted = true;
+          await journal.put(key, record);
+          if (await journal.get(activeKey) === key) await journal.put(activeKey, null);
+          return { status: 'not-submitted', key };
+        }
+        return { status: 'unknown', key, transactionId: null };
+      }
       return observe(key, record, response);
     });
   }
@@ -180,8 +199,17 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     return journal.withLock(namespace, async () => {
       await identity();
       const record = await journal.get(key);
-      requireThat(record && record.namespace === namespace && hash(record.request) === record.requestHash, 'Unknown or altered execution journal.');
+      if (!record) {
+        requireThat(await journal.get(activeKey) !== key, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
+        return { status: 'not-submitted', key };
+      }
+      requireThat(record.namespace === namespace && hash(record.request) === record.requestHash, 'Unknown or altered execution journal.');
       requireThat(requestKey({ operationId: record.operationId }) === key, 'Journal request key mismatch.');
+      if (record.notSubmitted === true) {
+        requireThat(!record.transactionId && !record.txHash && !record.result, 'Contradictory pre-send journal.');
+        if (await journal.get(activeKey) === key) await journal.put(activeKey, null);
+        return { status: 'not-submitted', key };
+      }
       if (record.result) {
         const verified = await verifyReceipt(record, record.txHash);
         if (await journal.get(activeKey) === key) await journal.put(activeKey, null);
@@ -198,5 +226,5 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       return observe(key, record, response);
     });
   }
-  return { execute, reconcile };
+  return { execute, reconcile, operationKey: requestKey };
 }
