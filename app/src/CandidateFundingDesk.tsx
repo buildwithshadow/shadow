@@ -364,6 +364,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     : snapshot?.openingsPaused ? "New lines are currently paused."
     : snapshot?.sponsorAllowed === false ? (deployment.selfRegistration ? "Register this wallet above before funding." : "This wallet is not approved as a sponsor yet.")
     : !providerAgreed ? "Confirm the provider agreement above to continue." : null;
+  const lineBlocker = !account ? "Connect your wallet to repay." : !correctNetwork ? "Switch to Arc testnet to continue."
+    : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
@@ -469,10 +471,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           <input id="line-share-link" readOnly aria-describedby="line-share-link-hint" value={`${window.location.origin}${window.location.pathname}?line=${line.lineId}`} />
           <small id="line-share-link-hint">It opens this page with the line filled in. The agent’s page checks the line again before any payment is sent.</small></div>}
         <div className="fundingActions">
-          {repayable && <button className="fundingPrimary" type="button" disabled={!canWrite} onClick={() => void review("repay")}>Review full repayment</button>}
-          {reclaimable && <button className="fundingPrimary" type="button" disabled={!canWrite} onClick={() => void review("reclaim")}>{line.stateName === "DEFAULTED" ? "Review recovery claim" : "Review close and reclaim"}</button>}
+          {repayable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("repay")}>Review full repayment</button>}
+          {reclaimable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("reclaim")}>{line.stateName === "DEFAULTED" ? "Review recovery claim" : "Review close and reclaim"}</button>}
           <button type="button" disabled={Boolean(busy)} onClick={() => void lookup()}>Refresh line</button>
           {line.stateName === "OPEN" && line.principalOutstanding === 0n && !isSponsor && <small>Only the sponsor can close this line and reclaim its reserve.</small>}
+          {(repayable || reclaimable) && lineBlocker && <small id="funding-line-action-hint">{lineBlocker}</small>}
         </div>
         <details><summary>Line details</summary>
           <dl className="fundingDetails"><div><dt>Line ID</dt><dd><code>{line.lineId}</code></dd></div><div><dt>Sponsor</dt><dd><code>{line.sponsor}</code></dd></div>
