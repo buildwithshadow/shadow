@@ -46,9 +46,10 @@ export async function recoverAgentPurchase({executor,state,engine,client,save}) 
     delete state.requests.purchase;save();
     next='The exact purchase was refused on chain without payment and archived. Review the funding limits before preparing another purchase.';
   }
-  if(operations.purchase?.status==='not-submitted' && delivery?.status==='unconfirmed') {
-    // The signed authorization was already given to the provider. Even though this
-    // executor never sent it, retain it until expiry and verify unpaid finality.
+  if((operations.purchase?.status==='not-submitted' || !state.requests.purchase) && delivery?.status==='unconfirmed') {
+    // A provider acceptance failure can happen before an execution request exists.
+    // The provider may still have the authorization, so retain it until expiry
+    // and let archive verify unpaid state at that exact finalized block.
     const block=await client.getBlock({blockTag:'finalized'});
     if(block.timestamp>BigInt(delivery.record.intent.typedData.message.signatureExpiry)) {
       await engine.archive();
