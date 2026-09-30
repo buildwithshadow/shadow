@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { reportPaymentFromRequest, assertNoInterveningDebtChange, createShadowV2CycleService, verifyCanonicalBlocks } from "../../examples/float-mainnet-provider-server/shadow-v2-cycle-service.mjs";
+import { readHistoricalReceiptPair, reportPaymentFromRequest, assertNoInterveningDebtChange, createShadowV2CycleService, verifyCanonicalBlocks } from "../../examples/float-mainnet-provider-server/shadow-v2-cycle-service.mjs";
 
 const paymentTx = `0x${"a".repeat(64)}`;
 const repaymentTx = `0x${"b".repeat(64)}`;
@@ -73,4 +73,44 @@ test("distinct report jobs can reference one cycle without accepting arbitrary i
   for (const bad of [null, "", `report:short:${paymentTx}`, `${a}:suffix`, `report:${"g".repeat(32)}:${paymentTx}`]) {
     assert.equal(reportPaymentFromRequest(bad), null);
   }
+});
+
+const historical = { transactionHash: paymentTx, status: "success", blockNumber: 42n,
+  blockHash: `0x${"c".repeat(64)}`, logs: [] };
+const missing = () => Object.assign(new Error("receipt index pruned"), { name: "TransactionReceiptNotFoundError" });
+const archive = { getTransactionReceipt: async () => historical };
+const pruned = receipts => ({ getTransactionReceipt: async () => { throw missing(); },
+  request: async ({ method, params }) => {
+    assert.equal(method, "eth_getBlockReceipts"); assert.deepEqual(params, ["0x2a"]);
+    return receipts.map(r => ({ ...r, blockNumber: `0x${r.blockNumber.toString(16)}`,
+      status: r.status === "success" ? "0x1" : "0x0", transactionIndex: "0x0", type: "0x2",
+      cumulativeGasUsed: "0x1", gasUsed: "0x1", effectiveGasPrice: "0x1" }));
+  } });
+
+test("pruned transaction index falls back to that provider's own block receipts", async () => {
+  for (const clients of [[pruned([historical]), archive], [archive, pruned([historical])]]) {
+    const recovered = await readHistoricalReceiptPair(clients, paymentTx);
+    for (const receipt of recovered) for (const [key, value] of Object.entries(historical)) assert.deepEqual(receipt[key], value);
+  }
+});
+
+test("history fallback refuses missing, duplicate, wrong-block and conflicting receipts", async () => {
+  for (const receipts of [[], [historical, historical], [{ ...historical, transactionHash: repaymentTx }],
+    [{ ...historical, blockNumber: 43n }], [{ ...historical, blockHash: repaymentTx }]]) {
+    await assert.rejects(readHistoricalReceiptPair([pruned(receipts), archive], paymentTx), /do not contain the exact transaction/);
+  }
+  await assert.rejects(readHistoricalReceiptPair([pruned([{ ...historical, status: "reverted" }]), archive], paymentTx), /receipts disagree/);
+  await assert.rejects(readHistoricalReceiptPair([pruned([]), pruned([])], paymentTx), /unavailable from both RPC indexes/);
+});
+
+test("history fallback does not mask RPC transport errors or invoke a broad scan", async () => {
+  const bad = { getTransactionReceipt: async () => { throw new Error("429 rate limit"); },
+    request: async () => assert.fail("must not query a block on a transport error") };
+  await assert.rejects(readHistoricalReceiptPair([bad, archive], paymentTx), /429 rate limit/);
+});
+
+test("a recovered receipt must still pass canonical-block verification", async () => {
+  const receipts = await readHistoricalReceiptPair([pruned([historical]), archive], paymentTx);
+  const client = { getBlockNumber: async () => 100n, getBlock: async () => ({ hash: repaymentTx }) };
+  await assert.rejects(verifyCanonicalBlocks([client, { ...client }], receipts), /no longer canonical/);
 });

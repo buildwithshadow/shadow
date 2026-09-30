@@ -97,3 +97,18 @@ test('runner archives an exact onchain refusal so a new intent can be prepared',
   const r=await recoverAgentPurchase({state,executor:{reconcile:async()=>({status:'blocked'})},engine:{load:()=>({}),recover:async()=>({status:'blocked'}),archive:async()=>{archives++;}},client:{},save:()=>{saves++;}});
   assert.equal(r.delivery,'blocked');assert.equal(archives,1);assert.equal(saves,1);assert.equal(state.requests.purchase,undefined);assert.match(r.next,/refused on chain/);
 });
+
+
+test('provider failure before execution keeps authorization until finalized unpaid expiry',async()=>{
+  let now=9n,archives=0,saves=0;
+  const state={requests:{}};
+  const options={state,executor:{reconcile:async()=>assert.fail('no execution to reconcile')},
+    engine:{load:()=>({stage:'prepared'}),recover:async()=>({status:'unconfirmed',record:{intent:{typedData:{message:{signatureExpiry:'10'}}}}}),archive:async()=>{archives++;}},
+    client:{getBlock:async({blockTag})=>{assert.equal(blockTag,'finalized');return {timestamp:now};}},save:()=>{saves++;}};
+  assert.match((await recoverAgentPurchase(options)).next,/after the signed authorization expires/);
+  assert.equal(archives,0);assert.equal(saves,0);
+  now=11n;assert.match((await recoverAgentPurchase(options)).next,/prepare a new request/);
+  assert.equal(archives,1);assert.equal(saves,1);
+  options.engine.archive=async()=>{throw new Error('receipt is paid');};
+  await assert.rejects(recoverAgentPurchase(options),/receipt is paid/);assert.equal(saves,1);
+});
