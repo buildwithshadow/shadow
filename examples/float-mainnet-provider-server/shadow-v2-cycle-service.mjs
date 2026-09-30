@@ -1,6 +1,6 @@
 import { createRequire } from "node:module";
 
-const { createPublicClient, decodeEventLog, formatUnits, getAddress, http, parseAbiItem } =
+const { createPublicClient, decodeEventLog, formatUnits, formatTransactionReceipt, getAddress, http, numberToHex, parseAbiItem } =
   createRequire(new URL("../../app/package.json", import.meta.url))("viem");
 
 const HASH = /^0x[0-9a-fA-F]{64}$/;
@@ -137,6 +137,33 @@ export function reportPaymentFromRequest(requestId) {
   return match?.[1] ?? null;
 }
 
+// Some RPCs prune the transaction-hash index while retaining block receipts.
+// The other provider supplies only a block hint: the missing provider must still
+// return its own exact receipt. Never substitute one provider's evidence for two.
+export async function readHistoricalReceiptPair(clients, hash) {
+  const attempts = await Promise.allSettled(clients.map(client => client.getTransactionReceipt({ hash })));
+  for (const attempt of attempts) {
+    if (attempt.status === "rejected" && attempt.reason?.name !== "TransactionReceiptNotFoundError") throw attempt.reason;
+  }
+  const receipts = attempts.map(attempt => attempt.status === "fulfilled" ? attempt.value : null);
+  const hint = receipts.find(receipt => receipt?.transactionHash?.toLowerCase() === hash &&
+    typeof receipt.blockNumber === "bigint" && receipt.blockNumber >= 0n && HASH.test(receipt.blockHash || ""));
+  if (receipts.some(receipt => !receipt) && !hint) throw new Error("historical receipt unavailable from both RPC indexes");
+  for (let i = 0; i < receipts.length; i++) {
+    if (receipts[i]) continue;
+    const raw = await clients[i].request({ method: "eth_getBlockReceipts", params: [numberToHex(hint.blockNumber)] });
+    if (!Array.isArray(raw)) throw new Error("historical block receipts unavailable");
+    const blockReceipts = raw.map(formatTransactionReceipt);
+    const matching = blockReceipts.filter(receipt => receipt.transactionHash?.toLowerCase() === hash);
+    if (matching.length !== 1 || matching[0].blockNumber !== hint.blockNumber || matching[0].blockHash !== hint.blockHash) {
+      throw new Error("historical block receipts do not contain the exact transaction at the hinted block");
+    }
+    receipts[i] = matching[0];
+  }
+  if (comparable(receipts[0]) !== comparable(receipts[1])) throw new Error("independent RPC receipts disagree");
+  return receipts;
+}
+
 export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } = {}) {
   if (!HASH.test(paymentTx || "") || !HASH.test(repaymentTx || "") || paymentTx.toLowerCase() === repaymentTx.toLowerCase()) {
     throw new Error("SHADOW_V2_PAYMENT_TX and SHADOW_V2_REPAYMENT_TX must be distinct transaction hashes");
@@ -149,16 +176,14 @@ export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } =
   const service = async () => { throw new Error("V2 cycle report must be prepared before provider acceptance"); };
   service.prepare = async ({ requestId }) => {
     if (reportPaymentFromRequest(requestId) !== paymentHash) return null;
-    const reads = await Promise.all(rpcClients.map(async (client) => {
+    await Promise.all(rpcClients.map(async (client) => {
       if (await client.getChainId() !== CHAIN_ID) throw new Error("provider report RPC is not Arc testnet");
-      return Promise.all([
-        client.getTransactionReceipt({ hash: paymentHash }),
-        client.getTransactionReceipt({ hash: repaymentHash }),
-      ]);
     }));
-    for (let i = 0; i < 2; i++) {
-      if (comparable(reads[0][i]) !== comparable(reads[1][i])) throw new Error("independent RPC receipts disagree");
-    }
+    const [payments, repayments] = await Promise.all([
+      readHistoricalReceiptPair(rpcClients, paymentHash),
+      readHistoricalReceiptPair(rpcClients, repaymentHash),
+    ]);
+    const reads = rpcClients.map((_, index) => [payments[index], repayments[index]]);
     const report = checkedCycle(reads[0][0], reads[0][1], paymentHash, repaymentHash);
     report.requestId = requestId;
     await verifyDebtInterval(rpcClients, reads[0][0], reads[0][1], report);
