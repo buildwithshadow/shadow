@@ -61,6 +61,7 @@ export function GatewayFunding({
   const [error, setError] = useState(""),
     [notice, setNotice] = useState(""),
     [hash, setHash] = useState("");
+  const [progress, setProgress] = useState("");
   const [expanded, setExpanded] = useState(false),
     [ack, setAck] = useState(false);
   const inFlight = useRef(false),
@@ -121,8 +122,16 @@ export function GatewayFunding({
       window.removeEventListener("storage", refresh);
     };
   }, [engine, setup.error, onHold]);
+  const previousReserve = useRef(reserve);
+  const previousRecord = useRef(record);
   useEffect(() => {
-    if (!record) {
+    // Preserve the initial restored plan, but clear quotes after a budget change
+    // or a saved operation being archived (including from another tab).
+    const reserveChanged = previousReserve.current !== reserve;
+    const recordRemoved = Boolean(previousRecord.current && !record);
+    previousReserve.current = reserve;
+    previousRecord.current = record;
+    if (!record && (reserveChanged || recordRemoved)) {
       setPlan(null);
       setAck(false);
     }
@@ -155,15 +164,16 @@ export function GatewayFunding({
     const revision = generation.current;
     setError("");
     setNotice("");
-    setBusy(
+    const progressText =
       kind === "quote"
         ? "Checking Gateway balance and fee…"
         : kind === "authorize"
           ? "Review the Gateway funding authorization in your wallet…"
           : kind === "mint"
             ? "Review the Gateway withdrawal in your wallet…"
-            : "Checking the original Gateway transaction…",
-    );
+            : "Checking the original Gateway transaction…";
+    setProgress(progressText);
+    setBusy(progressText);
     try {
       if (!navigator.locks)
         throw Error(
@@ -279,11 +289,12 @@ export function GatewayFunding({
         }
       }
       inFlight.current = false;
+      setProgress("");
       setBusy("");
     }
   }
   return (
-    <section className="fundingPanel" aria-labelledby="gateway-heading">
+    <section className="fundingPanel gatewayFunding" aria-labelledby="gateway-heading">
       <h2 id="gateway-heading">Use a Gateway balance</h2>
       <p>
         Already hold USDC in Circle Gateway on Arc testnet? Withdraw it to this
@@ -305,6 +316,12 @@ export function GatewayFunding({
             and wallet gas are separate. This route uses an existing Gateway
             balance; it does not deposit your wallet funds into Gateway.
           </p>
+          <ol className="gatewaySteps" aria-label="Gateway funding steps">
+            <li>Sign the quoted amount and fee in your wallet.</li>
+            <li>Approve the separate withdrawal transaction.</li>
+            <li>Review and fund your agent’s line below.</li>
+          </ol>
+          {account && <p className="gatewayRecipient">Receiving wallet: <code>{account}</code></p>}
           {!account && (
             <p>Connect your wallet above to check your Gateway balance.</p>
           )}
@@ -324,7 +341,7 @@ export function GatewayFunding({
             <>
               <dl className="fundingDetails">
                 <div>
-                  <dt>To this wallet</dt>
+                  <dt>To your wallet</dt>
                   <dd>
                     {formatUnits(BigInt(plan.intent.spec.value), 6)} test USDC
                   </dd>
@@ -424,9 +441,9 @@ export function GatewayFunding({
           )}
           {funded && (
             <p className="fundingSuccess">
-              Gateway withdrawal confirmed. The USDC is in your wallet; it
-              becomes the agent’s reserve only after you open the funding line
-              below.
+              Gateway withdrawal verified. Use the funding controls below to
+              open or manage your agent’s line. The withdrawal itself does not
+              open a funding line.
             </p>
           )}
           {funded && (
@@ -450,10 +467,11 @@ export function GatewayFunding({
           )}
         </div>
       )}
-      <div role="status" aria-live="polite">
-        {notice}
+      <div role="status" aria-live="polite" aria-atomic="true">
+        {progress || notice || (busy ? "Finish the current wallet action before using Gateway." : "")}
       </div>
-      <div role="alert">{error}</div>
+      {progress && <p>Keep this page open. A signature and a transaction are separate wallet prompts.</p>}
+      <div role="alert" className={error ? "fundingError" : undefined}>{error}</div>
     </section>
   );
 }
