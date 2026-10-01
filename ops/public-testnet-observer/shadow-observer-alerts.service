@@ -5,12 +5,12 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=shadow-observer
+User=shadow-alerts
 Group=shadow-observer
+SupplementaryGroups=shadow-alerts
 WorkingDirectory=/opt/shadow-observer/current
-ExecStart=/usr/bin/node app/scripts/public-testnet-observer-alerts.mjs --manifest contracts/deployments/public-testnet/arc-testnet.manifest.json --state-dir /var/lib/shadow-observer
-LoadCredential=telegram.json:/etc/shadow-observer/telegram.json
-StateDirectory=shadow-observer
+ExecStart=/usr/bin/node app/scripts/public-testnet-observer-alerts.mjs --manifest contracts/deployments/public-testnet/arc-testnet.manifest.json --observer-dir /var/lib/shadow-observer --state-dir /var/lib/shadow-alerts --config /etc/shadow-alerts/telegram.json
+StateDirectory=shadow-alerts
 StateDirectoryMode=0700
 TimeoutStartSec=30s
 UMask=0077
