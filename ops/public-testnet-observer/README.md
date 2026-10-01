@@ -51,3 +51,29 @@ prove owner/operator policy approval, independent security review or mainnet rea
 Rollback: disable/stop only `shadow-observer-testnet.timer` and its service.
 Retain `/var/lib/shadow-observer` and release files for investigation. Never
 restore an older healthy status file to clear an incident.
+
+## Optional Telegram notifications
+
+After the operator approves a destination, install `shadow-observer-alerts.service`
+and its timer alongside the observer. Store a JSON object with `token` and
+`chatId` in `/etc/shadow-observer/telegram.json` (root-owned, mode 0600; directory
+0700). Never commit this file. systemd passes it only to the notification unit
+using `LoadCredential`; the scan subprocess never receives the token.
+
+The separate minute timer checks persisted observation freshness even when the
+scan fails or stops running. Normal scans are quiet for up to 21 minutes; a
+stuck scan becomes an alert. First healthy setup, failure and recovery each send
+one message. An unresolved failure repeats after six hours. Successful delivery
+is saved in `notification.json`; failed delivery retries at the next check.
+Telegram delivery followed by a lost response or a process crash can produce a
+duplicate notification. No payment is retried by this mechanism.
+
+Validate failure/recovery with an isolated state directory and an explicit
+approved test destination; do not corrupt the live observer state. Verify the
+bot has ordinary send permission, not administrator privileges. Run the unit
+once and check delivery before enabling the timer.
+
+This notifier shares the VPS with the observer. It cannot report total VPS or
+network loss while that host is unreachable; that requires an independent
+external heartbeat service. It also does not monitor website availability or
+enforce any payment policy. It reports the public testnet observer only.

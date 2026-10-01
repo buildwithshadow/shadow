@@ -1,0 +1,26 @@
+[Unit]
+Description=Shadow testnet observer Telegram notifications
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=shadow-observer
+Group=shadow-observer
+WorkingDirectory=/opt/shadow-observer/current
+ExecStart=/usr/bin/node app/scripts/public-testnet-observer-alerts.mjs --manifest contracts/deployments/public-testnet/arc-testnet.manifest.json --state-dir /var/lib/shadow-observer
+LoadCredential=telegram.json:/etc/shadow-observer/telegram.json
+StateDirectory=shadow-observer
+StateDirectoryMode=0700
+TimeoutStartSec=30s
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+CapabilityBoundingSet=
+MemoryMax=96M
+CPUQuota=10%
