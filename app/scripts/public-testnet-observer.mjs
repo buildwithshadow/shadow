@@ -1,7 +1,7 @@
 // Read-only operational observation. This never authorizes, signs or pauses spending.
 import { spawn } from 'node:child_process';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync } from 'node:fs';
+import { mkdirSync, readFileSync, writeFileSync, renameSync, openSync, fsyncSync, closeSync, realpathSync } from 'node:fs';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { parseArgs } from 'node:util';
@@ -99,6 +99,6 @@ async function main() {
   }
   console.log(JSON.stringify(result)); process.exitCode = result.ok ? 0 : 1;
 }
-if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(() => {
+if (process.argv[1] && realpathSync(process.argv[1]) === fileURLToPath(import.meta.url)) main().catch(() => {
   console.error('Observer failed; inspect durable status and service state. No credentials printed.'); process.exitCode = 1;
 });

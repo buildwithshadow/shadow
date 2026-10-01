@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { assess, status, observe, collect } from './public-testnet-observer.mjs';
@@ -58,3 +60,14 @@ test('operator pacing only slows reads and rejects invalid configuration', () =>
   for (const value of ['0','349','5001','NaN','']) assert.throws(()=>readDeployment({...env,SHADOW_RPC_READ_SPACING_MS:value},options));
 });
 function fileURL(){return new URL('../../contracts/deployments/public-testnet/arc-testnet.manifest.json',import.meta.url);}
+test('deployed symlink entry point emits an unhealthy status for missing state', () => {
+  const dir = mkdtempSync(join(tmpdir(),'shadow-observer-link-'));
+  try {
+    const link = join(dir,'observer.mjs');
+    symlinkSync(fileURLToPath(new URL('./public-testnet-observer.mjs',import.meta.url)),link);
+    const result = spawnSync(process.execPath,[link,'--manifest',fileURLToPath(fileURL()),'--state-dir',dir,'--status'],{encoding:'utf8'});
+    assert.equal(result.status,1,result.stderr);
+    assert.equal(JSON.parse(result.stdout).ok,false);
+    assert.ok(JSON.parse(result.stdout).issues.includes('HEARTBEAT_STALE'));
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
