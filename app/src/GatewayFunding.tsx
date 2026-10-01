@@ -123,12 +123,15 @@ export function GatewayFunding({
     };
   }, [engine, setup.error, onHold]);
   const previousReserve = useRef(reserve);
+  const previousRecord = useRef(record);
   useEffect(() => {
-    // Invalidate an unsigned quote only when the budget actually changes.
-    // The initial render must not erase the plan restored by the load effect.
-    if (previousReserve.current === reserve) return;
+    // Preserve the initial restored plan, but clear quotes after a budget change
+    // or a saved operation being archived (including from another tab).
+    const reserveChanged = previousReserve.current !== reserve;
+    const recordRemoved = Boolean(previousRecord.current && !record);
     previousReserve.current = reserve;
-    if (!record) {
+    previousRecord.current = record;
+    if (!record && (reserveChanged || recordRemoved)) {
       setPlan(null);
       setAck(false);
     }
