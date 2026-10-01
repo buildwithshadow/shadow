@@ -42,6 +42,9 @@ test('outage replaces healthy state; restart keeps failure until a new complete 
     assert.equal(recovered.spendingEnforced,false);
     assert.equal(status(recovered,'other-release').ok,false);
     assert.equal(status(recovered,'hash',Date.now()+3600001).ok,false);
+    const completed = Date.parse(recovered.completedAt);
+    assert.equal(status(recovered,'hash',completed+690001).ok,false);
+    assert.equal(status({...recovered,startedAt:new Date(completed-1260001).toISOString()},'hash',completed).ok,false);
   } finally {rmSync(stateDir,{recursive:true,force:true});}
 });
 test('collector has a hard subprocess timeout', async () => {

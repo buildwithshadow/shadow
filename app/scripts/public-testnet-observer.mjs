@@ -39,7 +39,7 @@ export function status(state, manifestHash, now = Date.now()) {
   if (state?.manifestHash !== manifestHash) issues.push('MANIFEST_MISMATCH');
   const started = Date.parse(state?.startedAt), completed = Date.parse(state?.completedAt);
   if (!Number.isFinite(started) || !Number.isFinite(completed) || completed < started ||
-      completed > now || now - started > 3600000) issues.push('HEARTBEAT_STALE');
+      completed > now || completed - started > 1260000 || now - completed > 690000) issues.push('HEARTBEAT_STALE');
   if (state?.ok !== true) issues.push('OBSERVER_NOT_HEALTHY');
   return { ...state, ok: issues.length === 0, issues: [...new Set(issues)], checkedAt: new Date(now).toISOString() };
 }

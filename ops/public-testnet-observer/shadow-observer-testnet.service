@@ -5,8 +5,8 @@ Wants=network-online.target
 
 [Service]
 Type=oneshot
-User=shadow-api
-Group=shadow-api
+User=shadow-observer
+Group=shadow-observer
 WorkingDirectory=/opt/shadow-observer/current
 Environment=ARC_RPC_URL=https://rpc.testnet.arc.network
 ExecStart=/usr/bin/node app/scripts/public-testnet-observer.mjs --manifest contracts/deployments/public-testnet/arc-testnet.manifest.json --state-dir /var/lib/shadow-observer
@@ -26,4 +26,3 @@ RestrictSUIDSGID=true
 CapabilityBoundingSet=
 MemoryMax=384M
 CPUQuota=25%
-

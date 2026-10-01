@@ -13,8 +13,9 @@ invalidated before a scan, so a killed process cannot leave a fresh healthy flag
 These bounds support periodic diagnostics, not low-latency incident protection.
 
 Install only a reviewed release at `/opt/shadow-observer/current`, with its pinned
-app dependencies and manifests. The pre-existing `shadow-api` Unix account must
-exist; the observer receives no API or provider environment file. Install these
+app dependencies and manifests. Create a dedicated `shadow-observer` system user
+and group with no login shell or supplementary groups; do not reuse API/provider
+identities. The observer receives no API or provider environment file. Install these
 two units, run `systemd-analyze verify`, then enable the timer. No public ports or
 provider restart are required. Systemd prevents overlapping timer activations.
 Do not run concurrent manual writers against the same state directory.
@@ -24,13 +25,15 @@ Operator checks:
 ```sh
 systemctl status shadow-observer-testnet.timer shadow-observer-testnet.service
 journalctl -u shadow-observer-testnet.service --since '1 hour ago'
-sudo -u shadow-api node /opt/shadow-observer/current/app/scripts/public-testnet-observer.mjs \
+sudo -u shadow-observer node /opt/shadow-observer/current/app/scripts/public-testnet-observer.mjs \
   --manifest /opt/shadow-observer/current/contracts/deployments/public-testnet/arc-testnet.manifest.json \
   --state-dir /var/lib/shadow-observer --status
 ```
 
-Always use `--status`, which verifies manifest binding and a one-hour heartbeat
-age. Reading `status.json`'s `ok` alone cannot detect an expired heartbeat. An
+Always use `--status`, which verifies manifest binding and expires health 11.5
+minutes after completion (the 10-minute schedule plus activation grace). It also
+rejects runs exceeding the service's 21-minute deadline. Reading `status.json`'s
+`ok` alone cannot detect an expired heartbeat. An
 unhealthy result remains until another complete scan succeeds. Journal entries
 preserve prior failures; the latest snapshot is not proof of continuous uptime.
 
