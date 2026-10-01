@@ -18,8 +18,8 @@ import { connectCandidate } from "./float-mainnet-config.mjs";
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
 import { createSelfServicePurchase } from "../src/selfServicePurchase.mjs";
 
-test(
-  "new sponsor self-registers, wallet pays once after lost response, recovers, repays and reclaims",
+for (const fault of ["wallet-response", "delivery-response"]) test(
+  `new sponsor: ${fault} lost after payment succeeds; retry delivers once, repays and reclaims`,
   { skip: e2eSkip, timeout: 120000 },
   async (t) => {
     const anvil = await startAnvil(18731);
@@ -165,8 +165,10 @@ test(
       request: async ({ params }) => agent.signTypedData(JSON.parse(params[1])),
       sendTransaction: async (args) => {
         sends++;
-        await mine(await wallet(agent).sendTransaction(args));
-        throw new Error("lost wallet response");
+        const hash = await wallet(agent).sendTransaction(args);
+        await mine(hash);
+        if (fault === "wallet-response") throw new Error("lost wallet response");
+        return hash;
       },
     };
     const config = {
@@ -179,6 +181,7 @@ test(
       endpoint,
       principal: "50000",
     };
+    let droppedDelivery = false;
     const create = () =>
       createSelfServicePurchase({
         client,
@@ -186,21 +189,34 @@ test(
         config,
         storage,
         withLock: async (_k, work) => work(),
-        fetchImpl: (url, options) =>
-          fetch(
-            `http://127.0.0.1:${server.address().port}${new URL(url).pathname}`,
-            options,
-          ),
+        fetchImpl: async (url, options) => {
+          const path = new URL(url).pathname;
+          const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, options);
+          if (fault === "delivery-response" && path === "/serve" && response.ok && !droppedDelivery) {
+            await response.arrayBuffer(); // Server completed the paid job, client never receives it.
+            droppedDelivery = true;
+            throw new Error("lost delivery response");
+          }
+          return response;
+        },
       });
     const flow = create();
     await flow.prepare(lineId, "job-public-1");
-    await assert.rejects(flow.submit(), /lost wallet response/);
+    if (fault === "wallet-response") {
+      await assert.rejects(flow.submit(), /lost wallet response/);
+    } else {
+      await flow.submit();
+      await assert.rejects(flow.recover(), /lost delivery response/);
+      assert.equal(jobs, 1);
+      assert(droppedDelivery);
+    }
     await assert.rejects(create().submit(), /reconciliation/);
     assert.equal(sends, 1);
     const result = await create().recover();
     assert.equal(result.status, "delivered");
     assert.equal(new TextDecoder().decode(result.bytes), "paid report");
     await create().recover();
+    assert.equal(sends, 1);
     assert.equal(jobs, 1);
     assert.equal((await read("lines", [lineId])).principalOutstanding, 50000n);
     assert.equal(

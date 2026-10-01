@@ -38,7 +38,7 @@ Circle documents `GET /v1/transferSpec/{hash}` for the specification and
 attestation retrieval endpoint. This implementation does not assume POST retries
 are idempotent and does not automatically authorize a replacement after ten minutes.
 
-Tests: `node --test app/scripts/gateway-reserve.test.mjs`.
+Tests: `node --test app/scripts/gateway-reserve*.test.mjs`.
 
 Sources:
 - https://developers.circle.com/gateway/references/technical-guide
@@ -46,3 +46,30 @@ Sources:
 - https://developers.circle.com/api-reference/gateway/all/get-transfer-spec
 - https://github.com/circlefin/evm-gateway-contracts/blob/master/src/lib/TransferSpec.sol
 - https://github.com/circlefin/evm-gateway-contracts/blob/master/src/lib/Attestations.sol
+## Browser recovery foundation
+
+`app/scripts/gateway-reserve.mjs` can also be bundled for a browser. Its
+protocol checks use Web Crypto and byte arrays, with no Node polyfills. The
+operator and future browser controller therefore share the same intent,
+attestation, receipt and amount checks.
+
+`gateway-reserve-browser-journal.mjs` adds a browser-profile journal for one
+sponsor-owned operation. Call `begin(intent)` once, then pass the returned
+operation hash and this journal to `runGatewayStep`. Each attempt is saved
+before its side effect. An unknown outcome is reconciled without sending again.
+Web Locks prevent two tabs from entering funding actions concurrently; browsers
+without that facility refuse to execute. Corrupt or unavailable storage also
+blocks execution. Keep site data while an operation is unresolved.
+
+This is a recovery primitive, not a released browser funding flow. It does not
+coordinate another device, another origin or other wallet applications. There
+is no archive/reset operation yet. The browser controller still needs to verify
+phase ordering, fresh wallet identity, exact transaction nonces and canonical
+receipts, and to coordinate with Shadow's existing funding journal. It must not
+offer a new operation merely because an HTTP request or attestation timed out.
+
+Tests cover lost responses, reloads, concurrent tabs, storage failures and browser
+bundling. The purchase end-to-end suite additionally drops a wallet response
+after mining and a provider response after producing the paid result. Both
+recover the same purchase, with one provider payout and one execution of the
+service, then repay and reclaim.
