@@ -141,7 +141,7 @@ jobs:
       - name: Test Circle wallet diagnostic and bounded candidate signing payloads
         run: node --test app/scripts/circle-wallet-diagnostic.test.ts app/scripts/circle-candidate-probe.test.mjs app/scripts/circle-payable-intent.test.mjs
       - name: Test Gateway reserve intent and recovery boundaries
-        run: node --test app/scripts/gateway-reserve.test.mjs
+        run: node --test app/scripts/gateway-reserve*.test.mjs
       - name: Test Circle Agent Wallet execution and durable recovery journal
         run: node --test app/scripts/circle-agent-*.test.mjs
       - name: Test reasoning availability before payment and provider acceptance

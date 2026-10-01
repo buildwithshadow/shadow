@@ -1,6 +1,5 @@
-import assert from 'node:assert/strict';
-import { randomBytes } from 'node:crypto';
-import { encodePacked, keccak256, pad, parseAbi, decodeEventLog } from 'viem';
+import { gatewayAssert as assert } from './gateway-reserve-assert.mjs';
+import { encodePacked, keccak256, pad, parseAbi, decodeEventLog, bytesToHex, hexToBytes } from 'viem';
 
 // Deliberately limited to the Arc testnet rehearsal. Domains are not chain IDs.
 export const GATEWAY_TESTNET = Object.freeze({
@@ -25,7 +24,7 @@ export function transferSpecHash(spec) {
   return keccak256(encodePacked(['bytes4',...types.slice(0,-1),'uint32','bytes'],
     ['0xca85def7',...names.slice(0,-1).map(k=>spec[k]),0,'0x']));
 }
-export function makeGatewayIntent({ sponsor, amount, maxFee, maxBlockHeight, salt = `0x${randomBytes(32).toString('hex')}` }) {
+export function makeGatewayIntent({ sponsor, amount, maxFee, maxBlockHeight, salt = bytesToHex(crypto.getRandomValues(new Uint8Array(32))) }) {
   assert.match(sponsor, /^0x[0-9a-fA-F]{40}$/);
   assert.notEqual(BigInt(sponsor),0n);
   assert(BigInt(amount)>0n && BigInt(amount)<=100000n, 'Reserve ceiling is 0.10 test USDC');
@@ -131,16 +130,16 @@ export async function finalizedGatewayReceipt(clients,hash) {
 
 export function validateGatewayAttestation(payload,intent,sponsor,currentBlock) {
   assert.match(payload,/^0x(?:[0-9a-fA-F]{2})+$/);
-  let bytes=Buffer.from(payload.slice(2),'hex');
-  if(bytes.subarray(0,4).toString('hex')==='1e12db71'){
-    assert(bytes.length>=8 && bytes.readUInt32BE(4)===1,'Exactly one attestation required');bytes=bytes.subarray(8);
+  let bytes=hexToBytes(payload);
+  if(bytesToHex(bytes.subarray(0,4)).slice(2)==='1e12db71'){
+    assert(bytes.length>=8 && new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(4)===1,'Exactly one attestation required');bytes=bytes.subarray(8);
   }
-  assert.equal(bytes.subarray(0,4).toString('hex'),'ff6fb334');
+  assert.equal(bytesToHex(bytes.subarray(0,4)).slice(2),'ff6fb334');
   assert(bytes.length>=40,'Truncated attestation');
-  assert.equal(bytes.readUInt32BE(36),340,'Unexpected transfer encoding');
+  assert.equal(new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength).getUint32(36),340,'Unexpected transfer encoding');
   assert.equal(bytes.length,380,'Trailing or missing attestation data');
-  const expiry=BigInt(`0x${bytes.subarray(4,36).toString('hex')}`);
+  const expiry=BigInt(bytesToHex(bytes.subarray(4,36)));
   assert(expiry>BigInt(currentBlock),'Attestation expired');
-  assert.equal(keccak256(`0x${bytes.subarray(40).toString('hex')}`),validateGatewayIntent(intent,sponsor),'Attestation does not match the signed funding intent');
+  assert.equal(keccak256(bytesToHex(bytes.subarray(40))),validateGatewayIntent(intent,sponsor),'Attestation does not match the signed funding intent');
   return {transferSpecHash:transferSpecHash(intent.spec),expirationBlock:String(expiry)};
 }
