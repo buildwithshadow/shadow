@@ -99,6 +99,10 @@ export function readDeployment(env = process.env, { manifest } = {}) {
   if (!rpcUrl) throw new Error("ARC_RPC_URL is required");
   const chainRaw = env.FLOAT_MAINNET_EXPECTED_CHAIN_ID?.trim();
   if (!chainRaw || !/^\d+$/.test(chainRaw)) throw new Error("FLOAT_MAINNET_EXPECTED_CHAIN_ID must be a decimal chain id");
+  const spacingRaw = env.SHADOW_RPC_READ_SPACING_MS?.trim();
+  if (spacingRaw !== undefined && (!/^\d+$/.test(spacingRaw) || Number(spacingRaw) < 350 || Number(spacingRaw) > 5000)) {
+    throw new Error("SHADOW_RPC_READ_SPACING_MS must be between 350 and 5000");
+  }
 
   let release = null;
   if (manifest) {
@@ -125,6 +129,7 @@ export function readDeployment(env = process.env, { manifest } = {}) {
   }
   return {
     rpcUrl,
+    ...(spacingRaw !== undefined ? { readSpacingMs: Number(spacingRaw) } : {}),
     expectedChainId: BigInt(chainRaw),
     address: getAddress(raw),
     runtimeHash: release?.runtimeHash ?? null,
@@ -144,7 +149,9 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
   // Every public read is paced, including reads performed before a write.
   // Broadcasts use a separate transport with retries disabled: an ambiguous
   // send belongs to durable reconciliation, never automatic retransmission.
-  const readTransport = createRpcReadTransport(deployment.rpcUrl);
+  const readTransport = createRpcReadTransport(deployment.rpcUrl, {
+    queueOptions: deployment.readSpacingMs === undefined ? {} : { spacingMs: deployment.readSpacingMs },
+  });
   const transport = readOnly ? readTransport : (options) => {
     const reads = readTransport(options);
     const broadcasts = http(deployment.rpcUrl, { timeout: 30_000, retryCount: 0 })(options);

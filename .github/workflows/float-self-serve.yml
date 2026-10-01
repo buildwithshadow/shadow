@@ -27,6 +27,8 @@ on:
       - "app/src/circleAgentCommands.ts"
       - "app/scripts/circle-agent-*"
       - "app/scripts/gateway-reserve*"
+      - "app/scripts/public-testnet-observer*"
+      - "ops/public-testnet-observer/**"
       - "app/scripts/shadow-circle-agent.mjs"
       - "app/src/savedTransactionLookup.ts"
       - "app/scripts/saved-transaction-lookup.test.ts"
@@ -105,6 +107,8 @@ jobs:
         # The glob includes new provider, evidence, review and pilot suites as
         # they land. Run serially because the suites use fixed local RPC ports.
         run: npm run float:mainnet:all-tools:test
+      - name: Test public testnet observer failure and recovery
+        run: node --test app/scripts/public-testnet-observer.test.mjs
       - name: Test candidate funding and browser transaction recovery
         run: node --test app/scripts/float-mainnet-browser.test.ts
       - name: Test public testnet self-registration and wallet purchases
