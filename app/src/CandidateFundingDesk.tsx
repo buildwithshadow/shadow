@@ -9,6 +9,8 @@ import {
 } from "./candidateFunding";
 import "./candidateFunding.css";
 import { PublicPurchase, type PublicService } from "./PublicPurchase";
+import { GatewayFunding } from "./GatewayFunding";
+import { assertGatewayFundingResolved, assertCandidateFundingResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 
@@ -63,6 +65,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [line, setLine] = useState<CandidateLine | null>(null);
   const [pending, setPending] = useState<CandidatePending | null>(null);
   const [journalError, setJournalError] = useState("");
+  const [gatewayHeld, setGatewayHeld] = useState(false);
+  const gatewayEnabled = Boolean(service && import.meta.env.VITE_SHADOW_GATEWAY_TESTNET === "true");
   const [recoveryHash, setRecoveryHash] = useState("");
   const [prepared, setPrepared] = useState<CandidatePrepared | null>(null);
   const [reviewInput, setReviewInput] = useState<CandidateOpenInput | null>(null);
@@ -78,7 +82,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const submitting = useRef(false);
   const autoChecked = useRef("");
   const correctNetwork = chainId === CANDIDATE_FUNDING.chainId;
-  const canWrite = Boolean(account && correctNetwork && !busy && !pending && !journalError);
+  const canWrite = Boolean(account && correctNetwork && !busy && !pending && !journalError && !gatewayHeld);
 
   function invalidate() {
     revision.current += 1;
@@ -293,8 +297,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     try {
       if (!navigator.locks) throw new Error("This browser cannot protect concurrent transactions. Use a current browser over HTTPS.");
       const journal = createCandidateJournal(window.localStorage, sender);
-      await navigator.locks.request(journal.key, { ifAvailable: true }, async (lock) => {
+      await navigator.locks.request(gatewayWalletLockKey(account), { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("Another Shadow tab is handling this wallet. Finish that transaction there first.");
+        assertGatewayFundingResolved(sender);
+        assertCandidateFundingResolved(sender);
         const result = await executeCandidateCall({
           publicClient: client,
           walletClient: createWalletClient({ chain: candidateFundingChain, transport: custom(window.ethereum!), account: sender }),
@@ -323,7 +329,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     try {
       if (!navigator.locks) throw new Error("Use a current browser over HTTPS to check transaction recovery.");
       const journal = createCandidateJournal(window.localStorage, account);
-      await navigator.locks.request(journal.key, { ifAvailable: true }, async (lock) => {
+      await navigator.locks.request(gatewayWalletLockKey(account), { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("A wallet request is still open in another Shadow tab. Finish it there first.");
         const saved = journal.load();
         if (!saved) { if (isCurrent()) { setPending(null); setRecoveryHash(""); } return; }
@@ -360,7 +366,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const shareable = Boolean(service && line && isSponsor && line.stateName === "OPEN" && line.expiry > line.observedTimestamp &&
     line.sponsorAllowed && !line.spendsPaused);
   const openBlocker = !account ? "Connect your wallet to review and fund." : !correctNetwork ? "Switch to Arc testnet to continue."
-    : pending ? "Check the previous transaction above before funding." : journalError ? "Transaction recovery is unavailable in this browser. See the message above."
+    : gatewayHeld ? "Resolve Gateway funding above before opening a line." : pending ? "Check the previous transaction above before funding." : journalError ? "Transaction recovery is unavailable in this browser. See the message above."
     : snapshot?.openingsPaused ? "New lines are currently paused."
     : snapshot?.sponsorAllowed === false ? (deployment.selfRegistration ? "Register this wallet above before funding." : "This wallet is not approved as a sponsor yet.")
     : !providerAgreed ? "Confirm the provider agreement above to continue." : null;
@@ -419,6 +425,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         <dl className="fundingDetails"><div><dt>Account</dt><dd><code>{pending.account}</code></dd></div><div><dt>Saved transaction nonce</dt><dd>{pending.nonce}</dd></div></dl>
       </details>
     </section>}
+
+    {gatewayEnabled && <GatewayFunding account={account} correctNetwork={correctNetwork} deployment={deployment}
+      reserve={form.reserve} busy={busy} setBusy={setBusy} onHold={setGatewayHeld} onReady={() => {
+        const sponsor = account;
+        if (sponsor) void readCandidateSnapshot(client, {sponsor}).then(value => { if (activeAccount.current === sponsor) setSnapshot(value); }).catch(cause => setSnapshotError(messageOf(cause)));
+      }} />}
 
     {mode === "open" ? <form className="fundingPanel" onSubmit={(event) => void review("open", event)}>
       <div className="fundingPanelHead"><div><h2>Set the purchase budget</h2><p>One agent, one approved provider, one outstanding purchase at a time.</p></div>
@@ -488,7 +500,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </section>}
 
     {service && <PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
     <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 

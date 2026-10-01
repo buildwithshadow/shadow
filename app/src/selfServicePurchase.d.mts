@@ -6,6 +6,7 @@ export interface PurchaseRecord {
 }
 export function createSelfServicePurchase(input: {
   client: PublicClient; wallet: WalletClient; storage: Storage;
+  withLock?: (key: string, work: () => Promise<unknown>) => Promise<unknown>;
   config: { chainId: number; account: Address; contract: Address; runtimeHash: Hash; provider: Address; providerUrl: string; endpoint: string; principal: string };
 }): {
   prepare(lineId: string, requestId: string): Promise<PurchaseRecord>;

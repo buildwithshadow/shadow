@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
 import { candidateErrorMessage, candidateFundingChain, type CandidateDeployment } from './candidateFunding';
+import { assertGatewayFundingResolved, assertCandidateFundingResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
 import { createSelfServicePurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string }
@@ -19,6 +20,18 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const setup = useMemo(() => { try { return { engine: account && window.ethereum ? createSelfServicePurchase({
     client, wallet: createWalletClient({ chain: candidateFundingChain, transport: custom(window.ethereum), account }),
     storage: window.localStorage,
+    withLock: async (key: string, work: () => Promise<unknown>) => {
+      if (!navigator.locks) throw new Error('This browser cannot coordinate wallet actions.');
+      return navigator.locks.request(gatewayWalletLockKey(account), {ifAvailable:true}, async lock => {
+        if (!lock) throw new Error('Another Shadow tab is using this wallet.');
+        assertCandidateFundingResolved(account);
+        assertGatewayFundingResolved(account);
+        return navigator.locks.request(key, {ifAvailable:true}, async purchaseLock => {
+          if (!purchaseLock) throw new Error('Another tab is using this purchase.');
+          return work();
+        });
+      });
+    },
     config: { chainId: deployment.chainId, account, contract: deployment.address, runtimeHash: deployment.runtimeHash,
       provider: service.provider, providerUrl: service.providerUrl, endpoint: service.endpoint, principal: service.principal },
   }) : null, error: '' }; } catch (cause) { return { engine: null, error: candidateErrorMessage(cause) }; } }, [account, client, deployment, service]);

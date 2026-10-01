@@ -5,11 +5,21 @@ const phases = new Set(['approve-deposit', 'deposit', 'attestation', 'mint', 'ap
 const hex32 = /^0x[0-9a-fA-F]{64}$/;
 const copy = value => JSON.parse(JSON.stringify(value));
 
+// A stored event label alone never releases the wallet nonce guard.
+export function gatewayMintConfirmed(step) {
+  const evidence = step?.evidence;
+  return Boolean(step?.status === 'confirmed' && evidence?.event === 'AttestationUsed' &&
+    typeof evidence.hash === 'string' && hex32.test(evidence.hash) &&
+    typeof evidence.blockHash === 'string' && hex32.test(evidence.blockHash) &&
+    typeof evidence.blockNumber === 'string' && /^(0|[1-9][0-9]*)$/.test(evidence.blockNumber) &&
+    evidence.notSubmitted !== true && step.response?.notSubmitted !== true);
+}
+
 /** Browser-profile recovery storage for one sponsor-owned funding operation.
  * Web Locks serialize tabs; localStorage is written and read back before an
  * effect is allowed. Neither protects a different device or cleared site data.
- * There is deliberately no reset/archive API: a later controller must first
- * verify the complete funding outcome before introducing another operation.
+ * Only a mint with exact verified receipt evidence can be archived. Unknown
+ * attempts cannot be reset. Archive before preparing another withdrawal.
  */
 export function createGatewayBrowserJournal({ account, storage = globalThis.localStorage, locks = globalThis.navigator?.locks }) {
   assert.match(account, /^0x[0-9a-fA-F]{40}$/, 'Invalid sponsor account');
@@ -61,6 +71,31 @@ export function createGatewayBrowserJournal({ account, storage = globalThis.loca
   }
   return {
     key, load, withLock,
+    async archiveMint() {
+      return withLock('archive', async () => {
+        const record = load(), mint = record?.steps.mint;
+        assert(gatewayMintConfirmed(mint),
+        'Only a verified Gateway withdrawal can be archived');
+        const archiveKey = `${key}:archive:${record.operation}`;
+        const serialized = JSON.stringify(record);
+        storage.setItem(archiveKey, serialized);
+        assert.equal(storage.getItem(archiveKey), serialized, 'Gateway archive was not retained');
+        storage.removeItem(key);
+        assert.equal(storage.getItem(key), null, 'Gateway active record was not cleared');
+      });
+    },
+    async retryUnsentMint() {
+      return withLock('retry', async () => {
+        const record = load();
+        const mint = record?.steps.mint;
+        assert(mint?.status === 'confirmed' && mint.response?.notSubmitted === true &&
+          mint.evidence?.notSubmitted === true && !mint.response.hash,
+        'An uncertain Gateway mint cannot be retried');
+        record.unsentMints = [...(record.unsentMints ?? []), mint];
+        delete record.steps.mint;
+        save(record);
+      });
+    },
     async begin(intent) {
       const operation = validateGatewayIntent(intent, sponsor);
       assert.match(operation, hex32);
