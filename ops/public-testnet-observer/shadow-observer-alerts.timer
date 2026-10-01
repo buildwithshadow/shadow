@@ -1,0 +1,11 @@
+[Unit]
+Description=Check Shadow observation freshness and notify the team
+
+[Timer]
+OnBootSec=3min
+OnUnitInactiveSec=1min
+AccuracySec=5s
+Unit=shadow-observer-alerts.service
+
+[Install]
+WantedBy=timers.target

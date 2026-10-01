@@ -108,7 +108,7 @@ jobs:
         # they land. Run serially because the suites use fixed local RPC ports.
         run: npm run float:mainnet:all-tools:test
       - name: Test public testnet observer failure and recovery
-        run: node --test app/scripts/public-testnet-observer.test.mjs
+        run: node --test app/scripts/public-testnet-observer.test.mjs app/scripts/public-testnet-observer-alerts.test.mjs
       - name: Test candidate funding and browser transaction recovery
         run: node --test app/scripts/float-mainnet-browser.test.ts
       - name: Test public testnet self-registration and wallet purchases

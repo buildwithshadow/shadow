@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, symlinkSync, statSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
@@ -70,4 +70,16 @@ test('deployed symlink entry point emits an unhealthy status for missing state',
     assert.equal(JSON.parse(result.stdout).ok,false);
     assert.ok(JSON.parse(result.stdout).issues.includes('HEARTBEAT_STALE'));
   } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test('service umask lets the notifier read observations but never write them', async () => {
+  const unit=readFileSync(new URL('../../ops/public-testnet-observer/shadow-observer-testnet.service',import.meta.url),'utf8');
+  const mask=Number.parseInt(unit.match(/^UMask=(\d+)$/m)[1],8);
+  const parent=mkdtempSync(join(tmpdir(),'shadow-observer-permissions-'));
+  const dir=join(parent,'state');const old=process.umask(mask);
+  try {
+    await observe({manifest,manifestHash:'hash',stateDir:dir,collectSnapshot:async()=>snapshot()});
+    assert.equal(statSync(dir).mode&0o777,0o750);
+    for(const name of ['status.json','snapshot.json']) assert.equal(statSync(join(dir,name)).mode&0o777,0o640);
+  } finally {process.umask(old);rmSync(parent,{recursive:true,force:true});}
 });

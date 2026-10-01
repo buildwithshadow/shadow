@@ -27,7 +27,7 @@ export function assess(snapshot, manifest, now = Date.now()) {
 
 function atomic(path, value) {
   const temporary = `${path}.${randomUUID()}.tmp`;
-  const fd = openSync(temporary, 'wx', 0o600);
+  const fd = openSync(temporary, 'wx', 0o640);
   try { writeFileSync(fd, JSON.stringify(value, null, 2) + '\n'); fsyncSync(fd); } finally { closeSync(fd); }
   renameSync(temporary, path);
   const directory = openSync(dirname(path), 'r');
@@ -67,7 +67,7 @@ export function collect(manifestPath, rpcUrl, { timeoutMs = 1200000 } = {}) {
 }
 
 export async function observe({ manifest, manifestHash, stateDir, collectSnapshot }) {
-  mkdirSync(stateDir, { recursive: true, mode: 0o700 });
+  mkdirSync(stateDir, { recursive: true, mode: 0o750 });
   const startedAt = new Date().toISOString();
   const common = { kind: 'shadow-public-testnet-observer', chainId: '5042002', address: manifest.contract.address,
     manifestHash, startedAt, completedAt: null, ok: false, issues: ['CHECK_IN_PROGRESS'], spendingEnforced: false };
