@@ -65,7 +65,7 @@ export function createGatewayBrowserJournal({ account, storage = globalThis.loca
       return withLock('archive', async () => {
         const record = load(), mint = record?.steps.mint;
         assert(mint?.status === 'confirmed' && mint.evidence?.event === 'AttestationUsed' &&
-          hex32.test(mint.evidence?.hash ?? '') && (!mint.response?.hash || mint.response.hash === mint.evidence.hash),
+          hex32.test(mint.evidence?.hash ?? ''),
         'Only a verified Gateway withdrawal can be archived');
         const archiveKey = `${key}:archive:${record.operation}`;
         const serialized = JSON.stringify(record);

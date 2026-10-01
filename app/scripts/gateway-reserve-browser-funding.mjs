@@ -222,10 +222,10 @@ export function createGatewayBrowserFunding({
   async function checkMint(state, record, suppliedHash) {
     if (state.response?.notSubmitted === true) return { notSubmitted: true };
     const hash =
-      state.response?.hash ??
+      suppliedHash ??
       (state.evidence?.event === "AttestationUsed"
         ? state.evidence.hash
-        : suppliedHash);
+        : state.response?.hash);
     if (!hash) return null;
     assert.match(hash, hashPattern, "Enter the original transaction hash");
     const receipt = await finalizedGatewayReceipt(clients, hash);

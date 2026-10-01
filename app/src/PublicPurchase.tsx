@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
 import { candidateErrorMessage, candidateFundingChain, createCandidateFundingKit, type CandidateDeployment } from './candidateFunding';
-import { assertGatewayFundingResolved } from './gatewayFundingGuard';
+import { assertGatewayFundingResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
 import { createSelfServicePurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, gatewayEnabled = false, lineId, onLineIdChange, onPurchaseChanged }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; gatewayEnabled?: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>;
 }) {
   const [record, setRecord] = useState<PurchaseRecord | null>(null);
   const [error, setError] = useState('');
@@ -20,10 +20,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const setup = useMemo(() => { try { return { engine: account && window.ethereum ? createSelfServicePurchase({
     client, wallet: createWalletClient({ chain: candidateFundingChain, transport: custom(window.ethereum), account }),
     storage: window.localStorage,
-    ...(gatewayEnabled ? { withLock: async (key: string, work: () => Promise<unknown>) => {
+    withLock: async (key: string, work: () => Promise<unknown>) => {
       if (!navigator.locks) throw new Error('This browser cannot coordinate wallet actions.');
       const funding = createCandidateFundingKit(deployment).createCandidateJournal(window.localStorage, account);
-      return navigator.locks.request(funding.key, {ifAvailable:true}, async lock => {
+      return navigator.locks.request(gatewayWalletLockKey(account), {ifAvailable:true}, async lock => {
         if (!lock) throw new Error('Another Shadow tab is using this wallet.');
         if (funding.load()) throw new Error('Resolve the earlier funding transaction first.');
         assertGatewayFundingResolved(account);
@@ -32,10 +32,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           return work();
         });
       });
-    } } : {}),
+    },
     config: { chainId: deployment.chainId, account, contract: deployment.address, runtimeHash: deployment.runtimeHash,
       provider: service.provider, providerUrl: service.providerUrl, endpoint: service.endpoint, principal: service.principal },
-  }) : null, error: '' }; } catch (cause) { return { engine: null, error: candidateErrorMessage(cause) }; } }, [account, client, deployment, service, gatewayEnabled]);
+  }) : null, error: '' }; } catch (cause) { return { engine: null, error: candidateErrorMessage(cause) }; } }, [account, client, deployment, service]);
   const engine = setup.engine;
   useEffect(() => {
     revision.current++; setReviewing(false); setRecord(null); setResult(''); setError(setup.error); setNotice('');

@@ -220,6 +220,8 @@ function fixture() {
     engine: createGatewayBrowserFunding(options),
     client,
     wallet,
+    storage,
+    locks,
   };
 }
 test("existing Gateway balance can authorize and mint once with exact receipt identity", async () => {
@@ -346,4 +348,59 @@ test("saved API response can recover after temporary RPC failure without another
   assert.equal(x.state.posts, 1);
   assert.equal(x.state.signs, 1);
   assert.equal(x.state.sends, 0);
+});
+
+
+test("replacement mint hash recovers and archives while the dropped original stays recorded", async () => {
+  const x = fixture();
+  await x.engine.authorize(await x.engine.quote("100000"));
+  const originalReceipt = x.client.getTransactionReceipt;
+  const replacement = "0x" + "ef".repeat(32);
+  x.client.getTransactionReceipt = async (args) => {
+    if (args.hash === hash) throw Error("original dropped");
+    return originalReceipt(args);
+  };
+  x.options.clients[1].getTransactionReceipt = x.client.getTransactionReceipt;
+  await assert.rejects(x.engine.mint(), /original dropped/);
+  assert.equal(x.journal.load().steps.mint.response.hash, hash);
+  const result = await x.engine.recover(replacement);
+  assert.equal(result.evidence.hash, replacement);
+  assert.equal(x.journal.load().steps.mint.response.hash, hash);
+  await x.engine.archive();
+  assert.equal(x.journal.load(), null);
+  assert.equal(x.state.sends, 1);
+  assert.equal(x.state.posts, 1);
+});
+
+test("replacement hash with changed calldata is rejected without resending", async () => {
+  const x = fixture();
+  await x.engine.authorize(await x.engine.quote("100000"));
+  x.state.loseMint = true;
+  await assert.rejects(x.engine.mint());
+  const originalTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => ({ ...await originalTx(args), input: "0x1234" });
+  await assert.rejects(x.engine.recover("0x" + "ef".repeat(32)), /not the saved/);
+  assert.equal(x.journal.load().steps.mint.status, "unknown");
+  assert.equal(x.state.sends, 1);
+});
+
+test("account guard blocks unresolved Gateway state independently of funding route or feature flag", async () => {
+  const { assertGatewayFundingResolved, gatewayWalletLockKey } = await import("../src/gatewayFundingGuard.ts");
+  const x = fixture();
+  const savedStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const savedNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "localStorage", {configurable:true,value:x.storage});
+  Object.defineProperty(globalThis, "navigator", {configurable:true,value:{locks:x.locks}});
+  try {
+    assert.doesNotThrow(() => assertGatewayFundingResolved(signer.address));
+    await x.engine.authorize(await x.engine.quote("100000"));
+    assert.throws(() => assertGatewayFundingResolved(signer.address), /Resolve the Gateway/);
+    assert.throws(() => assertGatewayFundingResolved(signer.address.toLowerCase()), /Resolve the Gateway/);
+    assert.equal(gatewayWalletLockKey(signer.address), gatewayWalletLockKey(signer.address.toLowerCase()));
+    await x.engine.mint();
+    assert.doesNotThrow(() => assertGatewayFundingResolved(signer.address));
+  } finally {
+    if(savedStorage) Object.defineProperty(globalThis,"localStorage",savedStorage); else delete globalThis.localStorage;
+    if(savedNavigator) Object.defineProperty(globalThis,"navigator",savedNavigator); else delete globalThis.navigator;
+  }
 });

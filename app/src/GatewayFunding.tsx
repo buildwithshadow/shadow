@@ -20,6 +20,7 @@ import {
   type GatewayPlan,
   type GatewayRecord,
 } from "../scripts/gateway-reserve-browser-funding.mjs";
+import { gatewayWalletLockKey } from "./gatewayFundingGuard";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { createGatewayBrowserJournal } from "../scripts/gateway-reserve-browser-journal.mjs";
 
@@ -173,7 +174,7 @@ export function GatewayFunding({
         deployment,
       ).createCandidateJournal(window.localStorage, account);
       await navigator.locks.request(
-        journal.key,
+        gatewayWalletLockKey(account),
         { ifAvailable: true },
         async (lock) => {
           if (!lock)

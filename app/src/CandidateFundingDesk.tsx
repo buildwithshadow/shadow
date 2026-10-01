@@ -10,7 +10,7 @@ import {
 import "./candidateFunding.css";
 import { PublicPurchase, type PublicService } from "./PublicPurchase";
 import { GatewayFunding } from "./GatewayFunding";
-import { assertGatewayFundingResolved } from "./gatewayFundingGuard";
+import { assertGatewayFundingResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 
@@ -297,9 +297,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     try {
       if (!navigator.locks) throw new Error("This browser cannot protect concurrent transactions. Use a current browser over HTTPS.");
       const journal = createCandidateJournal(window.localStorage, sender);
-      await navigator.locks.request(journal.key, { ifAvailable: true }, async (lock) => {
+      await navigator.locks.request(gatewayWalletLockKey(account), { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("Another Shadow tab is handling this wallet. Finish that transaction there first.");
-        if (gatewayEnabled) assertGatewayFundingResolved(sender);
+        assertGatewayFundingResolved(sender);
         const result = await executeCandidateCall({
           publicClient: client,
           walletClient: createWalletClient({ chain: candidateFundingChain, transport: custom(window.ethereum!), account: sender }),
@@ -328,7 +328,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     try {
       if (!navigator.locks) throw new Error("Use a current browser over HTTPS to check transaction recovery.");
       const journal = createCandidateJournal(window.localStorage, account);
-      await navigator.locks.request(journal.key, { ifAvailable: true }, async (lock) => {
+      await navigator.locks.request(gatewayWalletLockKey(account), { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("A wallet request is still open in another Shadow tab. Finish it there first.");
         const saved = journal.load();
         if (!saved) { if (isCurrent()) { setPending(null); setRecoveryHash(""); } return; }
@@ -499,7 +499,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </section>}
 
     {service && <PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} gatewayEnabled={gatewayEnabled} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
     <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 
