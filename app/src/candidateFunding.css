@@ -89,3 +89,10 @@
 .publicServiceResult { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow: auto; font-size: 0.85rem; }
 
 .fundingPanel + .fundingPanel { margin-top: 24px; }
+
+/* Gateway details remain readable at narrow widths and while wallet prompts are open. */
+.gatewayFunding .gatewaySteps { padding-left: 1.4rem; margin: 16px 0; color: var(--ink-soft); line-height: 1.6; }
+.gatewayFunding .gatewaySteps li + li { margin-top: 8px; }
+.gatewayFunding .gatewayRecipient code { overflow-wrap: anywhere; }
+.gatewayFunding [role="status"]:not(:empty), .gatewayFunding [role="alert"]:not(:empty) { margin-top: 16px; line-height: 1.6; overflow-wrap: anywhere; }
+.gatewayFunding a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
