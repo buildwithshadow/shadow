@@ -1,0 +1,11 @@
+{
+  "name": "shadow-arc",
+  "pages_build_output_dir": "./dist",
+  "compatibility_date": "2026-09-22",
+  "compatibility_flags": ["nodejs_compat"],
+  "vars": {
+    "ARC_RPC_URL": "https://rpc.testnet.arc.network",
+    "ARC_PUBLIC_RPC_URL": "https://rpc.testnet.arc.network",
+    "ARC_USDC": "0x3600000000000000000000000000000000000000"
+  }
+}
