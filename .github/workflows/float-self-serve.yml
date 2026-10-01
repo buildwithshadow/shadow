@@ -21,6 +21,8 @@ on:
       - "app/src/main.tsx"
       - "app/src/CircleWalletDiagnostic.tsx"
       - "app/src/CandidateFundingDesk.tsx"
+      - "app/src/GatewayFunding.tsx"
+      - "app/src/gatewayFundingGuard.ts"
       - "app/src/CircleAgentHandoff.tsx"
       - "app/src/circleAgentCommands.ts"
       - "app/scripts/circle-agent-*"
@@ -150,6 +152,8 @@ jobs:
         run: npm run app:typecheck
       - name: Build production app
         run: npm run app:build
+      - name: Build opt-in Gateway browser candidate
+        run: VITE_SHADOW_GATEWAY_TESTNET=true npm run app:build
 
   # Packet C implementation evidence only. This job must not be used to
   # qualify deployment or release; those gates require official Arc mainnet
