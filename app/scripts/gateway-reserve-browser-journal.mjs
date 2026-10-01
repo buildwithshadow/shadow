@@ -5,6 +5,16 @@ const phases = new Set(['approve-deposit', 'deposit', 'attestation', 'mint', 'ap
 const hex32 = /^0x[0-9a-fA-F]{64}$/;
 const copy = value => JSON.parse(JSON.stringify(value));
 
+// A stored event label alone never releases the wallet nonce guard.
+export function gatewayMintConfirmed(step) {
+  const evidence = step?.evidence;
+  return Boolean(step?.status === 'confirmed' && evidence?.event === 'AttestationUsed' &&
+    typeof evidence.hash === 'string' && hex32.test(evidence.hash) &&
+    typeof evidence.blockHash === 'string' && hex32.test(evidence.blockHash) &&
+    typeof evidence.blockNumber === 'string' && /^(0|[1-9][0-9]*)$/.test(evidence.blockNumber) &&
+    evidence.notSubmitted !== true && step.response?.notSubmitted !== true);
+}
+
 /** Browser-profile recovery storage for one sponsor-owned funding operation.
  * Web Locks serialize tabs; localStorage is written and read back before an
  * effect is allowed. Neither protects a different device or cleared site data.
@@ -64,8 +74,7 @@ export function createGatewayBrowserJournal({ account, storage = globalThis.loca
     async archiveMint() {
       return withLock('archive', async () => {
         const record = load(), mint = record?.steps.mint;
-        assert(mint?.status === 'confirmed' && mint.evidence?.event === 'AttestationUsed' &&
-          hex32.test(mint.evidence?.hash ?? ''),
+        assert(gatewayMintConfirmed(mint),
         'Only a verified Gateway withdrawal can be archived');
         const archiveKey = `${key}:archive:${record.operation}`;
         const serialized = JSON.stringify(record);

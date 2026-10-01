@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { encodePacked, encodeEventTopics, encodeAbiParameters } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createGatewayBrowserFunding } from "./gateway-reserve-browser-funding.mjs";
-import { createGatewayBrowserJournal } from "./gateway-reserve-browser-journal.mjs";
+import { createGatewayBrowserJournal, gatewayMintConfirmed } from "./gateway-reserve-browser-journal.mjs";
 import {
   GATEWAY_TESTNET as g,
   gatewayAbi,
@@ -421,4 +421,43 @@ test("pending transactions from legacy or current deployments block new wallet a
   assert.doesNotThrow(() => assertCandidateFundingResolved("0x" + "33".repeat(20), storage));
   records.delete(current);
   assert.doesNotThrow(() => assertCandidateFundingResolved(signer.address, storage));
+});
+
+
+test("incomplete or contradictory saved mint evidence never releases the account guard or permits archive", async () => {
+  const { assertGatewayFundingResolved } = await import("../src/gatewayFundingGuard.ts");
+  const x = fixture();
+  await x.engine.authorize(await x.engine.quote("100000"));
+  await x.engine.mint();
+  const good = x.journal.load();
+  const originalStorage = Object.getOwnPropertyDescriptor(globalThis, "localStorage");
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  Object.defineProperty(globalThis, "localStorage", {configurable:true,value:x.storage});
+  Object.defineProperty(globalThis, "navigator", {configurable:true,value:{locks:x.locks}});
+  try {
+    assert.equal(gatewayMintConfirmed(good.steps.mint), true);
+    for (const corrupt of [
+      step => { step.status = "unknown"; },
+      step => { delete step.evidence.hash; },
+      step => { step.evidence.hash = "0x1234"; },
+      step => { delete step.evidence.blockHash; },
+      step => { step.evidence.blockHash = "garbage"; },
+      step => { delete step.evidence.blockNumber; },
+      step => { step.evidence.blockNumber = "-1"; },
+      step => { step.evidence.notSubmitted = true; },
+      step => { step.response.notSubmitted = true; },
+    ]) {
+      const bad = structuredClone(good);
+      corrupt(bad.steps.mint);
+      x.storage.setItem(x.journal.key, JSON.stringify(bad));
+      assert.equal(gatewayMintConfirmed(x.journal.load().steps.mint), false);
+      assert.throws(() => assertGatewayFundingResolved(signer.address), /Resolve the Gateway/);
+      await assert.rejects(x.journal.archiveMint(), /verified Gateway/);
+    }
+    x.storage.setItem(x.journal.key, JSON.stringify(good));
+    assert.doesNotThrow(() => assertGatewayFundingResolved(signer.address));
+  } finally {
+    if(originalStorage) Object.defineProperty(globalThis,"localStorage",originalStorage); else delete globalThis.localStorage;
+    if(originalNavigator) Object.defineProperty(globalThis,"navigator",originalNavigator); else delete globalThis.navigator;
+  }
 });

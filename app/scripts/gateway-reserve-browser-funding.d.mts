@@ -10,7 +10,7 @@ export interface GatewayStep {
   request?: { nonce?: string };
   status: "unknown" | "confirmed";
   response?: { hash?: `0x${string}`; notSubmitted?: boolean };
-  evidence?: { hash?: `0x${string}`; notSubmitted?: boolean; event?: string };
+  evidence?: { hash?: `0x${string}`; notSubmitted?: boolean; event?: string; blockHash?: `0x${string}`; blockNumber?: string };
 }
 export interface GatewayRecord extends GatewayPlan {
   steps: Record<string, GatewayStep>;

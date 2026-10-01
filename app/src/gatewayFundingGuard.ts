@@ -1,4 +1,4 @@
-import { createGatewayBrowserJournal } from "../scripts/gateway-reserve-browser-journal.mjs";
+import { createGatewayBrowserJournal, gatewayMintConfirmed } from "../scripts/gateway-reserve-browser-journal.mjs";
 // Serialize wallet sends across current and legacy contract routes.
 export function gatewayWalletLockKey(account: string): string {
   return `shadow:wallet:5042002:${account.toLowerCase()}`;
@@ -6,7 +6,7 @@ export function gatewayWalletLockKey(account: string): string {
 export function gatewayFundingPending(account: string): boolean {
   const record = createGatewayBrowserJournal({ account }).load();
   return Boolean(
-    record && record.steps.mint?.evidence?.event !== "AttestationUsed",
+    record && !gatewayMintConfirmed(record.steps.mint),
   );
 }
 export function assertGatewayFundingResolved(account: string) {

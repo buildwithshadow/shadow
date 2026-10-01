@@ -21,7 +21,7 @@ import {
 } from "../scripts/gateway-reserve-browser-funding.mjs";
 import { gatewayWalletLockKey, assertCandidateFundingResolved } from "./gatewayFundingGuard";
 import { findSentTransactionHash } from "./savedTransactionLookup";
-import { createGatewayBrowserJournal } from "../scripts/gateway-reserve-browser-journal.mjs";
+import { createGatewayBrowserJournal, gatewayMintConfirmed } from "../scripts/gateway-reserve-browser-journal.mjs";
 
 const primary = createPublicClient({
   chain: candidateFundingChain,
@@ -106,7 +106,7 @@ export function GatewayFunding({
         }
         onHold(
           Boolean(
-            saved && saved.steps.mint?.evidence?.event !== "AttestationUsed",
+            saved && !gatewayMintConfirmed(saved.steps.mint),
           ),
         );
       } catch (cause) {
@@ -127,7 +127,7 @@ export function GatewayFunding({
       setAck(false);
     }
   }, [reserve, record]);
-  const funded = record?.steps.mint?.evidence?.event === "AttestationUsed";
+  const funded = gatewayMintConfirmed(record?.steps.mint);
   const rejected = record?.steps.mint?.evidence?.notSubmitted === true;
   const authorized = record?.steps.attestation?.status === "confirmed";
   const unresolvedMint = Boolean(record?.steps.mint && !funded && !rejected);
@@ -248,13 +248,13 @@ export function GatewayFunding({
               setNotice(
                 result.evidence?.notSubmitted
                   ? "No mint transaction was submitted. Review and confirm again when ready."
-                  : result.evidence?.event === "AttestationUsed"
+                  : gatewayMintConfirmed(result)
                     ? "Gateway withdrawal confirmed. Review the funding line below to set this USDC aside for your agent."
                     : result.status === "confirmed"
                       ? "Gateway authorization confirmed. Withdraw to your wallet next."
                       : "Still unresolved. Check the original operation; no replacement was sent.",
               );
-              if (result.evidence?.event === "AttestationUsed") onReady();
+              if (gatewayMintConfirmed(result)) onReady();
             }
           }
         },
@@ -270,7 +270,7 @@ export function GatewayFunding({
           if (saved) setPlan(saved);
           onHold(
             Boolean(
-              saved && saved.steps.mint?.evidence?.event !== "AttestationUsed",
+              saved && !gatewayMintConfirmed(saved.steps.mint),
             ),
           );
         } catch (cause) {
