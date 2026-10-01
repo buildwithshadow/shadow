@@ -404,3 +404,21 @@ test("account guard blocks unresolved Gateway state independently of funding rou
     if(savedNavigator) Object.defineProperty(globalThis,"navigator",savedNavigator); else delete globalThis.navigator;
   }
 });
+
+
+test("pending transactions from legacy or current deployments block new wallet actions after the lock releases", async () => {
+  const { assertCandidateFundingResolved } = await import("../src/gatewayFundingGuard.ts");
+  const records = new Map();
+  const storage = { get length() {return records.size}, key: i => [...records.keys()][i] ?? null };
+  const legacy = `shadow:candidate-funding:v1:5042002:0x1111111111111111111111111111111111111111:${signer.address.toLowerCase()}`;
+  const current = legacy.replace("0x1111111111111111111111111111111111111111", "0x2222222222222222222222222222222222222222");
+  assert.doesNotThrow(() => assertCandidateFundingResolved(signer.address, storage));
+  records.set(legacy, "unreadable record still holds the nonce");
+  assert.throws(() => assertCandidateFundingResolved(signer.address, storage), /original funding page/);
+  records.delete(legacy);
+  records.set(current, "pending");
+  assert.throws(() => assertCandidateFundingResolved(signer.address, storage), /original funding page/);
+  assert.doesNotThrow(() => assertCandidateFundingResolved("0x" + "33".repeat(20), storage));
+  records.delete(current);
+  assert.doesNotThrow(() => assertCandidateFundingResolved(signer.address, storage));
+});

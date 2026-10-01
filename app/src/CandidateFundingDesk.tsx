@@ -10,7 +10,7 @@ import {
 import "./candidateFunding.css";
 import { PublicPurchase, type PublicService } from "./PublicPurchase";
 import { GatewayFunding } from "./GatewayFunding";
-import { assertGatewayFundingResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
+import { assertGatewayFundingResolved, assertCandidateFundingResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 
@@ -300,6 +300,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       await navigator.locks.request(gatewayWalletLockKey(account), { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("Another Shadow tab is handling this wallet. Finish that transaction there first.");
         assertGatewayFundingResolved(sender);
+        assertCandidateFundingResolved(sender);
         const result = await executeCandidateCall({
           publicClient: client,
           walletClient: createWalletClient({ chain: candidateFundingChain, transport: custom(window.ethereum!), account: sender }),

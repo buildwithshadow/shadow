@@ -11,7 +11,6 @@ import {
 } from "viem";
 import {
   candidateFundingChain,
-  createCandidateFundingKit,
   candidateErrorMessage,
   type CandidateDeployment,
 } from "./candidateFunding";
@@ -20,7 +19,7 @@ import {
   type GatewayPlan,
   type GatewayRecord,
 } from "../scripts/gateway-reserve-browser-funding.mjs";
-import { gatewayWalletLockKey } from "./gatewayFundingGuard";
+import { gatewayWalletLockKey, assertCandidateFundingResolved } from "./gatewayFundingGuard";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { createGatewayBrowserJournal } from "../scripts/gateway-reserve-browser-journal.mjs";
 
@@ -170,9 +169,6 @@ export function GatewayFunding({
         throw Error(
           "This browser cannot coordinate wallet actions across tabs.",
         );
-      const journal = createCandidateFundingKit(
-        deployment,
-      ).createCandidateJournal(window.localStorage, account);
       await navigator.locks.request(
         gatewayWalletLockKey(account),
         { ifAvailable: true },
@@ -182,10 +178,7 @@ export function GatewayFunding({
               "Another Shadow tab is using this wallet. Finish there first.",
             );
           if (kind !== "recover" && kind !== "archive") {
-            if (journal.load())
-              throw Error(
-                "Resolve the earlier Shadow wallet transaction before using Gateway.",
-              );
+            assertCandidateFundingResolved(account);
             const purchase = window.localStorage.getItem(
               `shadow.public-purchase.v1:${deployment.chainId}:${getAddress(deployment.address)}:${getAddress(account)}`,
             );
@@ -448,7 +441,7 @@ export function GatewayFunding({
           {(record?.steps.mint?.response?.hash ||
             record?.steps.mint?.evidence?.hash) && (
             <a
-              href={`https://testnet.arcscan.app/tx/${record.steps.mint.response?.hash ?? record.steps.mint.evidence?.hash}`}
+              href={`https://testnet.arcscan.app/tx/${record.steps.mint.evidence?.hash ?? record.steps.mint.response?.hash}`}
               target="_blank"
               rel="noreferrer"
             >

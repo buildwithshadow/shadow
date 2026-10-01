@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
-import { candidateErrorMessage, candidateFundingChain, createCandidateFundingKit, type CandidateDeployment } from './candidateFunding';
-import { assertGatewayFundingResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
+import { candidateErrorMessage, candidateFundingChain, type CandidateDeployment } from './candidateFunding';
+import { assertGatewayFundingResolved, assertCandidateFundingResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
 import { createSelfServicePurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string }
@@ -22,10 +22,9 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     storage: window.localStorage,
     withLock: async (key: string, work: () => Promise<unknown>) => {
       if (!navigator.locks) throw new Error('This browser cannot coordinate wallet actions.');
-      const funding = createCandidateFundingKit(deployment).createCandidateJournal(window.localStorage, account);
       return navigator.locks.request(gatewayWalletLockKey(account), {ifAvailable:true}, async lock => {
         if (!lock) throw new Error('Another Shadow tab is using this wallet.');
-        if (funding.load()) throw new Error('Resolve the earlier funding transaction first.');
+        assertCandidateFundingResolved(account);
         assertGatewayFundingResolved(account);
         return navigator.locks.request(key, {ifAvailable:true}, async purchaseLock => {
           if (!purchaseLock) throw new Error('Another tab is using this purchase.');
