@@ -44,7 +44,9 @@ export function notificationState(context, now = Date.now()) {
   const checked = heartbeatStatus(context, now);
   const codes = [...new Set((checked.alerts ?? []).map(entry => entry?.code)
     .filter(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)))].sort();
-  return { ok: checked.ok === true, codes, key: checked.ok === true ? 'healthy' : `failure:${hash(JSON.stringify(codes))}` };
+  const hold = optionalJson(resolve(context.stateDir, 'hold.json'));
+  const incidentId = typeof hold?.incidentId === 'string' && /^[0-9a-f-]{36}$/.test(hold.incidentId) ? hold.incidentId : null;
+  return { ok: checked.ok === true, codes, key: checked.ok === true ? 'healthy' : `failure:${hash(JSON.stringify({ codes, incidentId }))}` };
 }
 
 export async function notifyMainnet({ context, previous, destinationId, send, save, now = Date.now() }) {

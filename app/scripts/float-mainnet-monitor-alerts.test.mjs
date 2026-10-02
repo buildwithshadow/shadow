@@ -105,3 +105,23 @@ test('delivery failures retry, six-hour reminders recur, and changed failure cod
     await assert.rejects(notifyMainnet({ context: f.context, destinationId: 'invalid', send: async () => assert.fail(), save: async () => assert.fail() }));
   } finally { f.cleanup(); }
 });
+
+test('a newly latched incident with the same codes alerts even if recovery was not observed', async () => {
+  const f = fixture(); let previous; const messages = [];
+  const fail = async () => { throw Error('offline'); };
+  const notify = time => notifyMainnet({ context: f.context, previous, destinationId: '-123', now: time,
+    send: async m => messages.push(m), save: async p => { previous = p; } });
+  try {
+    const first = await f.run(now, fail); await notify(now);
+    const firstKey = previous.key;
+    const recovered = await f.run(now + 1);
+    acknowledgeHold(f.context, recovered.incidentId, now + 1);
+    // No notification timer runs during the brief recovered interval.
+    const second = await f.run(now + 2, fail);
+    assert.notEqual(first.incidentId, second.incidentId);
+    await notify(now + 2);
+    assert.notEqual(previous.key, firstKey);
+    assert.equal(messages.length, 2); assert.match(messages[1], /ATTENTION/);
+    await notify(now + 2); assert.equal(messages.length, 2);
+  } finally { f.cleanup(); }
+});
