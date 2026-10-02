@@ -17,6 +17,10 @@ function settings(value) {
   const result = structuredClone(value ?? {});
   delete result.outputSelection;
   delete result.compilationTarget; // metadata-only, not a compiler input setting
+  // Solidity defaults, observed in Sourcify's stored Standard JSON: omission
+  // of empty remappings and explicit useLiteralContent=false are equivalent.
+  result.remappings ??= [];
+  if (result.metadata) result.metadata.useLiteralContent ??= false;
   return result;
 }
 async function get(path, fetchImpl) {
@@ -70,7 +74,7 @@ export function validateSourcify(record, { chainId, address, txHash, input, runt
     && record?.compilation?.fullyQualifiedName === expectedInput.contractIdentifier);
   check('exactSourcesAndSettings', record?.stdJsonInput?.language === 'Solidity'
     && equal(record?.stdJsonInput?.sources, expectedInput.stdJsonInput.sources)
-    && equal(settings(record?.stdJsonInput?.settings), expectedInput.stdJsonInput.settings));
+    && equal(settings(record?.stdJsonInput?.settings), settings(expectedInput.stdJsonInput.settings)));
   check('creationInput', typeof input === 'string' && record?.creationBytecode?.onchainBytecode?.toLowerCase() === input.toLowerCase());
   check('resolvedRuntime', typeof runtime === 'string' && record?.runtimeBytecode?.onchainBytecode?.toLowerCase() === runtime.toLowerCase());
   return { server: SOURCIFY_SERVER, ok: checks.every(c => c.status === 'PASS'), checks, verifiedAt: record?.verifiedAt ?? null };

@@ -28,6 +28,17 @@ test('compiler output selection is ignored, meaningful compiler settings are pre
   r.stdJsonInput.settings.metadata.appendCBOR = true;
   assert.equal(validateSourcify(r, identity).ok, false);
 });
+test('Sourcify explicit metadata defaults and omitted empty remappings match Solidity semantics', () => {
+  const r = record();
+  delete r.stdJsonInput.settings.remappings;
+  r.stdJsonInput.settings.metadata.useLiteralContent = false;
+  assert.equal(validateSourcify(r, identity).ok, true);
+  r.stdJsonInput.settings.metadata.useLiteralContent = true;
+  assert.equal(validateSourcify(r, identity).ok, false);
+  r.stdJsonInput.settings.metadata.useLiteralContent = false;
+  r.stdJsonInput.settings.remappings = ['src/=other/'];
+  assert.equal(validateSourcify(r, identity).ok, false);
+});
 test('preflight availability fails closed on unsupported chain, HTTP challenge or invalid registry', async () => {
   const response = data => async () => ({ ok: true, json: async () => data });
   assert.equal((await sourcifyAvailability(5042n, response([{ chainId: 5042, supported: true }]))).supported, true);
