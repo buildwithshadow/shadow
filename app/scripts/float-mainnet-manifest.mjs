@@ -34,6 +34,7 @@ import {
   stableStringify,
   usdcAbi,
 } from "./float-mainnet-preflight.mjs";
+import { sourcifyContract, sourcifyInput, validateSourcify } from "./float-mainnet-sourcify.mjs";
 
 const MANIFEST_SCHEMA = "shadow-float-mainnet-release-manifest/v1";
 export const IMMUTABLE_GETTERS = [
@@ -206,7 +207,7 @@ async function observeDeployment(rpc, { artifact, address, txHash, blockNumber, 
   );
 }
 
-export function buildManifest({ config, artifact, source, scopeGate, address, txHash, observations }) {
+export function buildManifest({ config, artifact, source, scopeGate, address, txHash, observations, verificationRecord = null }) {
   const assertions = [];
   const assert = (id, pass, detail) => assertions.push({ id, status: pass ? "PASS" : "FAIL", detail: String(detail) });
   const manual = (id, detail) => assertions.push({ id, status: "MANUAL", detail });
@@ -223,6 +224,16 @@ export function buildManifest({ config, artifact, source, scopeGate, address, tx
   const decodedWords = immutables.map((entry) => entry.value).sort();
   const expectedWords = IMMUTABLE_GETTERS.map(([, value]) => immutableWord(value(config))).sort();
   const expectedInput = `${artifact.bytecode.object}${constructorArgs.slice(2)}`.toLowerCase();
+  let sourceVerification = null;
+  if (config.verificationRoute === "sourcify") {
+    sourceVerification = validateSourcify(verificationRecord, {
+      chainId: config.expectedChainId, address, txHash, input: transaction.input,
+      runtime: onchainRuntime, expectedInput: sourcifyInput(artifact, contractsRoot),
+    });
+    assertions.push(...sourceVerification.checks);
+  } else {
+    assert("verification.routeSupported", !config.verificationRoute || config.verificationRoute === "explorer", config.verificationRoute ?? "explorer");
+  }
   const expectedPendingOwner = config.proposedOwner ?? zeroAddress;
   // The only permitted contract event since deploy is the script's own proposeOwner.
   const unexpectedEvents = events.filter(
@@ -375,6 +386,7 @@ export function buildManifest({ config, artifact, source, scopeGate, address, tx
     schema: MANIFEST_SCHEMA,
     scopeGate: scopeGate.output,
     source,
+    sourceVerification,
     state,
     usdcRestrictions,
   };
@@ -419,6 +431,14 @@ async function main() {
   const observations = await Promise.all(
     rpcs.map((rpc) => observeDeployment(rpc, { artifact, address, txHash, blockNumber, usdc: config.usdc })),
   );
+  let verificationRecord = null;
+  if (config.verificationRoute === "sourcify") {
+    try {
+      verificationRecord = await sourcifyContract(config.expectedChainId, address);
+    } catch (error) {
+      console.error(`source verification unavailable: ${errorMessage(error)}`);
+    }
+  }
   const manifest = buildManifest({
     config,
     artifact,
@@ -427,6 +447,7 @@ async function main() {
     address,
     txHash,
     observations,
+    verificationRecord,
   });
   writeFileSync(values.out, `${stableStringify(manifest)}\n`);
 
