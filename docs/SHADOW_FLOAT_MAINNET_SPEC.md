@@ -134,7 +134,7 @@ No actor can activate, propose, configure, accrue, charge, or withdraw a fee. A 
 
 - The constructor binds one official Arc mainnet USDC ERC-20 interface and reverts for a zero/non-contract address or decimals other than six.
 - Deployment tooling independently verifies the official chain ID, USDC address/code/decimals, two RPCs, explorer, and restricted-transfer behavior. Testnet values are never copied as defaults.
-- Native Arc gas units and ERC-20 USDC accounting are separate. All monetary parameters are integer atomic USDC; UI conversion is not authoritative.
+- Arc native and ERC-20 interfaces expose the same underlying USDC balance at different precisions: 18 decimals for native gas/value and six for ERC-20 operations. Convert explicitly and never add the two views. All contract monetary parameters are integer six-decimal atomic USDC; UI conversion is not authoritative. See [Arc's USDC integration guidance](https://www.arc.io/blog/usdc-for-every-action-how-arc-simplifies-building-onchain).
 - Funding, provider payment, repayment, reclaim, and recovery require exact pre/post balance deltas. Fee-on-transfer, rebasing, callback-dependent, false-return, and malformed-return behavior is rejected.
 - No permit, CCTP, Gateway, ERC-8004, or ERC-8183 behavior is required by the core contract. Those systems may fund an address or integrate outside the core only after separate review.
 

@@ -194,6 +194,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         return serviceImpl.prepare(input);
       };
     }
+    if (typeof serviceImpl.validatePrepared === "function") service.validatePrepared = input => serviceImpl.validatePrepared(input);
     const counted = new Proxy(connection.client, {
       get(target, name) {
         const value = Reflect.get(target, name);
@@ -1234,6 +1235,35 @@ describe("request client against the reference provider server", { skip: e2eSkip
       assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
       assert.equal(bounded.stats.prepared.length, 1);
     } finally { await stop(bounded.server); }
+  });
+
+  test("a retry validates its frozen report before signing but accepted recovery does not refresh it", async () => {
+    const a = await signedIntent("prepared-revalidation");
+    const report = async () => ({ result: "frozen wallet report" });
+    report.prepare = report;
+    let expired = false, validations = 0;
+    report.validatePrepared = async ({ result, requestId }) => {
+      validations++;
+      assert.equal(result.toString(), "frozen wallet report");
+      assert.equal(requestId, "prepared-revalidation");
+      if (expired) throw new Error("prepared report expired");
+    };
+    const isolated = await startProviderServer(OTHER_PORT, { storeDir: path("prepared-revalidation-store"), serviceImpl: report });
+    try {
+      const body = { intent: readJson(a.file), requestId: "prepared-revalidation" };
+      isolated.stats.failNextSign = true;
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 500);
+      expired = true;
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 500);
+      assert.equal(isolated.stats.signed, 0, "expired frozen report was not signed");
+      assert.equal(isolated.stats.prepared.length, 1, "snapshot is never overwritten on retry");
+      expired = false;
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
+      assert.equal(validations, 3);
+      expired = true;
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
+      assert.equal(validations, 3, "existing acceptance recovery does not change the agreed snapshot");
+    } finally { await stop(isolated.server); }
   });
 
   test("concurrent first requests for one digest get one acceptance, one service run and one receipt, through the server's in-flight map", async () => {

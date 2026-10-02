@@ -62,6 +62,7 @@ on:
       - "app/scripts/circle-wallet-diagnostic.test.ts"
       - "app/scripts/reasoning-x402-availability.test.mjs"
       - "app/scripts/shadow-reasoning-service.test.mjs"
+      - "app/scripts/shadow-arc-wallet-service.test.mjs"
       - "app/shadowUrls.d.ts"
       - "app/shadowUrls.js"
       - "app/tsconfig.json"
@@ -151,7 +152,7 @@ jobs:
       - name: Test Circle Agent Wallet execution and durable recovery journal
         run: node --test app/scripts/circle-agent-*.test.mjs
       - name: Test reasoning availability before payment and provider acceptance
-        run: node --test app/scripts/reasoning-x402-availability.test.mjs app/scripts/shadow-reasoning-service.test.mjs
+        run: node --test app/scripts/reasoning-x402-availability.test.mjs app/scripts/shadow-reasoning-service.test.mjs app/scripts/shadow-arc-wallet-service.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app

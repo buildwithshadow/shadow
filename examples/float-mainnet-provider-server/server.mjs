@@ -238,6 +238,14 @@ export function createProviderServer({ connection, account, endpointHash, price,
           rememberAdmission();
           if (!storeOnce(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
         }
+        // Recheck time-sensitive snapshots before a new signature, including a
+        // retry after a signer/process failure. Stored acceptances and paid
+        // delivery recovery retain their original bytes and skip this hook.
+        if (typeof service.validatePrepared === "function") {
+          const prepared = checkedPrepared(digest, requestId);
+          if (!prepared) throw new Error("service validation needs a prepared result");
+          await service.validatePrepared({ requestId, result: Buffer.from(prepared.result, "base64"), resultRef: prepared.resultRef });
+        }
         bindRequest(requestId, digest);
         rememberAdmission();
         return account.signTypedData(typed);
@@ -495,11 +503,14 @@ async function main() {
       `${account.address} has code, so its receipts are checked with ERC-1271; call createProviderServer with a custom account { address, signTypedData } that signs with the account's signer`,
     );
   }
-  if (env.PROVIDER_SERVICE && !["example", "shadow-reasoning", "shadow-v2-cycle"].includes(env.PROVIDER_SERVICE)) {
-    throw new Error("PROVIDER_SERVICE must be example, shadow-reasoning or shadow-v2-cycle");
+  if (env.PROVIDER_SERVICE && !["example", "shadow-reasoning", "shadow-v2-cycle", "shadow-arc-wallet"].includes(env.PROVIDER_SERVICE)) {
+    throw new Error("PROVIDER_SERVICE must be example, shadow-reasoning, shadow-v2-cycle or shadow-arc-wallet");
   }
   let service;
-  if (env.PROVIDER_SERVICE === "shadow-v2-cycle") {
+  if (env.PROVIDER_SERVICE === "shadow-arc-wallet") {
+    const { createShadowArcWalletService } = await import("./shadow-arc-wallet-service.mjs");
+    service = createShadowArcWalletService({ chainId: Number(connection.chainId) });
+  } else if (env.PROVIDER_SERVICE === "shadow-v2-cycle") {
     const { createShadowV2CycleService } = await import("./shadow-v2-cycle-service.mjs");
     service = createShadowV2CycleService({ paymentTx: env.SHADOW_V2_PAYMENT_TX, repaymentTx: env.SHADOW_V2_REPAYMENT_TX });
   } else {
