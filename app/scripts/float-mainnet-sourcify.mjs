@@ -19,8 +19,8 @@ function settings(value) {
   delete result.compilationTarget; // metadata-only, not a compiler input setting
   // Solidity defaults, observed in Sourcify's stored Standard JSON: omission
   // of empty remappings and explicit useLiteralContent=false are equivalent.
-  result.remappings ??= [];
-  if (result.metadata) result.metadata.useLiteralContent ??= false;
+  if (!Object.hasOwn(result, 'remappings')) result.remappings = [];
+  if (result.metadata && !Object.hasOwn(result.metadata, 'useLiteralContent')) result.metadata.useLiteralContent = false;
   return result;
 }
 async function get(path, fetchImpl) {

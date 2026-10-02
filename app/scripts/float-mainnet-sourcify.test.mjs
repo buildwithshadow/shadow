@@ -39,6 +39,14 @@ test('Sourcify explicit metadata defaults and omitted empty remappings match Sol
   r.stdJsonInput.settings.remappings = ['src/=other/'];
   assert.equal(validateSourcify(r, identity).ok, false);
 });
+test('explicit null or malformed defaults never clear the source settings gate', () => {
+  for (const mutate of [r => r.stdJsonInput.settings.remappings = null,
+    r => r.stdJsonInput.settings.remappings = '',
+    r => r.stdJsonInput.settings.metadata.useLiteralContent = null,
+    r => r.stdJsonInput.settings.metadata.useLiteralContent = 'false']) {
+    const r = record(); mutate(r); assert.equal(validateSourcify(r, identity).ok, false);
+  }
+});
 test('preflight availability fails closed on unsupported chain, HTTP challenge or invalid registry', async () => {
   const response = data => async () => ({ ok: true, json: async () => data });
   assert.equal((await sourcifyAvailability(5042n, response([{ chainId: 5042, supported: true }]))).supported, true);
