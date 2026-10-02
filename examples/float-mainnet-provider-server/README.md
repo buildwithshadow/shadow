@@ -34,7 +34,7 @@ node examples/float-mainnet-provider-server/server.mjs --manifest $M
 | `PROVIDER_ENDPOINT` | The exact endpoint string the sponsor approved for this provider. It is hashed as UTF-8 and compared with the intent's `endpointHash`. |
 | `PROVIDER_PRICE` | The lowest principal accepted, in atomic USDC. |
 | `PROVIDER_STORE_DIR` | Where request bindings, service starts, acceptances, results and deliveries are kept. It needs a filesystem with hard links. |
-| `PROVIDER_SERVICE` | `example` (default echo), `shadow-reasoning`, or `shadow-v2-cycle` for a read-only founder rehearsal report. |
+| `PROVIDER_SERVICE` | `example` (default echo), `shadow-reasoning`, `shadow-v2-cycle`, or `shadow-arc-wallet` for a current public Arc wallet balance report. |
 | `SHADOW_REASONING_BASE_URL` | Origin for `shadow-reasoning`, default `https://www.shadowbuild.xyz`. HTTPS is required except for loopback tests. |
 | `SHADOW_V2_PAYMENT_TX`, `SHADOW_V2_REPAYMENT_TX` | Required distinct Arc testnet transaction hashes for `shadow-v2-cycle`. The payment hash is the provider request ID. |
 | `PORT`, `HOST` | Where to listen. The defaults are `8080` and `127.0.0.1`. Put a TLS reverse proxy in front before exposing it. |
@@ -158,3 +158,11 @@ Only a loopback socket may supply this header; otherwise the socket address is
 used. Never forward a caller-supplied value. The hosted Caddy route uses
 `header_up X-Shadow-Client-IP {remote_host}`. One caller may occupy at most one
 public request slot per route.
+
+## Current Arc wallet balance report
+
+Set `PROVIDER_SERVICE=shadow-arc-wallet` to prepare a public balance report for a request ID shaped as `arc-wallet:<32 lowercase hex job characters>:<public 0x address>`. Generate a fresh job ID for each new report; recovery uses the original request and spend digest. The report uses the deployment connection's chain (Arc mainnet 5042 or testnet 5042002), reads the same block from the primary and Blockdaemon RPCs, requires 20 newer blocks and a block no older than 300 seconds, compares balances, and rechecks block hashes before acceptance. An unavailable or conflicting RPC prevents acceptance.
+
+The report includes six-decimal ERC20 and eighteen-decimal native USDC representations of the same balance; never add them. It is a balance snapshot, not a total-portfolio or solvency assessment. The provider server freezes the prepared bytes before acceptance and serves those bytes after payment, including recovery. A new report is a new purchase. Results concern public addresses and remain publicly retrievable by paid digest.
+
+The service module can be exercised read-only without credentials. That does not prove a paid purchase, a deployed mainnet candidate, or a customer. Running it on mainnet requires its own verified deployment manifest, approved provider signing account, isolated persistent store and TLS endpoint. The existing hosted purchase adapter and public onboarding remain testnet-only.

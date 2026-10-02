@@ -495,11 +495,14 @@ async function main() {
       `${account.address} has code, so its receipts are checked with ERC-1271; call createProviderServer with a custom account { address, signTypedData } that signs with the account's signer`,
     );
   }
-  if (env.PROVIDER_SERVICE && !["example", "shadow-reasoning", "shadow-v2-cycle"].includes(env.PROVIDER_SERVICE)) {
-    throw new Error("PROVIDER_SERVICE must be example, shadow-reasoning or shadow-v2-cycle");
+  if (env.PROVIDER_SERVICE && !["example", "shadow-reasoning", "shadow-v2-cycle", "shadow-arc-wallet"].includes(env.PROVIDER_SERVICE)) {
+    throw new Error("PROVIDER_SERVICE must be example, shadow-reasoning, shadow-v2-cycle or shadow-arc-wallet");
   }
   let service;
-  if (env.PROVIDER_SERVICE === "shadow-v2-cycle") {
+  if (env.PROVIDER_SERVICE === "shadow-arc-wallet") {
+    const { createShadowArcWalletService } = await import("./shadow-arc-wallet-service.mjs");
+    service = createShadowArcWalletService({ chainId: Number(connection.chainId) });
+  } else if (env.PROVIDER_SERVICE === "shadow-v2-cycle") {
     const { createShadowV2CycleService } = await import("./shadow-v2-cycle-service.mjs");
     service = createShadowV2CycleService({ paymentTx: env.SHADOW_V2_PAYMENT_TX, repaymentTx: env.SHADOW_V2_REPAYMENT_TX });
   } else {
