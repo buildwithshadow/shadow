@@ -25,6 +25,24 @@ export function createShadowArcWalletService({ chainId = 5042, clients, now = ()
   clients ??= NETWORKS[chainId].map(url => createPublicClient({ transport: http(url, { timeout: 15_000, retryCount: 0 }) }));
   if (!Array.isArray(clients) || clients.length !== 2 || clients[0] === clients[1]) throw new Error('two separate read clients required');
   const service = async () => { throw new Error('Arc wallet report must be prepared before acceptance'); };
+  service.validatePrepared = async ({ requestId, result }) => {
+    const report = JSON.parse(Buffer.from(result).toString('utf8'));
+    if (report.kind !== 'shadow-arc-wallet-balance-report' || report.requestId !== requestId || report.chainId !== chainId ||
+        report.address !== walletReportAddress(requestId) || !/^(0|[1-9][0-9]*)$/.test(report.block?.number ?? '') ||
+        !HASH.test(report.block?.hash ?? '') || !/^(0|[1-9][0-9]*)$/.test(report.block?.timestamp ?? '')) {
+      throw new Error('prepared wallet report identity is invalid');
+    }
+    const number = BigInt(report.block.number), timestamp = BigInt(report.block.timestamp);
+    if (BigInt(now()) < timestamp || BigInt(now()) - timestamp > 300n) throw new Error('prepared wallet report expired before acceptance');
+    await Promise.all(clients.map(async c => {
+      if (await c.getChainId() !== chainId || await c.getBlockNumber({ cacheTime: 0 }) < number + 20n) throw new Error('prepared wallet report network or confirmation changed');
+      const b = await c.getBlock({ blockNumber: number });
+      if (b.number !== number || b.hash?.toLowerCase() !== report.block.hash.toLowerCase() || b.timestamp !== timestamp) {
+        throw new Error('prepared wallet report is no longer canonical');
+      }
+    }));
+    if (BigInt(now()) - timestamp > 300n) throw new Error('prepared wallet report expired during validation');
+  };
   service.prepare = async ({ requestId }) => {
     const address = walletReportAddress(requestId);
     if (!address) return null;

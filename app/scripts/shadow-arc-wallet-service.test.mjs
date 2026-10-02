@@ -53,3 +53,17 @@ test('unsupported chain and shared client are refused; testnet is explicit', asy
   const service = create({ getChainId: async () => 5042002 }, { getChainId: async () => 5042002 }, { chainId: 5042002 });
   assert.equal(JSON.parse((await service.prepare({ requestId })).result).chainId, 5042002);
 });
+
+test('prepared report cannot receive a new acceptance after expiry or a canonical block change', async () => {
+  let timestamp = 1010, orphaned = false;
+  const overrides = { getBlock: async () => ({ ...block, hash: orphaned ? `0x${'c'.repeat(64)}` : hash }) };
+  const service = create(overrides, overrides, { now: () => timestamp });
+  const result = await service.prepare({ requestId });
+  await service.validatePrepared({ requestId, ...result });
+  timestamp = 1301;
+  await assert.rejects(service.validatePrepared({ requestId, ...result }), /expired/);
+  timestamp = 1010; orphaned = true;
+  await assert.rejects(service.validatePrepared({ requestId, ...result }), /no longer canonical/);
+  orphaned = false;
+  await assert.rejects(service.validatePrepared({ requestId: `${requestId}:other`, ...result }), /identity/);
+});
