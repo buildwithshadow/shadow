@@ -97,3 +97,24 @@ node app/scripts/float-mainnet-monitor-runner.mjs acknowledge \
 Acknowledgement refuses stale samples, changed snapshot hashes, wrong incidents, or continuing policy failures. It records the acknowledgement without advancing the original observation time. It does not unpause a contract or resume another process. Baseline changes need their own review; acknowledgement is not a way to approve unknown drift.
 
 A crash may leave `runner.lock`. Confirm that the recorded process is no longer running before removing only that lock. Do not delete heartbeat, snapshot, or hold files to recover: the next complete check and explicit incident acknowledgement preserve the failure record. A stale or interrupted heartbeat is latched when the next cycle begins. `status` already holds during the outage even when the stopped process cannot write another file.
+
+## Optional Arc mainnet notifications
+
+`float-mainnet-monitor-alerts.mjs` sends failure and recovery notices to an explicitly configured Telegram destination. It is separate from the testnet notifier, which still refuses mainnet manifests. Configure it only after the deployed candidate has a passing release manifest and an approved monitor baseline. It refuses a different chain, candidate address, runtime hash or deployment block between those files.
+
+```sh
+node app/scripts/float-mainnet-monitor-alerts.mjs \
+  --baseline /private/approved-monitor-baseline.json \
+  --manifest /private/release.manifest.json \
+  --observer-dir /private/shadow-monitor-state \
+  --state-dir /private/shadow-notification-state \
+  --config /private/telegram.json
+```
+
+The protected configuration contains `token` and `chatId`. Never commit it or pass the bot token on the command line. Keep notification state separate from monitor state and provide the notifier read access to the baseline, manifest, heartbeat, snapshot and hold files. The runner creates private `0600` files: a different service account cannot read them merely by joining a group. Verify actual file access before enabling a scheduler; a permissions/configuration failure exits nonzero with redacted diagnostics and cannot claim successful alert delivery.
+
+The notifier reuses `heartbeatStatus` to validate the complete snapshot, accounting, freshness and incident hold. A fresh, correctly bound scan in progress stays quiet within its approved timeout, unless an incident is already latched. A stuck scan, missing/corrupt state or a different release alerts. A later healthy scan does not send `RECOVERED` until the latched incident has been explicitly acknowledged through the runner. The notification never clears a hold, authorizes a payment or changes contract pauses.
+
+Successful delivery is recorded atomically and deduplicated by destination, baseline, manifest, failure codes and latched incident ID. New incidents or failure codes notify immediately, even if the timer missed an intervening recovery; unchanged failures repeat after six hours. Failed delivery leaves the state unacknowledged for retry. A notification lock prevents overlapping sends; after a crash, inspect the recorded process before removing only `notification.lock`.
+
+Run the notifier through a separately configured scheduler at a cadence suitable for the selected heartbeat bounds. No scheduler is installed by this command. A notifier on the same machine cannot report a total host or network outage; use an independent availability check for that failure class. Telegram delivery and monitor health remain separate observations.
