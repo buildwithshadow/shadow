@@ -44,6 +44,7 @@ const PACKAGED_INPUTS = [
   "app/scripts/float-mainnet-review-package.mjs",
   "app/scripts/float-mainnet-preflight.mjs",
   "app/scripts/float-mainnet-manifest.mjs",
+  "app/scripts/float-mainnet-sourcify.mjs",
   "app/scripts/rpc-read-queue.mjs",
   "app/package.json",
   "app/pnpm-lock.yaml",
