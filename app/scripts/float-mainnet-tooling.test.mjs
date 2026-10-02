@@ -31,6 +31,8 @@ import {
   scrubUrls,
   stableStringify,
 } from "./float-mainnet-preflight.mjs";
+import { sourcifyInput } from "./float-mainnet-sourcify.mjs";
+import { contractsRoot } from "./float-mainnet-preflight.mjs";
 
 const PARAMS_EXAMPLE = new URL(
   "../../contracts/deployments/float-mainnet-candidate/arc-testnet.params.example",
@@ -149,7 +151,7 @@ function ownershipProposed(owner, pendingOwner) {
   return { args: { owner, pendingOwner }, blockNumber: "100", event: "OwnershipProposed", logIndex: 1, transactionHash: TX_HASH };
 }
 
-function manifest({ expected = config(), primary = observation(config()), secondary = primary, source = sourceState() } = {}) {
+function manifest({ expected = config(), primary = observation(config()), secondary = primary, source = sourceState(), verificationRecord = null } = {}) {
   return buildManifest({
     config: expected,
     artifact,
@@ -158,8 +160,26 @@ function manifest({ expected = config(), primary = observation(config()), second
     address: ADDRESS,
     txHash: TX_HASH,
     observations: [primary, secondary],
+    verificationRecord,
   });
 }
+
+test("Sourcify route is explicit and a release manifest cannot pass without matching verification", () => {
+  assert.equal(config().verificationRoute, "explorer");
+  assert.ok(errorsFor({ FLOAT_MAINNET_VERIFICATION_ROUTE: "skip" }).length);
+  const expected = config({ FLOAT_MAINNET_VERIFICATION_ROUTE: "sourcify" });
+  const primary = observation(expected);
+  assert.ok(failedIds(manifest({ expected, primary })).includes("verification.sourcify.identity"));
+  const input = sourcifyInput(artifact, contractsRoot);
+  const verified = { chainId: String(expected.expectedChainId), address: ADDRESS, creationMatch: "match", runtimeMatch: "match",
+    verifiedAt: "2026-10-02T09:00:00Z", deployment: { transactionHash: TX_HASH }, stdJsonInput: input.stdJsonInput,
+    compilation: { language: "Solidity", compiler: "solc", compilerVersion: input.compilerVersion, fullyQualifiedName: input.contractIdentifier },
+    creationBytecode: { onchainBytecode: primary.transaction.input }, runtimeBytecode: { onchainBytecode: primary.code } };
+  const result = manifest({ expected, primary, verificationRecord: verified });
+  assert.equal(result.ok, true);
+  verified.runtimeMatch = null;
+  assert.equal(manifest({ expected, primary, verificationRecord: verified }).ok, false);
+});
 
 function failedIds(result) {
   return result.assertions.filter((entry) => entry.status === "FAIL").map((entry) => entry.id);

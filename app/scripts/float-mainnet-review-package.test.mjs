@@ -287,7 +287,7 @@ test("treeState reports uncommitted packaged inputs and remote-tracking branches
   writeFileSync(join(repo, "docs/spec.md"), "spec\n");
   writeFileSync(join(repo, "README.md"), "readme\n");
   // The builder's own modules are packaged inputs; other scripts are not.
-  const scripts = ["float-mainnet-manifest.mjs", "float-mainnet-preflight.mjs", "rpc-read-queue.mjs", "other.mjs"];
+  const scripts = ["float-mainnet-manifest.mjs", "float-mainnet-preflight.mjs", "float-mainnet-sourcify.mjs", "rpc-read-queue.mjs", "other.mjs"];
   mkdirSync(join(repo, "app/scripts"), { recursive: true });
   for (const name of scripts) writeFileSync(join(repo, "app/scripts", name), "// v1\n");
   for (const name of ["package.json", "pnpm-lock.yaml"]) writeFileSync(join(repo, "app", name), "v1\n");
@@ -307,6 +307,7 @@ test("treeState reports uncommitted packaged inputs and remote-tracking branches
     " M app/pnpm-lock.yaml",
     " M app/scripts/float-mainnet-manifest.mjs",
     " M app/scripts/float-mainnet-preflight.mjs",
+    " M app/scripts/float-mainnet-sourcify.mjs",
     " M app/scripts/rpc-read-queue.mjs",
     " M docs/spec.md",
     "?? contracts/",

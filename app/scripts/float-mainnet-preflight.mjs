@@ -18,6 +18,7 @@ import {
   zeroAddress,
 } from "viem";
 import { createRpcReadQueue } from "./rpc-read-queue.mjs";
+import { sourcifyAvailability } from "./float-mainnet-sourcify.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 export const contractsRoot = resolve(repoRoot, "contracts");
@@ -133,7 +134,11 @@ export function parseConfig(env, { requireDeployer = false } = {}) {
     expectedDeployer: address("FLOAT_MAINNET_EXPECTED_DEPLOYER", requireDeployer),
     rpcUrls: [url("ARC_RPC_URL"), url("ARC_RPC_URL_2")],
     explorerUrl: url("ARC_EXPLORER_URL"),
+    verificationRoute: env.FLOAT_MAINNET_VERIFICATION_ROUTE?.trim() || "explorer",
   };
+
+  if (!["explorer", "sourcify"].includes(config.verificationRoute)) errors.push("FLOAT_MAINNET_VERIFICATION_ROUTE must be explorer or sourcify");
+  if (config.verificationRoute === "sourcify" && ![5042n, 5042002n].includes(config.expectedChainId)) errors.push("Sourcify verification route requires Arc mainnet or testnet");
 
   if (config.expectedChainId === 0n) errors.push("FLOAT_MAINNET_EXPECTED_CHAIN_ID must be nonzero");
   validateLimits("MAX", config.maxima, config.maxima, errors);
@@ -348,6 +353,7 @@ async function main() {
       expectedDeployer: config.expectedDeployer,
       rpcs: config.rpcUrls.map((url) => url && redactUrl(url)),
       explorer: config.explorerUrl && redactUrl(config.explorerUrl),
+      verificationRoute: config.verificationRoute,
     },
   };
 
@@ -426,7 +432,15 @@ async function main() {
     );
   }
 
-  if (config.explorerUrl) {
+  if (config.verificationRoute === "sourcify") {
+    try {
+      report.verification = await sourcifyAvailability(config.expectedChainId);
+      pass("Sourcify currently supports configured Arc chain", true);
+      manual("Sourcify post-deployment source verification", "Before funding, the release manifest must retrieve completed source verification and match exact sources/settings, compiler, creation transaction/input and runtime against the independent RPC observations. Availability is not source verification.");
+    } catch (error) {
+      pass("Sourcify currently supports configured Arc chain", false, errorMessage(error));
+    }
+  } else if (config.explorerUrl) {
     try {
       const landing = await fetch(config.explorerUrl, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
       report.explorer = { requested: redactUrl(config.explorerUrl), resolved: redactUrl(landing.url), status: landing.status };
