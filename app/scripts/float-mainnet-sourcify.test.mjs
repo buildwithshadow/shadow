@@ -1,9 +1,20 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { sourcifyAvailability, sourcifyContract, sourcifyInput, validateSourcify } from './float-mainnet-sourcify.mjs';
+import { sourcifyAvailability, sourcifyContract, sourcifyInput, validateSourcify, resolveSourcePath } from './float-mainnet-sourcify.mjs';
+import { posix, win32 } from 'node:path';
 import { contractsRoot, loadArtifact } from './float-mainnet-preflight.mjs';
 
 const expectedInput = sourcifyInput(loadArtifact(), contractsRoot);
+test('source boundaries allow native Windows/POSIX paths and reject traversal or another drive', () => {
+  assert.equal(resolveSourcePath('/repo/contracts', 'src/Shadow.sol', posix), '/repo/contracts/src/Shadow.sol');
+  assert.equal(resolveSourcePath('C:\\repo\\contracts', 'src/Shadow.sol', win32), 'C:\\repo\\contracts\\src\\Shadow.sol');
+  for (const path of ['../secret.sol', '/repo/contracts-other/secret.sol', '.']) {
+    assert.throws(() => resolveSourcePath('/repo/contracts', path, posix));
+  }
+  for (const path of ['..\\secret.sol', 'C:\\repo\\contracts-other\\secret.sol', 'D:\\secret.sol', '.']) {
+    assert.throws(() => resolveSourcePath('C:\\repo\\contracts', path, win32));
+  }
+});
 const identity = { chainId: 5042n, address: `0x${'12'.repeat(20)}`, txHash: `0x${'34'.repeat(32)}`, input: '0x5678', runtime: '0xabcd', expectedInput };
 function record() {
   return { chainId: '5042', address: identity.address, creationMatch: 'match', runtimeMatch: 'exact_match', verifiedAt: '2026-10-02T09:00:00Z',

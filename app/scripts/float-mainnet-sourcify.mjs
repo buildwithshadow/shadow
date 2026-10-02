@@ -1,5 +1,5 @@
 import { readFileSync } from 'node:fs';
-import { resolve } from 'node:path';
+import { resolve, relative, isAbsolute, sep } from 'node:path';
 import { keccak256, stringToBytes } from 'viem';
 
 // Fixed production service: the alternate gate cannot be redirected to an
@@ -38,11 +38,18 @@ export async function sourcifyAvailability(chainId, fetchImpl = fetch) {
   }
   return { server: SOURCIFY_SERVER, chainId: String(chainId), supported: true, checkedAt: new Date().toISOString() };
 }
+export function resolveSourcePath(root, path, paths = { resolve, relative, isAbsolute, sep }) {
+  const absolute = paths.resolve(root, path);
+  const fromRoot = paths.relative(paths.resolve(root), absolute);
+  if (!fromRoot || fromRoot === '..' || fromRoot.startsWith(`..${paths.sep}`) || paths.isAbsolute(fromRoot)) {
+    throw new Error('Source outside contracts root');
+  }
+  return absolute;
+}
 export function sourcifyInput(artifact, contractsRoot) {
   const sources = {};
   for (const [path, meta] of Object.entries(artifact.metadata.sources)) {
-    const absolute = resolve(contractsRoot, path);
-    if (!absolute.startsWith(`${resolve(contractsRoot)}/`)) throw new Error('Source outside contracts root');
+    const absolute = resolveSourcePath(contractsRoot, path);
     const content = readFileSync(absolute, 'utf8').replace(/\r\n/g, '\n');
     if (keccak256(stringToBytes(content)) !== meta.keccak256) throw new Error(`Source hash mismatch: ${path}`);
     sources[path] = { content };
