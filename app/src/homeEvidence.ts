@@ -32,6 +32,7 @@ export const HOME_REHEARSAL = {
 
 // Labels and values from the public testnet contract limits.
 export const HOME_LIMITS = [
+  { label: "Total set aside across all funding lines", value: "25" },
   { label: "One purchase", value: "1" },
   { label: "Spend per line, per day", value: "2" },
   { label: "Set aside per line", value: "5" },
