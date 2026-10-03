@@ -52,6 +52,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", "https://rpc.testnet.arc.network"], expectedChainId: deployment.chainId,
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment]);
   const [mode, setMode] = useState<"open" | "manage">(() => new URLSearchParams(window.location.search).has("line") ? "manage" : "open");
+  const [role, setRole] = useState<"sponsor" | "agent" | null>(() => {
+    const params = new URLSearchParams(window.location.search);
+    return !service ? null : params.has("agent") ? "sponsor" : params.has("line") ? "agent" : null;
+  });
   const [account, setAccount] = useState<Address | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
   const [form, setForm] = useState(() => ({ ...initialForm,
@@ -371,7 +375,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     : snapshot?.sponsorAllowed === false ? (deployment.selfRegistration ? "Register this wallet above before funding." : "This wallet is not approved as a sponsor yet.")
     : !providerAgreed ? "Confirm the provider agreement above to continue." : null;
   const lineBlocker = !account ? "Connect your wallet to repay." : !correctNetwork ? "Switch to Arc testnet to continue."
-    : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
+    : gatewayHeld ? "Resolve Gateway funding above before continuing." : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
@@ -390,13 +394,18 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
     <p className="fundingScope">{service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
     {service && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase.</p>}
-    {service && account && <section className="fundingPanel" aria-labelledby="agent-invite-title">
+    {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
+      <span id="funding-role-title">Which are you?</span>
+      <button type="button" aria-pressed={role === "sponsor"} onClick={() => setRole(role === "sponsor" ? null : "sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
+      <button type="button" aria-pressed={role === "agent"} onClick={() => { if (role === "agent") setRole(null); else { invalidate(); setMode("manage"); setRole("agent"); } }} disabled={Boolean(busy)}>I am the agent</button>
+    </div>}
+    {service && account && <section className="fundingPanel" aria-labelledby="agent-invite-title" hidden={role === "sponsor"}>
       <h2 id="agent-invite-title">Ask a sponsor to fund your agent</h2>
       <p>Share this link with your sponsor. It includes your connected wallet as the agent; they review the address and choose the budget themselves.</p>
       <div className="fundingField"><label htmlFor="agent-funding-link">Your agent funding link</label><input id="agent-funding-link" readOnly value={`${window.location.origin}${window.location.pathname}?agent=${account}`} /></div>
-      <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); setMode("open"); }}>Use my wallet as the agent</button>
+      <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); setMode("open"); setRole(null); }}>Use my wallet as the agent</button>
     </section>}
-    <div className="fundingModes" aria-label="Funding actions">
+    <div className="fundingModes" aria-label="Funding actions" hidden={role === "agent"}>
       <button type="button" aria-pressed={mode === "open"} onClick={() => { invalidate(); setMode("open"); }} disabled={Boolean(busy)}>Open a funding line</button>
       <button type="button" aria-pressed={mode === "manage"} onClick={() => { invalidate(); setMode("manage"); }} disabled={Boolean(busy)}>Manage a line</button>
     </div>
@@ -426,11 +435,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </details>
     </section>}
 
-    {gatewayEnabled && <GatewayFunding account={account} correctNetwork={correctNetwork} deployment={deployment}
+    {gatewayEnabled && <div className="fundingSlot" hidden={role === "agent" && !gatewayHeld}><GatewayFunding account={account} correctNetwork={correctNetwork} deployment={deployment}
       reserve={form.reserve} busy={busy} setBusy={setBusy} onHold={setGatewayHeld} onReady={() => {
         const sponsor = account;
         if (sponsor) void readCandidateSnapshot(client, {sponsor}).then(value => { if (activeAccount.current === sponsor) setSnapshot(value); }).catch(cause => setSnapshotError(messageOf(cause)));
-      }} />}
+      }} /></div>}
 
     {mode === "open" ? <form className="fundingPanel" onSubmit={(event) => void review("open", event)}>
       <div className="fundingPanelHead"><div><h2>Set the purchase budget</h2><p>One agent, one approved provider, one outstanding purchase at a time.</p></div>
@@ -499,8 +508,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div>}
     </section>}
 
-    {service && <PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} />}
+    {service && <div className="fundingSlot" hidden={role === "sponsor"}><PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} /></div>}
     <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 
