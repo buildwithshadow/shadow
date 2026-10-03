@@ -1,0 +1,61 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
+  <title id="title">Shadow</title>
+  <desc id="desc">Let your agent buy services on a budget you set, on Arc testnet with test USDC. The contract pays within the limits and records what is owed.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#07111f"/>
+      <stop offset="0.56" stop-color="#0b1728"/>
+      <stop offset="1" stop-color="#050914"/>
+    </linearGradient>
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#34e5ff"/>
+      <stop offset="1" stop-color="#4df0a8"/>
+    </linearGradient>
+    <pattern id="grid" width="64" height="64" patternUnits="userSpaceOnUse">
+      <path d="M64 0H0V64" fill="none" stroke="#b8d3ff" stroke-opacity="0.08" stroke-width="1"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="675" fill="url(#bg)"/>
+  <rect width="1200" height="675" fill="url(#grid)"/>
+  <rect x="48" y="44" width="1104" height="587" rx="34" fill="#07111f" fill-opacity="0.72" stroke="#b8d3ff" stroke-opacity="0.16"/>
+  <rect x="78" y="78" width="1044" height="3" rx="1.5" fill="url(#accent)"/>
+  <g transform="translate(86 108)">
+    <rect width="64" height="64" rx="18" fill="#0f1d31" stroke="#34e5ff" stroke-opacity="0.34"/>
+    <rect x="18" y="18" width="24" height="24" rx="4" fill="#34e5ff" fill-opacity="0.16" stroke="#34e5ff" stroke-width="3"/>
+    <rect x="28" y="28" width="24" height="24" rx="4" fill="#4df0a8" fill-opacity="0.2" stroke="#4df0a8" stroke-width="3"/>
+  </g>
+  <text x="170" y="139" fill="#f3f7ff" font-family="Inter, Arial, sans-serif" font-size="32" font-weight="800">Shadow</text>
+  <text x="170" y="171" fill="#aebbd0" font-family="IBM Plex Mono, monospace" font-size="18" font-weight="700" letter-spacing="3">ARC TESTNET · TEST USDC</text>
+  <text x="86" y="270" fill="#f3f7ff" font-family="Inter, Arial, sans-serif" font-size="58" font-weight="900">Let your agent buy</text>
+  <text x="86" y="338" fill="#f3f7ff" font-family="Inter, Arial, sans-serif" font-size="58" font-weight="900">services on a budget</text>
+  <text x="86" y="406" fill="#f3f7ff" font-family="Inter, Arial, sans-serif" font-size="58" font-weight="900">you set.</text>
+  <text x="86" y="455" fill="#aebbd0" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">Your agent signs each purchase from its own wallet.</text>
+  <text x="86" y="486" fill="#aebbd0" font-family="Inter, Arial, sans-serif" font-size="22" font-weight="600">The contract pays within your limits and records what is owed.</text>
+  <g transform="translate(86 530)">
+    <rect width="220" height="72" rx="16" fill="#0f1d31" stroke="#4df0a8" stroke-opacity="0.32"/>
+    <text x="20" y="29" fill="#8895a9" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="700" letter-spacing="1.4">SPONSOR SETS</text>
+    <text x="20" y="55" fill="#4df0a8" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="900">BUDGET + LIMITS</text>
+  </g>
+  <g transform="translate(326 530)">
+    <rect width="220" height="72" rx="16" fill="#0f1d31" stroke="#34e5ff" stroke-opacity="0.28"/>
+    <text x="20" y="29" fill="#8895a9" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="700" letter-spacing="1.4">AGENT SIGNS</text>
+    <text x="20" y="55" fill="#34e5ff" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="900">EACH PURCHASE</text>
+  </g>
+  <g transform="translate(566 530)">
+    <rect width="254" height="72" rx="16" fill="#0f1d31" stroke="#ffd166" stroke-opacity="0.34"/>
+    <text x="20" y="29" fill="#8895a9" font-family="IBM Plex Mono, monospace" font-size="11" font-weight="700" letter-spacing="1.4">CONTRACT</text>
+    <text x="20" y="55" fill="#ffd166" font-family="Inter, Arial, sans-serif" font-size="20" font-weight="900">RECORDS DEBT</text>
+  </g>
+  <g transform="translate(870 135)">
+    <rect width="226" height="332" rx="24" fill="#0b1728" stroke="#b8d3ff" stroke-opacity="0.14"/>
+    <rect x="24" y="26" width="178" height="74" rx="16" fill="#0f1d31" stroke="#4df0a8" stroke-opacity="0.26"/>
+    <text x="44" y="56" fill="#8895a9" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="700" letter-spacing="1.6">STEP 1</text>
+    <text x="44" y="87" fill="#4df0a8" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="900">SET ASIDE</text>
+    <rect x="24" y="122" width="178" height="74" rx="16" fill="#0f1d31" stroke="#34e5ff" stroke-opacity="0.22"/>
+    <text x="44" y="152" fill="#8895a9" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="700" letter-spacing="1.6">STEP 2</text>
+    <text x="44" y="183" fill="#34e5ff" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="900">PAY</text>
+    <rect x="24" y="218" width="178" height="74" rx="16" fill="#0f1d31" stroke="#ffd166" stroke-opacity="0.26"/>
+    <text x="44" y="248" fill="#8895a9" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="700" letter-spacing="1.6">STEP 3</text>
+    <text x="44" y="279" fill="#ffd166" font-family="Inter, Arial, sans-serif" font-size="18" font-weight="900">RECORD DEBT</text>
+  </g>
+</svg>
