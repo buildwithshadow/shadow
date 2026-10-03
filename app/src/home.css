@@ -1,0 +1,372 @@
+.homePage {
+  color: var(--ink);
+  min-width: 0;
+  padding: 0 clamp(18px, 2.2vw, 30px) 56px;
+}
+
+.homePage a {
+  color: var(--accent);
+  overflow-wrap: anywhere;
+  text-decoration-color: var(--ink-faint);
+  text-underline-offset: 3px;
+}
+
+.homePage a:focus-visible {
+  border-radius: 3px;
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.homeHero {
+  padding: 96px 0 80px;
+}
+
+.homeEyebrow,
+.homeStep,
+.homeState,
+.homeAmountGroup > span,
+.homeLimitTable caption,
+.homeEvidence li > span {
+  font-family: var(--mono);
+}
+
+.homeEyebrow {
+  color: var(--ink-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin: 0;
+  text-transform: uppercase;
+}
+
+.homeHero h1 {
+  font-size: clamp(38px, 5.8vw, 72px);
+  font-weight: 800;
+  letter-spacing: -0.05em;
+  line-height: 0.98;
+  margin: 18px 0 0;
+  max-width: 900px;
+  overflow-wrap: break-word;
+}
+
+.homeLede {
+  color: var(--ink-soft);
+  font-size: 18px;
+  line-height: 1.6;
+  margin: 24px 0 0;
+  max-width: 62ch;
+}
+
+.homeActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 36px;
+}
+
+.homePage a.homeCta {
+  align-items: center;
+  background: var(--cta-bg);
+  border-radius: 8px;
+  color: var(--cta-fg);
+  display: inline-flex;
+  font-size: 16px;
+  font-weight: 700;
+  justify-content: center;
+  min-height: 48px;
+  padding: 12px 22px;
+  text-decoration: none;
+}
+
+.homePage a.homeCta:hover {
+  background: var(--cta-bg-hover);
+}
+
+.homeSection {
+  border-top: 1px solid var(--border-strong);
+  min-width: 0;
+  padding: 56px 0;
+}
+
+.homeSectionHead {
+  display: grid;
+  gap: 12px;
+  margin-bottom: 36px;
+  max-width: 720px;
+  min-width: 0;
+}
+
+.homeSectionHead h2,
+.homeEvidence h2 {
+  font-size: clamp(28px, 3vw, 40px);
+  font-weight: 700;
+  letter-spacing: -0.03em;
+  line-height: 1.1;
+  margin: 0;
+}
+
+.homeSectionHead > p:not(.homeEyebrow),
+.homeNote {
+  color: var(--ink-soft);
+  font-size: 16px;
+  line-height: 1.6;
+  margin: 0;
+}
+
+.homeNote {
+  font-size: 14px;
+  margin-top: 28px;
+}
+
+.homeAmountContext {
+  margin: -16px 0 22px;
+}
+
+.homeTimeline {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.homeTimeline li {
+  align-content: start;
+  border-top: 2px solid var(--border-strong);
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 18px;
+}
+
+.homeStep {
+  color: var(--ink-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.homeAmountGroup {
+  align-items: baseline;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+}
+
+.homeAmount {
+  font-family: var(--mono);
+  font-size: 26px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+}
+
+.homeAmountGroup > span {
+  color: var(--ink-faint);
+  font-size: 12px;
+}
+
+.homeTimeline p {
+  color: var(--ink-soft);
+  font-size: 14px;
+  line-height: 1.55;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.homeState {
+  border: 1px solid currentColor;
+  border-radius: 999px;
+  font-size: 11px;
+  justify-self: start;
+  line-height: 1.4;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 9px;
+}
+
+.homeStateOwed {
+  color: var(--warn);
+}
+
+.homeStateSettled {
+  color: var(--copy);
+}
+
+.homeRoles {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.homeRole {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  display: grid;
+  gap: 20px;
+  justify-items: start;
+  min-width: 0;
+  padding: 28px;
+}
+
+.homeRole h3 {
+  font-size: 22px;
+  margin: 0;
+}
+
+.homeRole ul {
+  color: var(--ink-soft);
+  display: grid;
+  font-size: 16px;
+  gap: 10px;
+  line-height: 1.5;
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-left: 20px;
+}
+
+.homeLimitTable {
+  border-collapse: collapse;
+  max-width: 720px;
+  table-layout: fixed;
+  width: 100%;
+}
+
+.homeLimitTable caption {
+  color: var(--ink-faint);
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  padding-bottom: 12px;
+  text-align: left;
+  text-transform: uppercase;
+}
+
+.homeLimitTable th,
+.homeLimitTable td {
+  border-bottom: 1px solid var(--border);
+  font-size: 16px;
+  overflow-wrap: anywhere;
+  padding: 14px 16px 14px 0;
+  text-align: left;
+  vertical-align: top;
+}
+
+.homeLimitTable th:first-child {
+  width: 58%;
+}
+
+.homeLimitTable thead th {
+  color: var(--ink-faint);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.homeLimitTable tbody th {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.homeEvidence h2 {
+  font-size: clamp(22px, 2.2vw, 28px);
+  margin: 0 0 24px;
+}
+
+.homeEvidence ul {
+  display: grid;
+  gap: 20px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  list-style: none;
+  margin: 0;
+  min-width: 0;
+  padding: 0;
+}
+
+.homeEvidence li {
+  min-width: 0;
+}
+
+.homeEvidence li > span {
+  color: var(--ink-faint);
+  display: block;
+  font-size: 12px;
+  letter-spacing: 0.08em;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+}
+
+.homeEvidence li > a {
+  align-items: center;
+  display: inline-flex;
+  min-height: 44px;
+}
+
+@media (max-width: 960px) {
+  .homeTimeline {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 720px) {
+  .homePage {
+    padding-left: 0;
+    padding-right: 0;
+  }
+
+  .homeHero {
+    padding: 72px 0 56px;
+  }
+
+  .homeHero h1 {
+    font-size: clamp(36px, 9vw, 54px);
+  }
+
+  .homeLede {
+    font-size: 16px;
+  }
+
+  .homeSection {
+    padding: 42px 0;
+  }
+
+  .homeSectionHead {
+    margin-bottom: 28px;
+  }
+
+  .homeRoles {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .homeEvidence ul {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 480px) {
+  .homeHero {
+    padding-top: 58px;
+  }
+
+  .homeHero h1 {
+    font-size: 36px;
+  }
+
+  .homeTimeline,
+  .homeEvidence ul {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .homeRole {
+    padding: 22px 18px;
+  }
+
+  .homeLimitTable th,
+  .homeLimitTable td {
+    font-size: 14px;
+    padding-right: 10px;
+  }
+}
