@@ -13,6 +13,7 @@
 .fundingDesk a { color: var(--accent); text-underline-offset: 4px; }
 .fundingScope { color: var(--ink-soft); font-size: 14px; line-height: 1.6; border-left: 2px solid var(--accent); padding-left: 14px; margin: 0 0 24px; }
 .fundingModes { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
+.fundingModes > span { flex-basis: 100%; }
 .fundingModes button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
 .fundingFeedback:empty { display: none; }
 .fundingFeedback { margin: 12px 0; scroll-margin-top: 112px; }
@@ -89,6 +90,7 @@
 .publicServiceResult { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 28rem; overflow: auto; font-size: 0.85rem; }
 
 .fundingPanel + .fundingPanel { margin-top: 24px; }
+.fundingSlot + .fundingPanel, .fundingPanel + .fundingSlot { margin-top: 24px; }
 
 /* Gateway details remain readable at narrow widths and while wallet prompts are open. */
 .gatewayFunding .gatewaySteps { padding-left: 1.4rem; margin: 16px 0; color: var(--ink-soft); line-height: 1.6; }
@@ -96,3 +98,4 @@
 .gatewayFunding .gatewayRecipient code { overflow-wrap: anywhere; }
 .gatewayFunding [role="status"]:not(:empty), .gatewayFunding [role="alert"]:not(:empty) { margin-top: 16px; line-height: 1.6; overflow-wrap: anywhere; }
 .gatewayFunding a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
+.fundingDesk [hidden] { display: none !important; }
