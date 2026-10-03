@@ -375,9 +375,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
-      <div><p className="pageEyebrow">Arc testnet · Agent funding</p>
-        <h1>Fund an agent.<br />Keep the limits.</h1>
-        <p>Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet.</p>
+      <div><p className="pageEyebrow">{service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
+        <h1>{service ? <>Fund an agent.<br />Keep the limits.</> : "Earlier candidate"}</h1>
+        <p>{service ? "Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet." : <>Shadow’s earlier testnet contract. Approved sponsors can open lines here and manage existing ones. To fund an agent without operator approval and buy a service, use <Link to="/start">Fund an agent</Link>.</>}</p>
       </div>
       <div className="fundingWallet">
         <span>{account ? "Connected browser wallet" : "Your wallet stays in control"}</span>
