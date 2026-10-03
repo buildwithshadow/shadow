@@ -176,6 +176,12 @@
   overflow-wrap: anywhere;
 }
 
+.homeTimeline p > a {
+  align-items: center;
+  display: inline-flex;
+  min-height: 44px;
+}
+
 .homeState {
   border: 1px solid currentColor;
   border-radius: 999px;
