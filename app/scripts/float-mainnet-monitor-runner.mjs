@@ -125,10 +125,21 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
       try {
         const publication = optionalJson(resolve(context.stateDir, 'publication.json'));
         const retained = optionalJson(file.snapshot);
-        // Only HOLD_LATCHED is added by the heartbeat after publication.
-        // A completed generation binds its remaining result codes exactly.
+        // Exactly one HOLD_LATCHED is appended only for a healthy policy
+        // result under an existing hold. A failed result cannot discard it.
+        const priorHold = optionalJson(file.hold);
+        const heartbeatOnlyHold = previous?.status === 'hold' && previous.ok === false && previous.hold === true &&
+          previous.checks?.snapshotHealthy === true && Array.isArray(previous.alerts) && previous.alerts.length === 1 &&
+          previous.alerts[0]?.code === 'HOLD_LATCHED' && previous.alerts[0]?.severity === 'critical' &&
+          typeof priorHold?.incidentId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(priorHold.incidentId) &&
+          typeof priorHold.createdAt === 'string' && Number.isFinite(Date.parse(priorHold.createdAt)) &&
+          new Date(Date.parse(priorHold.createdAt)).toISOString() === priorHold.createdAt && Date.parse(priorHold.createdAt) <= Date.parse(previous.completedAt) &&
+          Array.isArray(priorHold.alerts) && priorHold.alerts.length > 0 && priorHold.alerts.every(entry =>
+            typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code) && entry.severity === 'critical' && typeof entry.detail === 'string') &&
+          priorHold?.incidentId === previous.incidentId && priorHold?.baselineHash === context.baselineHash &&
+          previous.alerts[0]?.detail === `incident ${previous.incidentId} requires local acknowledgement after recovery`;
         const completedCodesBound = Array.isArray(previous?.alerts) && Array.isArray(publication?.alertCodes) &&
-          JSON.stringify(previous.alerts.filter(entry => entry?.code !== 'HOLD_LATCHED').map(entry => entry?.code).sort()) ===
+          JSON.stringify((heartbeatOnlyHold ? [] : previous.alerts.map(entry => entry?.code)).sort()) ===
           JSON.stringify([...publication.alertCodes].sort());
         const knownPrevious = previous && Object.entries(identity(context)).every(([key, value]) => previous[key] === value) &&
           typeof previous.runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(previous.runId) &&
@@ -138,7 +149,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
             publication?.completedAt === previous.completedAt && publication?.snapshotHash === previous.snapshotHash && completedCodesBound);
         if (knownPrevious && publication?.runId === previous.runId && publication.startedAt === previous.startedAt &&
             Object.entries(identity(context)).every(([key, value]) => publication[key] === value) &&
-            Array.isArray(publication.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) &&
+            Array.isArray(publication.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code) && code !== 'HOLD_LATCHED') &&
             typeof publication.completedAt === 'string' && Number.isFinite(Date.parse(publication.completedAt)) &&
             new Date(Date.parse(publication.completedAt)).toISOString() === publication.completedAt &&
             Date.parse(publication.completedAt) >= Date.parse(previous.startedAt) && Date.parse(publication.completedAt) <= started &&

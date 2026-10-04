@@ -476,25 +476,33 @@ test('three normal generation transitions yield an inconclusive sample rather th
 });
 
 test('completed-generation marker cleanup accepts valid leftovers and preserves malformed-marker incidents',async()=>{
- for(const mode of ['corrupt','altered-codes','healthy-leftover','snapshotless-leftover']){
+ for(const mode of ['corrupt','altered-codes','failure-extra-hold','failure-duplicate-hold','healthy-extra-hold','healthy-leftover','healthy-held-leftover','snapshotless-leftover']){
  const f=fixture();let savedMarker;const markerPath=join(f.context.stateDir,'publication.json');
  try{
  if(mode==='corrupt'){await f.run();writeFileSync(markerPath,'{');}
  else{
   const capture=async()=>{savedMarker=readFileSync(markerPath);};
-  await runMonitorOnce(f.context,{now:()=>now,collect:mode==='snapshotless-leftover'?async()=>{throw Error('offline');}:async()=>f.snapshot,afterSnapshotPublished:capture,afterHoldLatched:capture});
+  if(['healthy-extra-hold','healthy-held-leftover'].includes(mode))await f.run(now-1,async()=>{throw Error('prior outage');});
+  await runMonitorOnce(f.context,{now:()=>now,collect:mode==='snapshotless-leftover'||mode.startsWith('failure-')?async()=>{throw Error('offline');}:async()=>f.snapshot,afterSnapshotPublished:capture,afterHoldLatched:capture});
   if(mode==='altered-codes')savedMarker=JSON.stringify({...JSON.parse(savedMarker),alertCodes:['RPC_CHECK_FAILED']});
+  if(['failure-extra-hold','failure-duplicate-hold','healthy-extra-hold'].includes(mode)){
+   const heartbeatPath=join(f.context.stateDir,'heartbeat.json');const raw=JSON.parse(readFileSync(heartbeatPath));
+   const extra={code:'HOLD_LATCHED',severity:'critical',detail:`incident ${raw.incidentId} requires local acknowledgement after recovery`};
+   raw.alerts.push(extra);if(mode==='failure-duplicate-hold')raw.alerts.push(extra);writeFileSync(heartbeatPath,JSON.stringify(raw));
+  }
   writeFileSync(markerPath,savedMarker);
  }
  const next=await f.run(now+1);
- if(mode==='corrupt'||mode==='altered-codes'){
+ if(['corrupt','altered-codes','failure-extra-hold','failure-duplicate-hold','healthy-extra-hold'].includes(mode)){
   assert.equal(next.ok,false);assert.equal(next.hold,true);assert.ok(next.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
   assert.ok(notificationState(f.context,now+1).codes.includes('LOCAL_STATE_INVALID'));
-  const held=JSON.parse(readFileSync(join(f.context.stateDir,'hold.json')));assert.ok(held.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
+  const held=JSON.parse(readFileSync(join(f.context.stateDir,'hold.json')));
+  if(['corrupt','altered-codes'].includes(mode))assert.ok(held.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
+  else assert.ok(held.alerts.some(a=>a.code==='RPC_CHECK_FAILED'));
   const refreshed=await f.run(now+2);assert.equal(refreshed.hold,true);assert.equal(refreshed.ok,false);
  }else{
   assert.ok(!next.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
-  assert.equal(next.ok,mode==='healthy-leftover');assert.equal(next.hold,mode==='snapshotless-leftover');
+  assert.equal(next.ok,mode==='healthy-leftover');assert.equal(next.hold,mode!=='healthy-leftover');
  }
  }finally{f.cleanup();}
  }
