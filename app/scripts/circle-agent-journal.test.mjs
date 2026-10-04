@@ -32,14 +32,14 @@ test('record symlinks and broadly readable restored records cannot be consumed',
   try {
     const j=await createCircleAgentJournal(dir);await j.put('entry',{status:'unknown'});
     const name=(await readdir(dir))[0],path=join(dir,name);
-    await chmod(path,0o644);await assert.rejects(()=>j.get('entry'),/permissions are unsafe/);
+    await chmod(path,0o644);await assert.rejects(()=>j.get('entry'),/permissions or size are unsafe/);
     await rm(path);const other=join(dir,'other');await writeFile(other,'{}',{mode:0o600});await symlink(other,path);
     await assert.rejects(()=>j.get('entry'));
   } finally {await rm(dir,{recursive:true,force:true});}
 });
 
 
-test('intermediate aliases are refused and replacing an opened directory cannot discard its barrier',async()=>{
+test('intermediate aliases are refused and retargeting an opened directory retains its original barrier',async()=>{
   const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-alias-'));
   try {
     const original=join(parent,'original'),replacement=join(parent,'replacement'),alias=join(parent,'alias');
@@ -48,8 +48,10 @@ test('intermediate aliases are refused and replacing an opened directory cannot 
     await symlink(original,alias);
     await assert.rejects(()=>createCircleAgentJournal(join(alias,'private')),/symlinked path/);
     await rename(original,join(parent,'moved'));await symlink(replacement,original);
-    for(const attempt of [()=>j.get('wallet'),()=>j.put('wallet',{}),()=>j.withLock('wallet',()=>assert.fail('must not run'))]){
-      await assert.rejects(attempt);
-    }
+    assert.deepEqual(await j.get('wallet'),{status:'unknown'});
+    await j.put('original-only',{preserved:true});
+    assert.deepEqual(await j.get('original-only'),{preserved:true});
+    assert.deepEqual(await readdir(replacement),[]);
+    j.close();
   } finally {await rm(parent,{recursive:true,force:true});}
 });

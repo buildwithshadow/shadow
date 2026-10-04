@@ -1,6 +1,8 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { freezeCircleCliSource } from './circle-agent-cli-runtime.mjs';
 import { createHash } from 'node:crypto';
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress } from 'viem';
 import { CIRCLE_CLI_SHA256, unwrapCircle } from './circle-agent-cli-transport.mjs';
@@ -13,10 +15,12 @@ const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLow
 
 /** Uses ordinary scalar CLI arguments, without patching its raw calldata handling. */
 export async function createCircleGuardedCliTransport(options) {
-  const source = await readFile(options.entrypoint);
+  const original = resolve(options.entrypoint);
+  const source = await readFile(original);
   must(createHash('sha256').update(source).digest('hex') === CIRCLE_CLI_SHA256,
     'Circle CLI differs from the reviewed runtime; review the new version before use.');
-  return createCircleGuardedCliDriver(options);
+  const entrypoint = await freezeCircleCliSource(source, original);
+  return createCircleGuardedCliDriver({ ...options, entrypoint });
 }
 
 /** Injection boundary for tests. CLI authentication and policies remain external. */

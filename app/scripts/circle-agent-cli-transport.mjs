@@ -1,8 +1,9 @@
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
-import { readFile, writeFile, rename } from 'node:fs/promises';
-import { dirname, join } from 'node:path';
+import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+import { freezeCircleCliSource } from './circle-agent-cli-runtime.mjs';
 import { getAddress } from 'viem';
 import abi from './float-mainnet-abi.json' with { type: 'json' };
 
@@ -35,12 +36,11 @@ export function unwrapCircle(value) { return value?.data ?? value; }
 
 export async function createCircleCliTransport({ entrypoint, agent, journal, run = runFile }) {
   const address = getAddress(agent);
-  const source = await readFile(entrypoint, 'utf8');
+  const original = resolve(entrypoint);
+  const source = await readFile(original, 'utf8');
   const patched = rawCalldataCompatibility(source);
-  const compatibility = join(dirname(entrypoint), 'shadow-testnet-compatibility.js');
-  const temp = `${compatibility}.${process.pid}.tmp`;
-  await writeFile(temp, patched, { mode: 0o600 });
-  await rename(temp, compatibility);
+  const compatibility = await freezeCircleCliSource(patched, original);
+  entrypoint = await freezeCircleCliSource(source, original);
   return createCircleCliDriver({ entrypoint, compatibility, agent: address, journal, run });
 }
 
