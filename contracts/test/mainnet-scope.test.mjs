@@ -5,9 +5,10 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const contractsRoot = resolve(here, "..");
+for (const contractName of process.argv.includes("--guarded") ? ["ShadowFloatMainnet", "ShadowFloatMainnetGuarded"] : ["ShadowFloatMainnet"]) {
 const artifactPath = resolve(
   contractsRoot,
-  "out/ShadowFloatMainnet.sol/ShadowFloatMainnet.json",
+  `out/${contractName}.sol/${contractName}.json`,
 );
 const artifact = JSON.parse(readFileSync(artifactPath, "utf8"));
 
@@ -45,12 +46,18 @@ for (const name of exposedNames) {
 }
 
 const source = readFileSync(
-  resolve(contractsRoot, "src/ShadowFloatMainnet.sol"),
+  resolve(contractsRoot, `src/${contractName}.sol`),
   "utf8",
 );
 const imports = [...source.matchAll(/^import\s+[^;]+;/gm)].map(([value]) => value);
 assert.deepEqual(imports, ['import {IERC20} from "./interfaces/IERC20.sol";']);
 
 console.log(
-  `ShadowFloatMainnet scope gate PASS: ${runtimeBytes} runtime bytes, ${exposedNames.length} ABI/event names`,
+  `${contractName} scope gate PASS: ${runtimeBytes} runtime bytes, ${exposedNames.length} ABI/event names`,
 );
+
+if (contractName === "ShadowFloatMainnetGuarded") {
+  assert.ok(!exposedNames.includes("repay"), "unguarded repayment selector exists");
+  assert.ok(exposedNames.includes("repayfordraw"), "guarded repayment missing");
+}
+}

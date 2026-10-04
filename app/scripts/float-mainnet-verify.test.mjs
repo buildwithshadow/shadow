@@ -532,12 +532,12 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     const line = await openLine(agent.address);
 
     const first = await purchase("c1", { requestId: "req-1", extra: ["--executor", executor.address] });
-    first.repayments.push(repayment(await ok("repay", ["--line-id", line.lineId, "--amount", "100000", "--execute"], AGENT)));
-    first.repayments.push(repayment(await ok("repay", ["--line-id", line.lineId, "--full", "--execute"], AGENT)));
+    first.repayments.push(repayment(await ok("repay", ["--allow-current-line-debt", "--line-id", line.lineId, "--amount", "100000", "--execute"], AGENT)));
+    first.repayments.push(repayment(await ok("repay", ["--allow-current-line-debt", "--line-id", line.lineId, "--full", "--execute"], AGENT)));
     first.cleared = true;
 
     const second = await purchase("c2", { requestId: "req-2" });
-    second.repayments.push(repayment(await ok("repay", ["--line-id", line.lineId, "--full", "--execute"], AGENT)));
+    second.repayments.push(repayment(await ok("repay", ["--allow-current-line-debt", "--line-id", line.lineId, "--full", "--execute"], AGENT)));
     second.cleared = true;
 
     const { providers } = await ok("line", ["status", "--line-id", line.lineId, "--provider", provider.address]);
@@ -555,7 +555,7 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     };
 
     const third = await purchase("c3");
-    third.repayments.push(repayment(await ok("repay", ["--line-id", line.lineId, "--full", "--execute"], AGENT)));
+    third.repayments.push(repayment(await ok("repay", ["--allow-current-line-debt", "--line-id", line.lineId, "--full", "--execute"], AGENT)));
     third.cleared = true;
 
     const closed = await ok("sponsor", ["close", "--line-id", line.lineId, "--execute"], SPONSOR);
@@ -724,7 +724,7 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
 
     // The line is repaid after observedAt: the pinned bundle still verifies,
     // and the report names what it leaves out, without changing ok.
-    await ok("repay", ["--line-id", line.lineId, "--full", "--execute"], AGENT);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", line.lineId, "--full", "--execute"], AGENT);
     const stale = await verifiesOk("smart-stale.json", bundle);
     assert.deepEqual([stale.ids("MANUAL"), stale.report.afterObservedAt.laterLineEvents], [["deployment.manifestProvenance"], [{ event: "Repaid", count: 1 }]]);
     assert.ok(BigInt(stale.report.afterObservedAt.head) > BigInt(bundle.observedAt.blockNumber));

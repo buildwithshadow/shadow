@@ -1,5 +1,7 @@
 import { decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, isAddress, isAddressEqual, keccak256, parseUnits, stringToHex, zeroAddress, zeroHash, defineChain, type Abi, type Address, type Hash, type Hex, type PublicClient, type WalletClient } from 'viem'
 import candidateAbiJson from '../scripts/float-mainnet-abi.json' with { type: 'json' }
+import { parseAbi } from 'viem'
+const drawBindingAbi = parseAbi(['function currentDrawDigest(bytes32) view returns (bytes32)', 'function repaymentBindingVersion() view returns (uint256)', 'function repayForDraw(bytes32 lineId, bytes32 expectedDraw, uint256 amount)', 'event DrawRepaid(bytes32 indexed lineId, bytes32 indexed drawDigest, address indexed payer, uint256 amount, uint256 principalRemaining)'])
 
 export const CANDIDATE_FUNDING = {
   chainId: 5042002,
@@ -31,6 +33,7 @@ export interface CandidateLine {
   reserveCap: bigint; availableReserve: bigint; principalOutstanding: bigint; recoveryAvailable: bigint
   lineSpendCap: bigint; dailySpendCap: bigint; cumulativePrincipalPaid: bigint; spentToday: bigint; dueAt: bigint
   observedBlock: bigint; observedTimestamp: bigint; sponsorAllowed: boolean; spendsPaused: boolean
+  drawDigest?: Hash
 }
 export interface CandidateSnapshot {
   sponsor: Address; observedBlock: bigint; observedTimestamp: bigint
@@ -55,14 +58,15 @@ export interface CandidateJournal { key: string; load(): CandidatePending | null
 export interface CandidateSession { publicClient: CandidateReadClient; walletClient: CandidateWalletClient; account: Address; journal: CandidateJournal; onStage?: (pending: CandidatePending) => void }
 export type CandidateResolution = { status: 'confirmed' | 'reverted' | 'replaced' | 'unknown'; txHash: Hash | null; message: string; lineId?: Hash }
 
-export type CandidateDeployment = Omit<typeof CANDIDATE_FUNDING, 'address' | 'runtimeHash'> & { address: Address; runtimeHash: Hash; selfRegistration?: boolean }
+export type CandidateDeployment = Omit<typeof CANDIDATE_FUNDING, 'address' | 'runtimeHash'> & { address: Address; runtimeHash: Hash; selfRegistration?: boolean; drawBoundRepayment?: boolean }
 export function createCandidateFundingKit(deployment: CandidateDeployment) {
   const CANDIDATE_FUNDING = Object.freeze({ ...deployment })
   if (CANDIDATE_FUNDING.chainId !== 5042002) throw new Error('Only Arc testnet is supported.')
-  const candidateFundingAbi: Abi = deployment.selfRegistration ? [...candidateAbiJson,
+  const baseAbi: Abi = deployment.selfRegistration ? [...candidateAbiJson,
     { type: 'function', name: 'registerSponsor', inputs: [], outputs: [], stateMutability: 'nonpayable' },
     { type: 'function', name: 'sponsorAdmissionRevoked', inputs: [{ name: 'sponsor', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
   ] as Abi : candidateAbiJson as Abi
+  const candidateFundingAbi: Abi = deployment.drawBoundRepayment ? [...baseAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...drawBindingAbi] : baseAbi
 const states = ['NONE', 'OPEN', 'DRAWN', 'DEFAULTED', 'CLOSED'] as const
 const typeString = 'SpendIntent(address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor)'
 const memoryLocks = new Set<string>()
@@ -113,6 +117,7 @@ async function verifyCandidate(client: CandidateReadClient): Promise<void> {
   const chainId = await read(client, 'deploymentChainId')
   const usdc = await read(client, 'usdc')
   const decimals = await tokenRead(client, 'decimals')
+  if (deployment.drawBoundRepayment && BigInt(await read(client, 'repaymentBindingVersion')) !== 2n) throw new Error('Draw-bound repayment identity is inconsistent. Writes are disabled.')
   if (name !== keccak256(stringToHex('ShadowFloatMainnet')) || version !== keccak256(stringToHex('1')) || type !== keccak256(stringToHex(typeString)) || BigInt(chainId) !== BigInt(CANDIDATE_FUNDING.chainId) || !same(usdc, CANDIDATE_FUNDING.usdc) || Number(decimals) !== 6) throw new Error('Candidate identity or USDC configuration is inconsistent. Writes are disabled.')
 }
 
@@ -124,7 +129,8 @@ async function lineAt(client: CandidateReadClient, lineId: Hash, block: { number
   const sponsor = address(raw.sponsor)
   const sponsorAllowed = await read(client, 'sponsorAllowed', [sponsor], block.number)
   const fields = Object.fromEntries(uintKeys.map(key => [key, BigInt(raw[key])]))
-  return { ...fields, lineId, sponsor, agent: address(raw.agent), state, stateName: states[state], observedBlock: block.number, observedTimestamp: block.timestamp, sponsorAllowed: Boolean(sponsorAllowed), spendsPaused: Boolean(spendsPaused) } as CandidateLine
+  const drawDigest = deployment.drawBoundRepayment ? await read(client, 'currentDrawDigest', [lineId], block.number) : undefined
+  return { ...fields, lineId, sponsor, agent: address(raw.agent), state, stateName: states[state], observedBlock: block.number, observedTimestamp: block.timestamp, sponsorAllowed: Boolean(sponsorAllowed), spendsPaused: Boolean(spendsPaused), drawDigest } as CandidateLine
 }
 
 async function readCandidateLine(client: CandidateReadClient, rawLineId: string): Promise<CandidateLine> {
@@ -166,7 +172,7 @@ function approval(account: Address, value: bigint, observedBlock: bigint, nextAc
   return { kind: 'approve', account, to: CANDIDATE_FUNDING.usdc, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [CANDIDATE_FUNDING.address, value] }), value: '0', amount: value, lineId: null, agent: null, expectedEpoch: null, observedBlock, summary: 'Approve exactly this testnet USDC amount for Shadow. Funding requires a separate confirmation.', nextAction }
 }
 function fingerprint(line: CandidateLine): string {
-  return [line.state, line.principalOutstanding, line.cumulativePrincipalPaid, line.dueAt, line.availableReserve, line.recoveryAvailable].join(':')
+  return [line.state, line.principalOutstanding, line.cumulativePrincipalPaid, line.dueAt, line.availableReserve, line.recoveryAvailable, line.drawDigest ?? 'legacy'].join(':')
 }
 
 async function prepareCandidateOpen(client: CandidateReadClient, rawAccount: string, input: CandidateOpenInput): Promise<CandidatePrepared> {
@@ -208,7 +214,8 @@ async function prepareCandidateRepay(client: CandidateReadClient, rawAccount: st
   const allowance = await tokenRead(client, 'allowance', [account, CANDIDATE_FUNDING.address], line.observedBlock)
   if (BigInt(balance) < line.principalOutstanding) throw new Error('This wallet does not have enough testnet USDC to repay the debt.')
   if (BigInt(allowance) < line.principalOutstanding) return approval(account, line.principalOutstanding, line.observedBlock, 'repay')
-  return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'repay', args: [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: line.stateName === 'DEFAULTED' ? 'Repay this debt into sponsor recovery. The defaulted line stays closed to new purchases.' : 'Repay the displayed debt in full. Repayment restores reserve but does not reset the total purchase limit.' }
+  if (deployment.drawBoundRepayment && (!line.drawDigest || line.drawDigest === zeroHash)) throw new Error('The current purchase identity is unavailable. No repayment was prepared.')
+  return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', args: deployment.drawBoundRepayment ? [line.lineId, line.drawDigest!, line.principalOutstanding] : [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: deployment.drawBoundRepayment ? `Repay purchase ${line.drawDigest}. The transaction reverts if another purchase replaces it.` : 'Pay this fixed amount toward whatever debt this line has when the transaction executes. A delayed approval can pay a newer purchase. This legacy contract does not bind repayment to the purchase shown now.' }
 }
 
 async function prepareCandidateReclaim(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
@@ -259,7 +266,7 @@ function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'v
   if (!same(record.to, isApproval ? CANDIDATE_FUNDING.usdc : CANDIDATE_FUNDING.address) || record.value !== '0') throw new Error('The transaction does not target the expected testnet contract.')
   const abi: Abi = isApproval ? erc20Abi : candidateFundingAbi
   const decoded = decodeFunctionData({ abi, data: record.data })
-  const expectedName = { register: 'registerSponsor', approve: 'approve', open: 'openLine', repay: 'repay', close: 'closeLine', 'claim-defaulted': 'claimDefaulted' }[record.kind]
+  const expectedName = { register: 'registerSponsor', approve: 'approve', open: 'openLine', repay: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', close: 'closeLine', 'claim-defaulted': 'claimDefaulted' }[record.kind]
   if (decoded.functionName !== expectedName) throw new Error('The transaction action does not match its calldata.')
   const args = decoded.args as readonly any[]
   const value = BigInt(record.amount)
@@ -274,7 +281,8 @@ function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'v
     if (BigInt(p.reserve) !== value || value > CANDIDATE_FUNDING.maxReserve || BigInt(p.lineSpendCap) <= 0n || BigInt(p.lineSpendCap) > CANDIDATE_FUNDING.maxLineSpend || BigInt(p.dailySpendCap) <= 0n || BigInt(p.dailySpendCap) > CANDIDATE_FUNDING.maxDailySpend || BigInt(p.providerPerSpendCap) <= 0n || BigInt(p.providerPerSpendCap) > CANDIDATE_FUNDING.maxPerSpend || BigInt(p.providerDailyCap) <= 0n || BigInt(p.providerDailyCap) > CANDIDATE_FUNDING.maxDailySpend) throw new Error('The funding line exceeds this browser release’s testnet limits.')
   } else if (!isApproval) {
     if (!record.lineId || !same(args[0], record.lineId)) throw new Error('The transaction line does not match its calldata.')
-    if (record.kind === 'repay' && (BigInt(args[1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('The repayment must equal the displayed bounded amount.')
+    if (record.kind === 'repay' && (BigInt(args[deployment.drawBoundRepayment ? 2 : 1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('The repayment must equal the displayed bounded amount.')
+    if (record.kind === 'repay' && deployment.drawBoundRepayment) hash(args[1], 'Purchase digest')
   }
   return { abi, functionName: decoded.functionName, args }
 }
@@ -330,6 +338,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
     } else if (prepared.kind !== 'approve' && prepared.kind !== 'register') {
       const current = await readCandidateLine(client, prepared.lineId!)
       if (!prepared.lineFingerprint || fingerprint(current) !== prepared.lineFingerprint) throw new Error('The line or debt changed. Refresh and review the current amount before confirming.')
+      if (prepared.kind === 'repay' && deployment.drawBoundRepayment && !same(call.args[1], current.drawDigest!)) throw new Error('The repayment calldata names a different purchase. Review it again.')
     }
     await client.simulateContract({ address: prepared.to, abi: call.abi, functionName: call.functionName, args: call.args, account: session.account })
     const block = await client.getBlock()
@@ -379,7 +388,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
 }
 
 function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly any[] }): boolean {
-  const expected = { register: 'SponsorAllowed', approve: 'Approval', open: 'LineOpened', repay: 'Repaid', close: 'LineClosed', 'claim-defaulted': 'SponsorClaimed' }[pending.kind]
+  const expected = { register: 'SponsorAllowed', approve: 'Approval', open: 'LineOpened', repay: deployment.drawBoundRepayment ? 'DrawRepaid' : 'Repaid', close: 'LineClosed', 'claim-defaulted': 'SponsorClaimed' }[pending.kind]
   for (const log of receipt.logs) {
     if (!same(log.address, pending.to)) continue
     try {
@@ -390,7 +399,7 @@ function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly a
       if (pending.kind === 'approve') return same(args.owner, pending.account) && same(args.spender, CANDIDATE_FUNDING.address) && BigInt(args.value) === BigInt(pending.amount)
       if (!pending.lineId || !same(args.lineId, pending.lineId)) continue
       if (pending.kind === 'open') return same(args.sponsor, pending.account) && !!pending.agent && same(args.agent, pending.agent) && BigInt(args.reserve) === BigInt(pending.amount) && String(args.epoch) === pending.expectedEpoch
-      if (pending.kind === 'repay') return same(args.payer, pending.account) && BigInt(args.amount) === BigInt(pending.amount)
+      if (pending.kind === 'repay') return same(args.payer, pending.account) && BigInt(args.amount) === BigInt(pending.amount) && (!deployment.drawBoundRepayment || same(args.drawDigest, (decodeFunctionData({abi: candidateFundingAbi, data: pending.data}).args as readonly any[])[1]))
       // Closing and reclaiming can return a newer balance if a repayment raced
       // the wallet prompt; the exact call identity and sponsor are authoritative.
       return same(args.sponsor, pending.account)

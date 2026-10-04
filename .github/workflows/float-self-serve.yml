@@ -34,6 +34,8 @@ on:
       - "app/scripts/saved-transaction-lookup.test.ts"
       - "app/src/candidateFunding.ts"
       - "app/src/selfServicePurchase.mjs"
+      - "app/src/boundedResponse.mjs"
+      - "ops/mainnet-runtime/**"
       - "app/src/selfServicePurchase.d.mts"
       - "app/src/PublicPurchase.tsx"
       - "app/src/publicTestnet.ts"
@@ -104,6 +106,8 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-workspace
       - name: Build local contract artifacts
         run: forge build --root contracts
+      - name: Test immutable candidate contracts and draw-bound repayment
+        run: npm run contracts:mainnet:test
       - name: Test all candidate tooling against local Anvil
         # The glob includes new provider, evidence, review and pilot suites as
         # they land. Run serially because the suites use fixed local RPC ports.
@@ -111,7 +115,7 @@ jobs:
       - name: Test public testnet observer failure and recovery
         run: node --test app/scripts/public-testnet-observer.test.mjs app/scripts/public-testnet-observer-alerts.test.mjs
       - name: Test candidate funding and browser transaction recovery
-        run: node --test app/scripts/float-mainnet-browser.test.ts
+        run: node --test --test-concurrency=1 app/scripts/float-mainnet-browser.test.ts app/scripts/float-mainnet-guarded-browser.test.ts
       - name: Test public testnet self-registration and wallet purchases
         run: |
           forge test --root contracts --match-path 'test/ShadowFloatPublicTestnet*.t.sol'

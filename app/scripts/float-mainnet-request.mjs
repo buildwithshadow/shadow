@@ -5,7 +5,7 @@ import { getAddress, keccak256 } from "viem";
 import { UsageError, bytes32Flag, connect, failIf, latestBlock, required, runCli } from "./float-mainnet-cli.mjs";
 import { readIntentFile, validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
 import { errorMessage, isEntrypoint } from "./float-mainnet-preflight.mjs";
-import { ACCEPTANCE_KIND, DELIVERY_KIND, checkPayment, requestIdHashOf, signatureAt, validateReceiptFile } from "./float-mainnet-provider.mjs";
+import { ACCEPTANCE_KIND, DELIVERY_KIND, assertPaymentCanonical, checkPayment, requestIdHashOf, signatureAt, validateReceiptFile } from "./float-mainnet-provider.mjs";
 
 // Agent-side client for a provider that follows the provider kit's protocol
 // (Shadow's own convention, not x402; reference server:
@@ -181,7 +181,7 @@ async function fetchResult(values) {
 
   // Nothing here pays: the contract's receiptStatus decides whether there is
   // anything to fetch, before the provider is contacted.
-  const payment = await checkPayment(connection, digest);
+  const payment = await checkPayment(connection, digest, { transactionHash: values["payment-tx"] });
   if (!payment.paid) {
     const why =
       payment.receiptStatus === "blocked"
@@ -195,7 +195,8 @@ async function fetchResult(values) {
       error: { message: `receiptStatus for digest ${digest} is ${payment.receiptStatus} at block ${payment.observedAt.blockNumber}: ${why}; the provider was not contacted`, revert: null },
     };
   }
-  const provider = accepted?.message.provider ?? intent?.struct.provider ?? payment.providerPaid?.provider ?? null;
+  if (!payment.providerPaid) throw new Error(`digest ${digest} is paid, but authoritative provider/principal binding is unavailable (${payment.hint}); retry the original payment lookup or pass --payment-tx; the provider was not contacted and nothing was paid again`);
+  const provider = accepted?.message.provider ?? intent?.struct.provider ?? payment.providerPaid.provider;
   if (provider === null) {
     throw new Error(`digest ${digest} is paid, but the paid provider is unknown (${payment.hint}); pass --acceptance or --intent`);
   }
@@ -261,6 +262,7 @@ async function fetchResult(values) {
     } catch (error) {
       throw new Error(`rejected the provider's answer for digest ${digest}; nothing was written to ${out}: ${errorMessage(error)}`);
     }
+    await assertPaymentCanonical(connection, payment);
     // Written beside --out and renamed over it: --out holds its old content or the whole result.
     const temporary = `${out}.${process.pid}.${randomBytes(8).toString("hex")}.tmp`;
     try {
@@ -296,6 +298,7 @@ const COMMANDS = {
       digest: { type: "string" },
       acceptance: { type: "string" },
       "request-id": { type: "string" },
+      "payment-tx": { type: "string" },
       out: { type: "string" },
     },
     run: fetchResult,
