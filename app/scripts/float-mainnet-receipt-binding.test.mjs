@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, unlinkSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -105,6 +105,11 @@ test('receipt identity must remain bound when payment-log access fails', { timeo
   assert.equal(fetchedFromServer.status, 0, JSON.stringify(fetchedFromServer.json));
   assert.deepEqual(readFileSync(out), result);
   assert.equal(work, 0, 'stored unsigned work is not repeated');
+  assert.deepEqual(JSON.parse(readFileSync(join(store, `${digest}.payment.json`), 'utf8')), {transactionHash:paidTx});
+  // Also upgrade a legacy fully-delivered store, whose early return must save
+  // payment identity before its next hash-free restart recovery.
+  unlinkSync(join(store, `${digest}.payment.json`));
+  assert.equal((await post(actualUrl, {digest, paymentTransactionHash:paidTx})).status, 200);
   assert.deepEqual(JSON.parse(readFileSync(join(store, `${digest}.payment.json`), 'utf8')), {transactionHash:paidTx});
   actualServer.closeAllConnections(); await new Promise(r => actualServer.close(r)); servers.splice(servers.indexOf(actualServer),1);
   const restartedUrl = await listen(makeServer());

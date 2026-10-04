@@ -358,14 +358,14 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const payment = await checkPayment(connection, digest, { transactionHash: savedPayment?.transactionHash ?? paymentTransactionHash });
     if (!payment.paid) return [402, { error: "the digest is not paid", receiptStatus: payment.receiptStatus }];
     await assertPaidProviderBinding(connection, payment, acceptance);
+    // Upgrade legacy delivered stores too: persist only the independently
+    // verified original transaction, before any successful return.
+    storeOnce(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
     // Returning our stored bytes creates no new receipt/signature. A rotated
     // smart-provider key must not strand that result; payment binding is still
     // freshly established from the original canonical transaction.
     if (delivered) return [200, { result: earlier.result, delivery: delivered }];
     const verified = await checkDeliveryPayment(connection, { acceptance, account, transactionHash: payment.providerPaid.transactionHash });
-    // Preserve the canonical transaction identity before service work. Recovery
-    // re-reads its receipt and block, even when ranged log scans are unavailable.
-    storeOnce(fileOf(digest, "payment"), { transactionHash: verified.payment.providerPaid.transactionHash });
     const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
     const { delivery } = await deliverResult(connection, {

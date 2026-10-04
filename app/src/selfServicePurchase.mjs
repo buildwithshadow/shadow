@@ -449,7 +449,7 @@ export function createSelfServicePurchase({
     const result =
       record.stage === "delivered"
         ? record.result
-        : await post("/serve", { digest: record.intent.digest });
+        : await post("/serve", { digest: record.intent.digest, ...(record.txHash ? { paymentTransactionHash: record.txHash } : {}) });
     const d = await signedReceipt(result.delivery, DELIVERY, "DeliveryReceipt");
     assert(
       same(d.digest, record.intent.digest) &&
