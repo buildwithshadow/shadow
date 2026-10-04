@@ -64,6 +64,9 @@ test('bounded check is quiet but release drift, stale check and latched hold are
     const running = f.run(now, async () => { entered(); return new Promise(resolve => { finish = resolve; }); });
     await started;
     assert.equal(notificationState(f.context, now), null);
+    writeFileSync(join(f.context.stateDir, 'publication.json'), '{');
+    assert.equal(notificationState(f.context, now).ok, false);
+    rmSync(join(f.context.stateDir, 'publication.json'));
     assert.equal(notificationState(f.context, now + 5001).ok, false);
     assert.equal(notificationState({ ...f.context, manifestHash: 'changed' }, now).ok, false);
     writeFileSync(join(f.context.stateDir, 'hold.json'), JSON.stringify({ incidentId: 'existing-incident' }));
@@ -374,6 +377,14 @@ test('a first collection failure without a snapshot alerts once across publicati
  const restarted=runMonitorOnce(f.context,{now:()=>now+4,afterCheckingPublished:async()=>{
  assert.deepEqual(readFileSync(join(f.context.stateDir,'publication.json')),savedMarker);
  assert.equal(notificationState(f.context,now+4).key,key);assert.equal((await notify(now+4)).sent,false);assert.equal(sent,1);
+ const heartbeat=JSON.parse(readFileSync(join(f.context.stateDir,'heartbeat.json')));
+ const currentMarker={...JSON.parse(savedMarker),runId:heartbeat.runId,startedAt:heartbeat.startedAt,completedAt:heartbeat.startedAt};
+ for(const corrupt of ['{',JSON.stringify({...currentMarker,manifestHash:'wrong'}),JSON.stringify({...currentMarker,completedAt:'invalid'}),JSON.stringify({})]){
+  writeFileSync(join(f.context.stateDir,'publication.json'),corrupt);
+  assert.notEqual(notificationState(f.context,now+4).checking,true);
+  assert.ok(notificationState(f.context,now+4).codes.includes('CHECK_IN_PROGRESS'));
+ }
+ writeFileSync(join(f.context.stateDir,'publication.json'),savedMarker);
  },collect:async()=>{enteredRetry();return new Promise((resolve,reject)=>{failRetry=reject;});}});await retryStarted;
  try{assert.equal(notificationState(f.context,now+4).key,key);assert.equal((await notify(now+4)).sent,false);assert.equal(sent,1);}
  finally{failRetry(Error('still offline after restart'));await restarted;}

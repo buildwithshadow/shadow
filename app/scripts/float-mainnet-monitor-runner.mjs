@@ -118,20 +118,29 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     // published by this exact interrupted run. This binds retained data; it
     // never establishes freshness, healthy status or spend authorization.
     let retainedSnapshotHash = previous?.snapshotHash ?? previous?.previousSnapshotHash ?? null;
+    let previousPublicationHash = null;
     if (previous?.status === "checking") {
       try {
         const publication = optionalJson(resolve(context.stateDir, 'publication.json'));
         const retained = optionalJson(file.snapshot);
         if (publication?.runId === previous.runId && publication.startedAt === previous.startedAt &&
             Object.entries(identity(context)).every(([key, value]) => publication[key] === value) &&
-            retained && publication.snapshotHash === digestJson(retained)) retainedSnapshotHash = publication.snapshotHash;
+            Array.isArray(publication.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) &&
+            typeof publication.completedAt === 'string' && Number.isFinite(Date.parse(publication.completedAt)) &&
+            new Date(Date.parse(publication.completedAt)).toISOString() === publication.completedAt &&
+            Date.parse(publication.completedAt) >= Date.parse(previous.startedAt) && Date.parse(publication.completedAt) <= started &&
+            (retained && publication.snapshotHash === digestJson(retained) ||
+              retained === null && retainedSnapshotHash === null && publication.snapshotHash === null)) {
+          retainedSnapshotHash = publication.snapshotHash;
+          previousPublicationHash = digestJson(publication);
+        }
       } catch { latch(context, [alert("LOCAL_STATE_INVALID", "interrupted publication was unreadable")], started); }
     }
     // Notifications validate the bound persisted snapshot during a scan.
     const priorFailureCodes = previous?.status === 'checking' ? previous.previousFailureCodes : previous?.alerts?.map(entry => entry?.code);
     const previousFailureCodes = retainedSnapshotHash === null && Array.isArray(priorFailureCodes) &&
       priorFailureCodes.includes('RPC_CHECK_FAILED') && priorFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) ? priorFailureCodes : null;
-    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash, previousFailureCodes });
+    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash, previousFailureCodes, previousPublicationHash });
     await afterCheckingPublished();
     // Publish the recovered binding before removing its old marker: a
     // separately scheduled notifier can sample either side of this write.

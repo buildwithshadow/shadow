@@ -30,11 +30,14 @@ export function notificationState(context, now = Date.now()) {
   // Read the heartbeat around its snapshot/publication generation. A normal
   // two-file publication can finish between any of these reads.
   const holdPath = resolve(context.stateDir, 'hold.json');
-  let raw, snapshot, publication, hold, holdExists;
+  let raw, snapshot, publication, publicationExists, hold, holdExists;
   for (let attempt = 0; attempt < 3; attempt++) {
     raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
     snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
-    publication = optionalJson(resolve(context.stateDir, 'publication.json'));
+    const publicationPath = resolve(context.stateDir, 'publication.json');
+    publicationExists = existsSync(publicationPath);
+    publication = optionalJson(publicationPath);
+    publicationExists = publicationExists || publication !== null;
     // Cache existence before the read: a hold created after an absent read
     // belongs to the next observation, never to a synthetic unknown incident.
     holdExists = existsSync(holdPath);
@@ -62,7 +65,6 @@ export function notificationState(context, now = Date.now()) {
       Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS' &&
       raw.alerts[0]?.severity === 'critical' && typeof raw.alerts[0]?.detail === 'string';
   const boundedScan = checkingShape && age >= 0 && age <= b.policy.runTimeoutMs;
-  if (boundedScan && !holdExists) return null;
   // A known incident stays a failure during a normal bounded scan. Its
   // incomplete heartbeat is not a new incident or a recovery. Only notify an
   // already delivered incident again after its reminder deadline; completed
@@ -74,6 +76,7 @@ export function notificationState(context, now = Date.now()) {
   let publicationBound = false;
   let firstFailurePublication = false;
   let retainedNoSnapshotFailure = false;
+  let acceptablePublication = !publicationExists;
   try {
     publishing = publication && publication.runId === raw?.runId &&
       publication.startedAt === raw?.startedAt &&
@@ -81,8 +84,14 @@ export function notificationState(context, now = Date.now()) {
     completedSnapshotValid = snapshot !== null &&
       (raw?.previousSnapshotHash === digestJson(snapshot) || publishing && publication.snapshotHash === digestJson(snapshot));
     const validCodes = Array.isArray(publication?.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
-    publicationBound = checkingShape && publishing && validCodes && Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
+    publicationBound = checkingShape && publishing && validCodes && typeof publication.completedAt === 'string' &&
+      Number.isFinite(Date.parse(publication.completedAt)) && new Date(Date.parse(publication.completedAt)).toISOString() === publication.completedAt &&
+      (publication.snapshotHash === null || typeof publication.snapshotHash === 'string' && /^[0-9a-f]{64}$/.test(publication.snapshotHash)) &&
+      Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
       Date.parse(publication.completedAt) <= now;
+    const priorPublicationBound = publication !== null && typeof raw?.previousPublicationHash === 'string' &&
+      /^[0-9a-f]{64}$/.test(raw.previousPublicationHash) && raw.previousPublicationHash === digestJson(publication);
+    acceptablePublication = !publicationExists || publicationBound || priorPublicationBound;
     publicationFresh = publicationBound && now - Date.parse(publication.completedAt) <= b.policy.runTimeoutMs;
     if (completedSnapshotValid) {
       snapshotAlerts = evaluateSnapshot(b, snapshot, now).alerts;
@@ -97,13 +106,14 @@ export function notificationState(context, now = Date.now()) {
     if (firstFailurePublication) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...publication.alertCodes.map(code => ({code})));
     // A subsequent bounded collection retains a prior no-snapshot failure;
     // its original RPC outage does not become a new checking incident.
-    retainedNoSnapshotFailure = boundedScan && !publishing && raw.previousSnapshotHash === null &&
+    retainedNoSnapshotFailure = boundedScan && (!publicationExists || priorPublicationBound) && raw.previousSnapshotHash === null &&
       snapshot === null && !existsSync(resolve(context.stateDir, 'snapshot.json')) &&
       Array.isArray(raw.previousFailureCodes) && raw.previousFailureCodes.includes('RPC_CHECK_FAILED') &&
       raw.previousFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
     if (retainedNoSnapshotFailure) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...raw.previousFailureCodes.map(code => ({code})));
   } catch { /* invalid state remains audible below */ }
-  if ((boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication || retainedNoSnapshotFailure) && incidentId && hold.baselineHash === context.baselineHash &&
+  if (boundedScan && !holdExists && acceptablePublication) return null;
+  if (acceptablePublication && (boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication || retainedNoSnapshotFailure) && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
