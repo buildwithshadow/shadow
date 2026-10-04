@@ -164,7 +164,7 @@ test('an unseen hold and malformed hold remain audible during a bounded scan', a
     await started;
     let message; let saved;
     const sent = await notifyMainnet({context:f.context,destinationId:'-123',now:now+1,send:async m=>{message=m;},save:async p=>{saved=p;}});
-    assert.equal(sent.sent,true); assert.match(message,/RPC_CHECK_FAILED.*HOLD_LATCHED|HOLD_LATCHED.*RPC_CHECK_FAILED/);
+    assert.equal(sent.sent,true); assert.match(message,/HOLD_LATCHED/);assert.match(message,/Original incident: RPC_CHECK_FAILED/);
     assert.equal(saved.incidentId,failed.incidentId);
     writeFileSync(join(f.context.stateDir,'hold.json'), '{');
     assert.equal(notificationState(f.context,now+1).ok,false);
@@ -245,5 +245,19 @@ test('continuing outage with a stale retained snapshot does not alternate scan a
  assert.equal(notificationState(f.context,later+2).checking,true);
  assert.equal((await notify(later+2)).reason,'known-incident-scan-in-progress');assert.equal(sent,count);
  finish(f.snapshot);await running;
+ }finally{f.cleanup();}
+});
+
+
+test('new validation failure during publication notifies once with the completed-state key',async()=>{
+ const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run(now,async()=>{throw Error('offline');});await f.run(now+1);await notify(now+1);
+ const next=structuredClone(f.snapshot);next.contract.effectiveLimits.perSpend='49';
+ let entered;const started=new Promise(r=>{entered=r;});const running=runMonitorOnce(f.context,{now:()=>now+2,collect:async()=>next,afterSnapshotPublished:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
+ assert.equal((await notify(now+3)).sent,true);assert.equal(sent,2);const key=previous.key;
+ assert.ok(previous.codes.includes('CAP_DRIFT'));assert.ok(!previous.codes.includes('RPC_CHECK_FAILED'));
+ finish();await running;assert.equal(notificationState(f.context,now+4).key,key);
+ assert.equal((await notify(now+4)).sent,false);assert.equal(sent,2);
  }finally{f.cleanup();}
 });

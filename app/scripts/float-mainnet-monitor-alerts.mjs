@@ -73,8 +73,8 @@ export function notificationState(context, now = Date.now()) {
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
     const validationCodes = [...new Set(snapshotAlerts.map(entry => entry.code))].sort();
-    const codes = [...new Set(['HOLD_LATCHED', ...hold.alerts.map(entry => entry.code), ...validationCodes])].sort();
-    return { ok: false, codes, validationCodes, incidentId, checking: true,
+    const codes = [...new Set(['HEARTBEAT_NOT_HEALTHY', 'HOLD_LATCHED', ...validationCodes])].sort();
+    return { ok: false, codes, validationCodes, incidentCodes: hold.alerts.map(entry => entry.code), incidentId, checking: true,
       key: `failure:${hash(JSON.stringify({ codes, incidentId }))}` };
   }
   // Revalidates persisted snapshot/accounting, freshness, hashes and hold latch.
@@ -101,6 +101,7 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
   const message = `Shadow Arc MAINNET monitor — ${label}\nContract ${address}\n` +
     (current.ok ? 'The latest complete observation matches the approved baseline; no operational hold remains.' :
       `Observation failed or became stale: ${current.codes.join(', ') || 'STATUS_INVALID'}. Inspect the monitor and reconcile the incident before continuing.`) +
+    (current.incidentCodes ? `\nOriginal incident: ${[...new Set(current.incidentCodes)].sort().join(', ')}.` : '') +
     '\nThis alert does not pause or authorize payments, or acknowledge an incident.';
   await send(message);
   // Failed delivery never suppresses retries. Persist only after success.
