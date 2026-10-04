@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { mkdtemp, rm, readdir, stat } from 'node:fs/promises';
+import { realpath, mkdtemp, rm, readdir, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
@@ -150,7 +150,7 @@ test('cached success is revalidated against canonical chain before being returne
   await assert.rejects(()=>adapter.reconcile(done.key),/canonical and finalized/);assert.equal(state.sends,1);
 });
 test('file journal survives recreation, restricts file permissions and serializes independent instances',async()=>{
-  const dir=await mkdtemp(join(tmpdir(),'shadow-circle-journal-'));
+  const dir=await mkdtemp(join(await realpath(tmpdir()),'shadow-circle-journal-'));
   try{
     const a=await createCircleAgentJournal(dir);await a.put('entry',{key:'stable'});
     const b=await createCircleAgentJournal(dir);assert.deepEqual(await b.get('entry'),{key:'stable'});

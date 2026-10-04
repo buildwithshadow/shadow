@@ -1,4 +1,4 @@
-import { mkdir, open, lstat, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, lstat, realpath, rename, unlink } from 'node:fs/promises';
 import { constants } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
@@ -8,6 +8,18 @@ export async function createCircleAgentJournal(directory) {
   const dir = resolve(directory);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const directoryStat = await lstat(dir);
+  const originalDevice = directoryStat.dev, originalInode = directoryStat.ino;
+  async function checkDirectory() {
+    // Canonicalize the entire path, not only its leaf: an intermediate alias
+    // must never switch an active adapter to a journal without its barrier.
+    const current = await lstat(dir);
+    if (await realpath(dir) !== dir || current.dev !== originalDevice || current.ino !== originalInode
+        || !current.isDirectory() || (current.mode & 0o077) !== 0
+        || (process.getuid && current.uid !== process.getuid())) {
+      throw new Error('Circle journal must remain the same owner-controlled private directory without symlinked path components.');
+    }
+  }
+  await checkDirectory();
   if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()
       || (directoryStat.mode & 0o077) !== 0
       || (process.getuid && directoryStat.uid !== process.getuid())) {
@@ -16,6 +28,7 @@ export async function createCircleAgentJournal(directory) {
   const filename = key => join(dir, `${createHash('sha256').update(key).digest('hex')}.json`);
   return {
     async get(key) {
+      await checkDirectory();
       let file;
       try {
         file = await open(filename(key), constants.O_RDONLY | constants.O_NOFOLLOW);
@@ -30,6 +43,7 @@ export async function createCircleAgentJournal(directory) {
       finally { if (file) await file.close(); }
     },
     async put(key, value) {
+      await checkDirectory();
       const target = filename(key), temp = `${target}.${randomUUID()}.tmp`;
       const file = await open(temp, 'wx', 0o600);
       try { await file.writeFile(JSON.stringify(value) + '\n'); await file.sync(); }
@@ -39,6 +53,7 @@ export async function createCircleAgentJournal(directory) {
       try { await folder.sync(); } finally { await folder.close(); }
     },
     async withLock(key, action) {
+      await checkDirectory();
       const path = `${filename(key)}.lock`;
       let lock;
       try { lock = await open(path, 'wx', 0o600); }
