@@ -417,3 +417,38 @@ test('restart from the first failed publication retains its codes even if the ma
  assert.equal(notificationState(f.context,now+1).key,key);assert.equal((await notify(now+1)).sent,false);assert.equal(sent,1);
  }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();f.cleanup();}
 });
+
+test('mixed old or absent snapshot reads retry to the published failure generation',async()=>{
+ const fs=await import('node:fs');const {syncBuiltinESMExports}=await import('node:module');const originalRead=fs.default.readFileSync;
+ for(const mode of ['old','absent']){
+ const f=fixture();let previous;let sent=0;let finish;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{
+ let oldSnapshot;
+ if(mode==='old'){await f.run();await notify(now);oldSnapshot=readFileSync(join(f.context.stateDir,'snapshot.json'),'utf8');}
+ const next=structuredClone(f.snapshot);next.contract.effectiveLimits.perSpend='49';let latched;const started=new Promise(r=>{latched=r;});
+ const running=runMonitorOnce(f.context,{now:()=>now+1,collect:async()=>next,afterHoldLatched:async()=>{latched();await new Promise(r=>{finish=r;});}});await started;
+ let intercepted=false;const snapshotPath=join(f.context.stateDir,'snapshot.json');
+ fs.default.readFileSync=function(path,...args){if(path===snapshotPath&&!intercepted){intercepted=true;if(mode==='old')return oldSnapshot;const error=Error('prior observation had no snapshot');error.code='ENOENT';throw error;}return originalRead(path,...args);};syncBuiltinESMExports();
+ try{
+ await notify(now+1);assert.equal(intercepted,true);assert.ok(previous.codes.includes('CAP_DRIFT'));assert.ok(!previous.codes.includes('CHECK_IN_PROGRESS'));
+ const key=previous.key;const count=sent;
+ fs.default.readFileSync=originalRead;syncBuiltinESMExports();finish();finish=null;await running;
+ assert.equal(notificationState(f.context,now+1).key,key);assert.equal((await notify(now+1)).sent,false);assert.equal(sent,count);
+ }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();if(finish){finish();await running;}}
+ }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();f.cleanup();}
+ }
+});
+
+test('a valid no-hold publication stays quiet before its snapshot rename',async()=>{
+ const fs=await import('node:fs');const {syncBuiltinESMExports}=await import('node:module');const originalRename=fs.default.renameSync;
+ for(const mode of ['old','absent']){
+ const f=fixture();let intercepted=false;
+ try{
+ if(mode==='old')await f.run();
+ const next=structuredClone(f.snapshot);next.observedAt.blockNumber='101';next.observedAt.blockHash=hash(101);next.discovery.scanned.toBlock='101';next.executionAudit.toBlock='101';
+ fs.default.renameSync=function(from,to){const result=originalRename(from,to);if(to===join(f.context.stateDir,'publication.json')){intercepted=true;assert.equal(notificationState(f.context,now+1),null);}return result;};syncBuiltinESMExports();
+ await f.run(now+1,async()=>next);assert.equal(intercepted,true);assert.equal(notificationState(f.context,now+1).ok,true);
+ }finally{fs.default.renameSync=originalRename;syncBuiltinESMExports();f.cleanup();}
+ }
+});

@@ -37,21 +37,30 @@ export function notificationState(context, now = Date.now()) {
   // Read the heartbeat around its snapshot/publication generation. A normal
   // two-file publication can finish between any of these reads.
   const holdPath = resolve(context.stateDir, 'hold.json');
-  let raw, snapshot, publication, publicationExists, hold, holdExists;
+  let raw, snapshot, publication, publicationExists, hold, holdExists, generationConsistent = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
-    snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
     const publicationPath = resolve(context.stateDir, 'publication.json');
     const publicationRecord = optionalRecord(publicationPath);
     publicationExists = publicationRecord.exists;
     publication = publicationRecord.value;
+    snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
     // A single read distinguishes absence from corruption without an
     // existence/read race. A later created hold belongs to the next sample.
     const holdRecord = optionalRecord(holdPath);
     holdExists = holdRecord.exists;
     hold = holdRecord.value;
+    const afterPublication = optionalRecord(publicationPath);
     const after = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
-    if (JSON.stringify(raw) === JSON.stringify(after)) break;
+    const currentPublication = publication !== null && raw !== null && publication.runId === raw.runId && publication.startedAt === raw.startedAt;
+    // With no hold, a valid bounded checking heartbeat remains non-authoritative
+    // while its snapshot is being published. A held incident must bind data.
+    const snapshotGenerationMatches = !holdExists || !currentPublication || publication.snapshotHash === null ||
+      snapshot !== null && publication.snapshotHash === digestJson(snapshot);
+    if (JSON.stringify(raw) === JSON.stringify(after) && JSON.stringify(publicationRecord) === JSON.stringify(afterPublication) && snapshotGenerationMatches) {
+      generationConsistent = true;
+      break;
+    }
     raw = after;
   }
   const b = context.baseline;
@@ -120,8 +129,8 @@ export function notificationState(context, now = Date.now()) {
       raw.previousFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
     if (retainedNoSnapshotFailure) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...raw.previousFailureCodes.map(code => ({code})));
   } catch { /* invalid state remains audible below */ }
-  if (boundedScan && !holdExists && acceptablePublication) return null;
-  if (acceptablePublication && (boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication || retainedNoSnapshotFailure) && incidentId && hold.baselineHash === context.baselineHash &&
+  if (generationConsistent && boundedScan && !holdExists && acceptablePublication) return null;
+  if (generationConsistent && acceptablePublication && (boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication || retainedNoSnapshotFailure) && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
