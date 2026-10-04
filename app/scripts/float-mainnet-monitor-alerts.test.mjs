@@ -452,3 +452,25 @@ test('a valid no-hold publication stays quiet before its snapshot rename',async(
  }finally{fs.default.renameSync=originalRename;syncBuiltinESMExports();f.cleanup();}
  }
 });
+
+test('three normal generation transitions yield an inconclusive sample rather than a transient alert',async()=>{
+ const fs=await import('node:fs');const {syncBuiltinESMExports}=await import('node:module');const {digestJson}=await import('./float-mainnet-monitor-policy.mjs');const originalRead=fs.default.readFileSync;
+ const f=fixture();let previous;let sent=0;let running;let finish;let releaseChecking;let enteredCollect;const collectingStarted=new Promise(r=>{enteredCollect=r;});
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{
+ await f.run(now,async()=>{throw Error('offline');});await f.run(now+1);await notify(now+1);assert.equal(sent,1);
+ const next=structuredClone(f.snapshot);next.contract.effectiveLimits.perSpend='49';const heartbeatPath=join(f.context.stateDir,'heartbeat.json');const markerPath=join(f.context.stateDir,'publication.json');const snapshotPath=join(f.context.stateDir,'snapshot.json');let heartbeatReads=0;let markerReads=0;
+ fs.default.readFileSync=function(path,...args){
+  if(path===heartbeatPath&&++heartbeatReads===2)running=runMonitorOnce(f.context,{now:()=>now+2,afterCheckingPublished:async()=>new Promise(r=>{releaseChecking=r;}),collect:async()=>{enteredCollect();return new Promise(r=>{finish=r;});}});
+  if(path===markerPath){markerReads++;
+   if(markerReads===4){const raw=JSON.parse(originalRead(heartbeatPath,'utf8'));const marker={...raw,completedAt:new Date(now+2).toISOString(),snapshotHash:digestJson(next),alertCodes:['CAP_DRIFT']};writeFileSync(markerPath,JSON.stringify(marker));}
+   if(markerReads===6)writeFileSync(snapshotPath,JSON.stringify(next));
+  }
+  return originalRead(path,...args);
+ };syncBuiltinESMExports();
+ const uncertain=await notify(now+2);assert.equal(uncertain.sent,false);assert.equal(sent,1);assert.equal(markerReads,6);
+ fs.default.readFileSync=originalRead;syncBuiltinESMExports();
+ await notify(now+2);assert.equal(sent,2);assert.ok(previous.codes.includes('CAP_DRIFT'));assert.ok(!previous.codes.includes('CHECK_IN_PROGRESS'));const key=previous.key;
+ releaseChecking();releaseChecking=null;await collectingStarted;finish(next);finish=null;await running;assert.equal(notificationState(f.context,now+2).key,key);assert.equal((await notify(now+2)).sent,false);assert.equal(sent,2);
+ }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();if(releaseChecking){releaseChecking();await collectingStarted;}if(finish){finish(f.snapshot);await running;}f.cleanup();}
+});

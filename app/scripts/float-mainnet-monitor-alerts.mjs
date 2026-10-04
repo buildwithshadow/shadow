@@ -37,7 +37,7 @@ export function notificationState(context, now = Date.now()) {
   // Read the heartbeat around its snapshot/publication generation. A normal
   // two-file publication can finish between any of these reads.
   const holdPath = resolve(context.stateDir, 'hold.json');
-  let raw, snapshot, publication, publicationExists, hold, holdExists, generationConsistent = false;
+  let raw, snapshot, publication, publicationExists, hold, holdExists, generationConsistent = false, generationMoved = false;
   for (let attempt = 0; attempt < 3; attempt++) {
     raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
     const publicationPath = resolve(context.stateDir, 'publication.json');
@@ -57,7 +57,9 @@ export function notificationState(context, now = Date.now()) {
     // while its snapshot is being published. A held incident must bind data.
     const snapshotGenerationMatches = !holdExists || !currentPublication || publication.snapshotHash === null ||
       snapshot !== null && publication.snapshotHash === digestJson(snapshot);
-    if (JSON.stringify(raw) === JSON.stringify(after) && JSON.stringify(publicationRecord) === JSON.stringify(afterPublication) && snapshotGenerationMatches) {
+    const recordsMatch = JSON.stringify(raw) === JSON.stringify(after) && JSON.stringify(publicationRecord) === JSON.stringify(afterPublication);
+    generationMoved ||= !recordsMatch;
+    if (recordsMatch && snapshotGenerationMatches) {
       generationConsistent = true;
       break;
     }
@@ -129,6 +131,10 @@ export function notificationState(context, now = Date.now()) {
       raw.previousFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
     if (retainedNoSnapshotFailure) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...raw.previousFailureCodes.map(code => ({code})));
   } catch { /* invalid state remains audible below */ }
+  // Exhaustion after observed generation changes is an inconclusive sample,
+  // not a failure/recovery decision. Preserve delivery state for the next tick.
+  // Stable corruption, invalid markers and expired scans remain audible.
+  if (!generationConsistent && generationMoved && boundedScan && acceptablePublication) return null;
   if (generationConsistent && boundedScan && !holdExists && acceptablePublication) return null;
   if (generationConsistent && acceptablePublication && (boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication || retainedNoSnapshotFailure) && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
