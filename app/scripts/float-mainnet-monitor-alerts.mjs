@@ -97,7 +97,7 @@ export function notificationState(context, now = Date.now()) {
     if (firstFailurePublication) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...publication.alertCodes.map(code => ({code})));
     // A subsequent bounded collection retains a prior no-snapshot failure;
     // its original RPC outage does not become a new checking incident.
-    retainedNoSnapshotFailure = boundedScan && !publication && raw.previousSnapshotHash === null &&
+    retainedNoSnapshotFailure = boundedScan && !publishing && raw.previousSnapshotHash === null &&
       snapshot === null && !existsSync(resolve(context.stateDir, 'snapshot.json')) &&
       Array.isArray(raw.previousFailureCodes) && raw.previousFailureCodes.includes('RPC_CHECK_FAILED') &&
       raw.previousFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));

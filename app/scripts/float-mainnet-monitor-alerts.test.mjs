@@ -299,7 +299,10 @@ test('restart after snapshot publication inherits the matching interrupted gener
  const interrupted=readFileSync(join(f.context.stateDir,'heartbeat.json'),'utf8');
  const marker=readFileSync(join(f.context.stateDir,'publication.json'),'utf8');
  finish();await running;writeFileSync(join(f.context.stateDir,'heartbeat.json'),interrupted);writeFileSync(join(f.context.stateDir,'publication.json'),marker);
- started=new Promise(r=>{entered=r;});running=f.run(now+3,async()=>{entered();return new Promise((resolve,reject)=>{rejectCollect=reject;});});await started;
+ started=new Promise(r=>{entered=r;});running=runMonitorOnce(f.context,{now:()=>now+3,afterCheckingPublished:async()=>{
+ assert.equal(readFileSync(join(f.context.stateDir,'publication.json'),'utf8'),marker);
+ assert.equal((await notify(now+3)).reason,'known-incident-scan-in-progress');assert.equal(sent,1);
+ },collect:async()=>{entered();return new Promise((resolve,reject)=>{rejectCollect=reject;});}});await started;
  assert.equal((await notify(now+4)).reason,'known-incident-scan-in-progress');assert.equal(sent,1);
  rejectCollect(Error('restarted collection timed out'));const failed=await running;
  assert.equal(failed.snapshotHash,JSON.parse(marker).snapshotHash);
@@ -368,7 +371,10 @@ test('a first collection failure without a snapshot alerts once across publicati
  resume();await publishing;
  writeFileSync(join(f.context.stateDir,'heartbeat.json'),savedHeartbeat);writeFileSync(join(f.context.stateDir,'publication.json'),savedMarker);
  let enteredRetry;let failRetry;const retryStarted=new Promise(r=>{enteredRetry=r;});
- const restarted=f.run(now+4,async()=>{enteredRetry();return new Promise((resolve,reject)=>{failRetry=reject;});});await retryStarted;
+ const restarted=runMonitorOnce(f.context,{now:()=>now+4,afterCheckingPublished:async()=>{
+ assert.deepEqual(readFileSync(join(f.context.stateDir,'publication.json')),savedMarker);
+ assert.equal(notificationState(f.context,now+4).key,key);assert.equal((await notify(now+4)).sent,false);assert.equal(sent,1);
+ },collect:async()=>{enteredRetry();return new Promise((resolve,reject)=>{failRetry=reject;});}});await retryStarted;
  try{assert.equal(notificationState(f.context,now+4).key,key);assert.equal((await notify(now+4)).sent,false);assert.equal(sent,1);}
  finally{failRetry(Error('still offline after restart'));await restarted;}
  assert.equal((await notify(now+4)).sent,false);assert.equal(sent,1);

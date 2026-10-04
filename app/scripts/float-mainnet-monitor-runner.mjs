@@ -103,7 +103,7 @@ export function heartbeatStatus(context, nowMs = Date.now()) {
   } catch { return { ...common, ok: false, hold: true, status: "hold", alerts: [alert("LOCAL_STATE_INVALID", "heartbeat, snapshot or local hold is unreadable/malformed")] }; }
 }
 
-export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now, afterSnapshotPublished = async () => {}, afterHoldLatched = async () => {} } = {}) {
+export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now, afterCheckingPublished = async () => {}, afterSnapshotPublished = async () => {}, afterHoldLatched = async () => {} } = {}) {
   const release = acquire(context.stateDir);
   const file = paths(context);
   const started = now();
@@ -131,10 +131,11 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     const priorFailureCodes = previous?.status === 'checking' ? previous.previousFailureCodes : previous?.alerts?.map(entry => entry?.code);
     const previousFailureCodes = retainedSnapshotHash === null && Array.isArray(priorFailureCodes) &&
       priorFailureCodes.includes('RPC_CHECK_FAILED') && priorFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) ? priorFailureCodes : null;
-    // The prior interrupted generation has been consumed under the runner
-    // lock. It must not masquerade as this run's in-progress publication.
-    rmSync(resolve(context.stateDir, 'publication.json'), { force: true });
     atomicJson(file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash, previousFailureCodes });
+    await afterCheckingPublished();
+    // Publish the recovered binding before removing its old marker: a
+    // separately scheduled notifier can sample either side of this write.
+    rmSync(resolve(context.stateDir, 'publication.json'), { force: true });
     let snapshot; let result;
     try { snapshot = await collect(context); result = evaluateSnapshot(context.baseline, snapshot, now()); }
     catch { result = { ok: false, hold: true, alerts: [alert("RPC_CHECK_FAILED", "read-only monitor failed or timed out; partial results are not healthy")] }; }
