@@ -29,11 +29,17 @@ export function notificationState(context, now = Date.now()) {
   if (context.baseline.identity.chainId !== '5042') throw new Error('MAINNET_ONLY');
   // Read the heartbeat around its snapshot/publication generation. A normal
   // two-file publication can finish between any of these reads.
-  let raw, snapshot, publication;
+  const holdPath = resolve(context.stateDir, 'hold.json');
+  let raw, snapshot, publication, hold, holdExists;
   for (let attempt = 0; attempt < 3; attempt++) {
     raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
     snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
     publication = optionalJson(resolve(context.stateDir, 'publication.json'));
+    // Cache existence before the read: a hold created after an absent read
+    // belongs to the next observation, never to a synthetic unknown incident.
+    holdExists = existsSync(holdPath);
+    hold = optionalJson(holdPath);
+    holdExists = holdExists || hold !== null;
     const after = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
     if (JSON.stringify(raw) === JSON.stringify(after)) break;
     raw = after;
@@ -45,8 +51,6 @@ export function notificationState(context, now = Date.now()) {
   const age = now - Date.parse(raw?.startedAt);
   // An ordinary bounded scan is quiet, but cannot mask a latched incident,
   // mismatched release, corrupt heartbeat or stopped/stuck runner.
-  const holdPath = resolve(context.stateDir, 'hold.json');
-  const hold = optionalJson(holdPath);
   const incidentId = typeof hold?.incidentId === 'string' && /^[0-9a-f-]{36}$/.test(hold.incidentId) ? hold.incidentId : null;
   const checkingShape = Object.entries(identity).every(([key, value]) => raw?.[key] === value) &&
       raw.status === 'checking' && raw.ok === false && raw.hold === true &&
@@ -58,7 +62,7 @@ export function notificationState(context, now = Date.now()) {
       Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS' &&
       raw.alerts[0]?.severity === 'critical' && typeof raw.alerts[0]?.detail === 'string';
   const boundedScan = checkingShape && age >= 0 && age <= b.policy.runTimeoutMs;
-  if (boundedScan && !existsSync(holdPath)) return null;
+  if (boundedScan && !holdExists) return null;
   // A known incident stays a failure during a normal bounded scan. Its
   // incomplete heartbeat is not a new incident or a recovery. Only notify an
   // already delivered incident again after its reminder deadline; completed

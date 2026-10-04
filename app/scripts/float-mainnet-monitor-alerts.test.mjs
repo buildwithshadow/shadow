@@ -322,3 +322,22 @@ test('new runner-only incident exposed during publication has the completed fing
  }finally{f.cleanup();}
  }
 });
+
+
+test('a newly created hold after an absent read cannot cause a transient unknown-incident alert',async()=>{
+ const fs=await import('node:fs');const {syncBuiltinESMExports}=await import('node:module');
+ const originalRead=fs.default.readFileSync;const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run();await notify(now);const next=structuredClone(f.snapshot);next.observedAt.blockNumber='99';next.observedAt.blockHash=hash(99);next.discovery.scanned.toBlock='99';next.executionAudit.toBlock='99';
+ let entered;const started=new Promise(r=>{entered=r;});const running=runMonitorOnce(f.context,{now:()=>now+1,collect:async()=>next,afterSnapshotPublished:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
+ const holdPath=join(f.context.stateDir,'hold.json');let intercepted=false;
+ fs.default.readFileSync=function(path,...args){
+  if(path===holdPath&&!intercepted){intercepted=true;try{return originalRead(path,...args);}catch(error){
+   writeFileSync(holdPath,JSON.stringify({incidentId:'12345678-1234-4123-8123-123456789abc',createdAt:new Date(now+1).toISOString(),baselineHash:f.context.baselineHash,alerts:[{code:'CANONICAL_HEAD_CHANGED',severity:'critical',detail:'concurrent runner latch'}]}));throw error;
+  }}return originalRead(path,...args);
+ };syncBuiltinESMExports();
+ const first=await notify(now+1);assert.equal(first.sent,false);assert.equal(sent,1);assert.equal(intercepted,true);
+ fs.default.readFileSync=originalRead;syncBuiltinESMExports();finish();await running;
+ await notify(now+1);assert.equal(sent,2);await notify(now+1);assert.equal(sent,2);
+ }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();f.cleanup();}
+});
