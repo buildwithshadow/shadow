@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,rm} from 'node:fs/promises';
+import {mkdtemp,rm,realpath} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {encodePacked,keccak256} from 'viem';
@@ -8,7 +8,7 @@ import {createCircleAgentJournal} from './circle-agent-journal.mjs';
 import {makeGatewayIntent,validateGatewayIntent,transferSpecHash,runGatewayStep,validateGatewayAttestation,finalizedGatewayReceipt} from './gateway-reserve.mjs';
 const sponsor='0x1111111111111111111111111111111111111111';
 const intent=()=>makeGatewayIntent({sponsor,amount:'100000',maxFee:'10000',maxBlockHeight:'123456',salt:'0x'+'22'.repeat(32)});
-async function storage(t){const p=await mkdtemp(join(tmpdir(),'shadow-gateway-'));t.after(()=>rm(p,{recursive:true,force:true}));return createCircleAgentJournal(p);}
+async function storage(t){const p=await mkdtemp(join(await realpath(tmpdir()),'shadow-gateway-'));t.after(()=>rm(p,{recursive:true,force:true}));return createCircleAgentJournal(join(p,'journal'));}
 test('bounded route rejects ownership, network, token, amount and fee changes',()=>{
  const i=intent();assert.equal(validateGatewayIntent(i,sponsor),transferSpecHash(i.spec));
  for(const [key,value] of [['destinationRecipient','0x'+'33'.repeat(32)],['destinationDomain',5042002],['destinationToken','0x'+'44'.repeat(32)],['hookData','0x12']]){
