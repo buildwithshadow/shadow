@@ -261,3 +261,21 @@ test('new validation failure during publication notifies once with the completed
  assert.equal((await notify(now+4)).sent,false);assert.equal(sent,2);
  }finally{f.cleanup();}
 });
+
+
+test('restart from a checking heartbeat preserves its last snapshot binding',async()=>{
+ const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run(now,async()=>{throw Error('offline');});await f.run(now+1);await notify(now+1);
+ let entered;let started=new Promise(r=>{entered=r;});let running=f.run(now+2,async()=>{entered();return new Promise(r=>{finish=r;});});await started;
+ const interrupted=readFileSync(join(f.context.stateDir,'heartbeat.json'),'utf8');finish(f.snapshot);await running;
+ writeFileSync(join(f.context.stateDir,'heartbeat.json'),interrupted);
+ started=new Promise(r=>{entered=r;});running=f.run(now+3,async()=>{entered();return new Promise(r=>{finish=r;});});await started;
+ assert.equal((await notify(now+4)).reason,'known-incident-scan-in-progress');assert.equal(sent,1);
+ finish(f.snapshot);await running;
+ // A subsequent snapshot-less failure also retains that same binding.
+ writeFileSync(join(f.context.stateDir,'heartbeat.json'),interrupted);
+ const failed=await f.run(now+5,async()=>{throw Error('offline again');});
+ assert.equal(failed.snapshotHash,JSON.parse(interrupted).previousSnapshotHash);
+ }finally{f.cleanup();}
+});

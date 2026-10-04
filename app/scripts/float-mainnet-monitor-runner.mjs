@@ -117,7 +117,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     // Notifications can validate the persisted completed snapshot during a
     // bounded scan without treating its deliberately incomplete heartbeat as
     // a new incident. This field grants no spend authorization.
-    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: previous?.snapshotHash ?? null });
+    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: previous?.snapshotHash ?? previous?.previousSnapshotHash ?? null });
     let snapshot; let result;
     try { snapshot = await collect(context); result = evaluateSnapshot(context.baseline, snapshot, now()); }
     catch { result = { ok: false, hold: true, alerts: [alert("RPC_CHECK_FAILED", "read-only monitor failed or timed out; partial results are not healthy")] }; }
@@ -139,7 +139,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     if (result.hold) latch(context, result.alerts, completed);
     const incident = optionalJson(file.hold);
     const heartbeat = { ...common, completedAt: new Date(completed).toISOString(), observedAt: snapshot?.observedAt ?? null,
-      snapshotHash: snapshot ? digestJson(snapshot) : (previous?.snapshotHash ?? null), ok: result.ok && !incident, hold: result.hold || !!incident,
+      snapshotHash: snapshot ? digestJson(snapshot) : (previous?.snapshotHash ?? previous?.previousSnapshotHash ?? null), ok: result.ok && !incident, hold: result.hold || !!incident,
       status: result.ok && !incident ? "healthy" : "hold", checks: { snapshotHealthy: result.ok },
       incidentId: incident?.incidentId ?? null, alerts: [...result.alerts, ...(incident && result.ok ? [alert("HOLD_LATCHED", `incident ${incident.incidentId} requires local acknowledgement after recovery`)] : [])] };
     event(context, { runId: heartbeat.runId, completedAt: heartbeat.completedAt, ok: heartbeat.ok, hold: heartbeat.hold, baselineHash: context.baselineHash, observedAt: heartbeat.observedAt, alerts: heartbeat.alerts });
