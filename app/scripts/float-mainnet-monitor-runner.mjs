@@ -128,7 +128,10 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
       } catch { latch(context, [alert("LOCAL_STATE_INVALID", "interrupted publication was unreadable")], started); }
     }
     // Notifications validate the bound persisted snapshot during a scan.
-    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash });
+    const priorFailureCodes = previous?.status === 'checking' ? previous.previousFailureCodes : previous?.alerts?.map(entry => entry?.code);
+    const previousFailureCodes = retainedSnapshotHash === null && Array.isArray(priorFailureCodes) &&
+      priorFailureCodes.includes('RPC_CHECK_FAILED') && priorFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) ? priorFailureCodes : null;
+    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash, previousFailureCodes });
     let snapshot; let result;
     try { snapshot = await collect(context); result = evaluateSnapshot(context.baseline, snapshot, now()); }
     catch { result = { ok: false, hold: true, alerts: [alert("RPC_CHECK_FAILED", "read-only monitor failed or timed out; partial results are not healthy")] }; }

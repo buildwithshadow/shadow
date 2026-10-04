@@ -353,6 +353,14 @@ test('a first collection failure without a snapshot alerts once across publicati
  writeFileSync(join(f.context.stateDir,'snapshot.json'),'{');assert.ok(notificationState(f.context,now).codes.includes('LOCAL_STATE_INVALID'));rmSync(join(f.context.stateDir,'snapshot.json'));
  finish();finish=null;await running;
  assert.equal(notificationState(f.context,now).key,key);assert.equal((await notify(now)).sent,false);assert.equal(sent,1);
+ for(let offset=1;offset<=2;offset++){
+ let collecting;let failCollect;const collectingStarted=new Promise(r=>{collecting=r;});
+ const retry=f.run(now+offset,async()=>{collecting();return new Promise((resolve,reject)=>{failCollect=reject;});});await collectingStarted;
+ try{
+ assert.equal(notificationState(f.context,now+offset).key,key);assert.equal((await notify(now+offset)).sent,false);assert.equal(sent,1);
+ }finally{failCollect(Error('still offline'));await retry;}
+ assert.equal(notificationState(f.context,now+offset).key,key);assert.equal((await notify(now+offset)).sent,false);assert.equal(sent,1);
+ }
  }finally{if(finish){finish();await running;}}
  }finally{f.cleanup();}
 });

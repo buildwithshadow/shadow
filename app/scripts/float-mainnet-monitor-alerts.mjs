@@ -73,6 +73,7 @@ export function notificationState(context, now = Date.now()) {
   let publicationFresh = false;
   let publicationBound = false;
   let firstFailurePublication = false;
+  let retainedNoSnapshotFailure = false;
   try {
     publishing = publication && publication.runId === raw?.runId &&
       publication.startedAt === raw?.startedAt &&
@@ -94,8 +95,15 @@ export function notificationState(context, now = Date.now()) {
       raw.previousSnapshotHash === null && snapshot === null &&
       !existsSync(resolve(context.stateDir, 'snapshot.json')) && publication.alertCodes.includes('RPC_CHECK_FAILED');
     if (firstFailurePublication) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...publication.alertCodes.map(code => ({code})));
+    // A subsequent bounded collection retains a prior no-snapshot failure;
+    // its original RPC outage does not become a new checking incident.
+    retainedNoSnapshotFailure = boundedScan && !publication && raw.previousSnapshotHash === null &&
+      snapshot === null && !existsSync(resolve(context.stateDir, 'snapshot.json')) &&
+      Array.isArray(raw.previousFailureCodes) && raw.previousFailureCodes.includes('RPC_CHECK_FAILED') &&
+      raw.previousFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
+    if (retainedNoSnapshotFailure) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...raw.previousFailureCodes.map(code => ({code})));
   } catch { /* invalid state remains audible below */ }
-  if ((boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication) && incidentId && hold.baselineHash === context.baselineHash &&
+  if ((boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication || retainedNoSnapshotFailure) && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
