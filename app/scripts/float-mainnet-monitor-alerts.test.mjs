@@ -158,6 +158,7 @@ test('an unseen hold and malformed hold remain audible during a bounded scan', a
   const f = fixture(); let finish;
   try {
     const failed = await f.run(now, async () => { throw Error('RPC timed out'); });
+    await f.run(now + 1); // intact completed snapshot; incident has not been notified
     let entered; const started = new Promise(resolve => { entered = resolve; });
     const running = f.run(now + 1, async () => { entered(); return new Promise(resolve => { finish = resolve; }); });
     await started;
@@ -172,4 +173,36 @@ test('an unseen hold and malformed hold remain audible during a bounded scan', a
     assert.notEqual(notificationState(f.context,now+1).checking,true);
     finish(f.snapshot); await running;
   } finally { f.cleanup(); }
+});
+
+
+test('corrupted or missing completed snapshot stays audible during a known held scan', async () => {
+  for (const corrupt of [p => writeFileSync(p, '{'), p => rmSync(p), p => writeFileSync(p, '{}')]) {
+    const f = fixture(); let previous; let finish; let sent = 0;
+    const notify = time => notifyMainnet({ context:f.context, previous, destinationId:'-123', now:time,
+      send:async()=>{sent++;},save:async p=>{previous=p;} });
+    try {
+      await f.run(now,async()=>{throw Error('offline');}); await f.run(now+1); await notify(now+1);
+      let entered;const started=new Promise(r=>{entered=r;});
+      const running=f.run(now+2,async()=>{entered();return new Promise(r=>{finish=r;});}); await started;
+      corrupt(join(f.context.stateDir,'snapshot.json'));
+      const state=notificationState(f.context,now+2); assert.equal(state.ok,false); assert.notEqual(state.checking,true);
+      await notify(now+2); assert.equal(sent,2);
+      finish(f.snapshot);await running;
+    } finally {f.cleanup();}
+  }
+});
+
+test('six-hour reminder in a held scan retains completed key and avoids duplicate on completion', async () => {
+  const f=fixture();let previous;let finish;let sent=0;
+  const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+  try{
+    await f.run(now,async()=>{throw Error('offline');});await f.run(now+1);await notify(now+1);
+    const completedKey=previous.key;previous.sentAt=new Date(now-21600000).toISOString();
+    let entered;const started=new Promise(r=>{entered=r;});const running=f.run(now+2,async()=>{entered();return new Promise(r=>{finish=r;});});await started;
+    assert.equal((await notify(now+3)).sent,true);assert.equal(sent,2);assert.equal(previous.key,completedKey);
+    finish(f.snapshot);await running;assert.equal((await notify(now+4)).sent,false);assert.equal(sent,2);
+    // A real newly completed RPC failure still gets through immediately.
+    await f.run(now+5,async()=>{throw Error('offline again');});await notify(now+5);assert.equal(sent,3);
+  }finally{f.cleanup();}
 });

@@ -114,7 +114,10 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     try { previous = optionalJson(file.heartbeat); } catch { latch(context, [alert("LOCAL_STATE_INVALID", "previous heartbeat was unreadable")], started); }
     if (previous && (previous.baselineHash !== context.baselineHash || previous.manifestHash !== context.manifestHash)) latch(context, [alert("BASELINE_CHANGED", "baseline/release changed since the previous run")], started);
     if (previous && (!Number.isFinite(Date.parse(previous.startedAt)) || started - Date.parse(previous.startedAt) > context.baseline.policy.maxHeartbeatAgeMs || previous.status === "checking")) latch(context, [alert("HEARTBEAT_STALE", "previous monitor heartbeat was missed or interrupted")], started);
-    atomicJson(file.heartbeat, common);
+    // Notifications can validate the persisted completed snapshot during a
+    // bounded scan without treating its deliberately incomplete heartbeat as
+    // a new incident. This field grants no spend authorization.
+    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: previous?.snapshotHash ?? null });
     let snapshot; let result;
     try { snapshot = await collect(context); result = evaluateSnapshot(context.baseline, snapshot, now()); }
     catch { result = { ok: false, hold: true, alerts: [alert("RPC_CHECK_FAILED", "read-only monitor failed or timed out; partial results are not healthy")] }; }

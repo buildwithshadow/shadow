@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync 
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { heartbeatStatus, loadContext } from './float-mainnet-monitor-runner.mjs';
+import { digestJson, evaluateSnapshot } from './float-mainnet-monitor-policy.mjs';
 import { isEntrypoint } from './float-mainnet-preflight.mjs';
 import { sendTelegram } from './public-testnet-observer-alerts.mjs';
 
@@ -47,7 +48,10 @@ export function notificationState(context, now = Date.now()) {
   // incomplete heartbeat is not a new incident or a recovery. Only notify an
   // already delivered incident again after its reminder deadline; completed
   // checks still validate snapshot, accounting and any newly failing codes.
-  if (boundedScan && incidentId && hold.baselineHash === context.baselineHash &&
+  const snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
+  let completedSnapshotValid = false;
+  try { completedSnapshotValid = snapshot !== null && raw?.previousSnapshotHash === digestJson(snapshot) && evaluateSnapshot(b, snapshot, now).ok; } catch { /* invalid state remains audible below */ }
+  if (boundedScan && completedSnapshotValid && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
@@ -81,7 +85,11 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
     '\nThis alert does not pause or authorize payments, or acknowledge an incident.';
   await send(message);
   // Failed delivery never suppresses retries. Persist only after success.
-  await save({ destinationId: String(destinationId), binding, key: current.key, incidentId: current.incidentId, sentAt: new Date(now).toISOString() });
+  // A reminder during an unchanged scan retains the last completed-state
+  // fingerprint, so its completion does not send a second reminder.
+  const key = same && current.checking && previous?.incidentId === current.incidentId &&
+    previous?.key?.startsWith('failure:') ? previous.key : current.key;
+  await save({ destinationId: String(destinationId), binding, key, incidentId: current.incidentId, sentAt: new Date(now).toISOString() });
   return { sent: true, state: current.ok ? 'healthy' : 'failure', codes: current.codes };
 }
 
