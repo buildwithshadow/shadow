@@ -50,3 +50,15 @@ test('import-only dependencies retain their installed package identity outside t
     assert.equal(execFileSync(process.execPath,[pinned],{encoding:'utf8'}).trim(),'IMPORT_ONLY_VERIFIED');
   }finally{await rm(dir,{recursive:true,force:true});}
 });
+
+
+test('repeated construction reuses the validated source cache and altered cached bytes fail closed',async()=>{
+ const dir=await mkdtemp(join(await realpath(tmpdir()),'shadow-cli-cache-'));
+ try{
+  await mkdir(join(dir,'vendor','dist'),{recursive:true});await writeFile(join(dir,'vendor','package.json'),JSON.stringify({version:'1.1.4',type:'module'}));
+  const original=join(dir,'vendor','dist','index.js'),source='console.log("CACHED");',state=join(dir,'state');await writeFile(original,source);
+  const first=await freezeCircleCliSource(source,original,state);assert.equal(await freezeCircleCliSource(source,original,state),first);
+  await chmod(first,0o600);await writeFile(first,'throw Error("tampered");');await chmod(first,0o400);
+  await assert.rejects(()=>freezeCircleCliSource(source,original,state),/source changed/);
+ }finally{await rm(dir,{recursive:true,force:true});}
+});

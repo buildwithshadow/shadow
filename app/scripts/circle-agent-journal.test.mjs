@@ -69,8 +69,20 @@ test('a new ordinary directory at the old path cannot silently reset another ope
 });
 
 
-test('a journal identity cannot be anchored in a parent writable by other users',async()=>{
+test('identity state rejects non-sticky shared-writable ancestors',async()=>{
  const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-parent-'));
- try{await chmod(sandbox,0o777);await assert.rejects(()=>createCircleAgentJournal(join(sandbox,'journal')),/parent must/);}
+ try{await chmod(sandbox,0o777);await assert.rejects(()=>createCircleAgentJournal(join(sandbox,'journal'),{identityDirectory:join(sandbox,'identities')}),/unsafe writable ancestor/);}
  finally{await chmod(sandbox,0o700);await rm(sandbox,{recursive:true,force:true});}
+});
+
+
+test('a private journal beneath a shared mount can use separate trusted identity state',async()=>{
+ const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-mount-'));
+ try{
+  const shared=join(sandbox,'shared'),state=join(sandbox,'state');await mkdir(shared,{mode:0o777});await chmod(shared,0o777);
+  const dir=join(shared,'journal'),j=await createCircleAgentJournal(dir,{identityDirectory:state});
+  await j.put('request',{status:'unknown'});assert.deepEqual(await j.get('request'),{status:'unknown'});
+  await rename(dir,join(shared,'old'));await mkdir(dir,{mode:0o700});
+  await assert.rejects(()=>createCircleAgentJournal(dir,{identityDirectory:state}),/root was replaced/);j.close();
+ }finally{await rm(sandbox,{recursive:true,force:true});}
 });

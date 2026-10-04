@@ -3,6 +3,8 @@ import { resolve, dirname, join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { homedir } from 'node:os';
+import { requirePrivateState } from './circle-agent-private-state.mjs';
 import { constants } from 'node:fs';
 
 // A dedicated worker keeps a kernel cwd reference to the verified directory.
@@ -52,7 +54,7 @@ await folder.close();
 `;
 
 /** Single-host operator storage. Process death never authorizes lock theft. */
-export async function createCircleAgentJournal(directory) {
+export async function createCircleAgentJournal(directory, { identityDirectory = join(homedir(), ".local", "state", "shadow", "journal-identities") } = {}) {
   const dir = resolve(directory);
   await mkdir(dir, { recursive: true, mode: 0o700 });
   const info = await lstat(dir);
@@ -62,11 +64,8 @@ export async function createCircleAgentJournal(directory) {
   }
   // Persist identity outside the replaceable root. A second adapter must not
   // silently initialize an empty directory at the same configured pathname.
-  const parent = dirname(dir), parentInfo = await lstat(parent);
-  if ((parentInfo.mode & 0o022) !== 0 || (process.getuid && parentInfo.uid !== process.getuid())) {
-    throw new Error('Circle journal parent must be owner-controlled and not writable by other users.');
-  }
-  const anchor = join(parent, `.circle-journal-${createHash('sha256').update(dir).digest('hex')}.identity`);
+  const parent = await requirePrivateState(identityDirectory);
+  const anchor = join(parent, `${createHash('sha256').update(dir).digest('hex')}.identity`);
   const identity = { path: dir, dev: String(info.dev), ino: String(info.ino) };
   let marker;
   try {
@@ -121,7 +120,7 @@ export async function createCircleAgentJournal(directory) {
   // A probe waits for the child to verify its actual cwd before returning.
   await call('get', filename('journal-directory-probe'));
   return {
-    runtimeDirectory: join(dir, 'verified-circle-runtime'),
+    runtimeDirectory: join(parent, 'verified-circle-runtime'),
     get: key => call('get', filename(key)),
     put: (key, value) => call('put', filename(key), value),
     async withLock(key, action) {
