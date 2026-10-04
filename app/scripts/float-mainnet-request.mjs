@@ -244,7 +244,7 @@ async function fetchResult(values) {
     attempts += 1;
     let reply;
     try {
-      reply = await call(`${url}/serve`, { digest });
+      reply = await call(`${url}/serve`, { digest, paymentTransactionHash: payment.providerPaid.transactionHash });
     } catch (error) {
       if (error instanceof OversizedAnswer) throw new Error(`the provider's answer for digest ${digest} is ${error.message}; nothing was written to ${out}`);
       failures.push(`serve: ${failure(error)}`);

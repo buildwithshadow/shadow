@@ -13,6 +13,8 @@ import {
   DELIVERY_KIND,
   acceptIntent,
   checkPayment,
+  checkDeliveryPayment,
+  assertPaidProviderBinding,
   deliverResult,
   requestIdHashOf,
   resultRefHashOf,
@@ -324,7 +326,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
   }
 
-  async function serveOnce(digest) {
+  async function serveOnce(digest, paymentTransactionHash) {
     const acceptance = storedReceipt(digest, ACCEPTANCE_KIND);
     if (!acceptance) return [404, { error: `no accepted request for digest ${digest}` }];
     const delivered = storedReceipt(digest, DELIVERY_KIND);
@@ -352,9 +354,18 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     // A stored delivery is not payment evidence: a reorg can remove its
     // payment after it was signed. Recheck before returning either path.
-    const payment = await checkPayment(connection, digest);
+    const savedPayment = readStored(fileOf(digest, "payment"));
+    const payment = await checkPayment(connection, digest, { transactionHash: savedPayment?.transactionHash ?? paymentTransactionHash });
     if (!payment.paid) return [402, { error: "the digest is not paid", receiptStatus: payment.receiptStatus }];
+    await assertPaidProviderBinding(connection, payment, acceptance);
+    // Returning our stored bytes creates no new receipt/signature. A rotated
+    // smart-provider key must not strand that result; payment binding is still
+    // freshly established from the original canonical transaction.
     if (delivered) return [200, { result: earlier.result, delivery: delivered }];
+    const verified = await checkDeliveryPayment(connection, { acceptance, account, transactionHash: payment.providerPaid.transactionHash });
+    // Preserve the canonical transaction identity before service work. Recovery
+    // re-reads its receipt and block, even when ranged log scans are unavailable.
+    storeOnce(fileOf(digest, "payment"), { transactionHash: verified.payment.providerPaid.transactionHash });
     const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
     const { delivery } = await deliverResult(connection, {
@@ -362,6 +373,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       resultHash: keccak256(Buffer.from(produced.result, "base64")),
       resultRef: produced.resultRef ?? undefined,
       account,
+      transactionHash: verified.payment.providerPaid.transactionHash,
     });
     const kept = storeOnce(fileOf(digest, "delivery"), delivery) ? delivery : storedReceipt(digest, DELIVERY_KIND);
     return [200, { result: produced.result, delivery: kept }];
@@ -392,9 +404,11 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     if (request.method === "POST" && pathname === "/accept") return accept(await jsonBody(request), context);
     if (request.method === "POST" && pathname === "/serve") {
-      const digest = parseBytes32("digest", (await jsonBody(request)).digest, HttpError);
+      const input = await jsonBody(request);
+      const digest = parseBytes32("digest", input.digest, HttpError);
+      const paymentTransactionHash = input.paymentTransactionHash === undefined ? undefined : parseBytes32("paymentTransactionHash", input.paymentTransactionHash, HttpError);
       context.digest = digest;
-      return once(serving, digest, () => serveOnce(digest));
+      return once(serving, digest, () => serveOnce(digest, paymentTransactionHash));
     }
     return [404, { error: "not found" }];
   }

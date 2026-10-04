@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
+import { readFileSync, writeFileSync, mkdtempSync, mkdirSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createServer } from 'node:http';
@@ -11,6 +11,7 @@ const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
 const mod = name => import(pathToFileURL(`${ROOT}/app/scripts/${name}.mjs`));
 const { startAnvil, account, runTool } = await mod('float-mainnet-e2e');
 const { floatAbi, eip712Domain, SPEND_INTENT_TYPES } = await mod('float-mainnet-config');
+const { createProviderServer } = await import('../../examples/float-mainnet-provider-server/server.mjs');
 const { signReceipt, deliverResult, ACCEPTANCE_KIND, requestIdHashOf } = await mod('float-mainnet-provider');
 
 test('receipt identity must remain bound when payment-log access fails', { timeout: 90000 }, async t => {
@@ -87,6 +88,31 @@ test('receipt identity must remain bound when payment-log access fails', { timeo
   const recovered=await runTool('request',['fetch','--provider-url',providerUrl,'--digest',digest,'--acceptance',acceptancePath,'--payment-tx',paidTx,'--out',out],{ARC_RPC_URL:rpc,FLOAT_MAINNET_EXPECTED_CHAIN_ID:'5042002',FLOAT_MAINNET_ADDRESS:candidate});
   assert.equal(recovered.status,0,JSON.stringify(recovered.json));
   assert.deepEqual(readFileSync(out),result);
+  // Older stores may contain completed work but no delivery/payment identity.
+  // Both client and real provider lose getLogs; the original transaction must
+  // cross HTTP, be independently verified, then survive a provider restart.
+  const store = join(dir, 'legacy-provider-store'); mkdirSync(store);
+  writeFileSync(join(store, `${digest}.acceptance.json`), JSON.stringify(realAcceptance));
+  writeFileSync(join(store, `${digest}.result.json`), JSON.stringify({ digest, requestId, result: result.toString('base64'), resultRef: null }));
+  let work = 0;
+  const makeServer = () => createProviderServer({ connection: withReceipts, account: paidProvider, endpointHash, price: 50000n, storeDir: store, service: async () => { work++; return { result: 'must not repeat' }; } });
+  const actualServer = makeServer(); const actualUrl = await listen(actualServer);
+  const post = async (base, body) => fetch(`${base}/serve`, {method:'POST', headers:{'content-type':'application/json'},body:JSON.stringify(body)});
+  assert.equal((await post(actualUrl, {digest, paymentTransactionHash:'invalid'})).status, 400);
+  const wrongTx = `0x${'ab'.repeat(32)}`;
+  assert.notEqual((await post(actualUrl, {digest, paymentTransactionHash:wrongTx})).status, 200);
+  const fetchedFromServer = await runTool('request', ['fetch','--provider-url',actualUrl,'--digest',digest,'--acceptance',acceptancePath,'--payment-tx',paidTx,'--out',out], {ARC_RPC_URL:rpc,FLOAT_MAINNET_EXPECTED_CHAIN_ID:'5042002',FLOAT_MAINNET_ADDRESS:candidate});
+  assert.equal(fetchedFromServer.status, 0, JSON.stringify(fetchedFromServer.json));
+  assert.deepEqual(readFileSync(out), result);
+  assert.equal(work, 0, 'stored unsigned work is not repeated');
+  assert.deepEqual(JSON.parse(readFileSync(join(store, `${digest}.payment.json`), 'utf8')), {transactionHash:paidTx});
+  actualServer.closeAllConnections(); await new Promise(r => actualServer.close(r)); servers.splice(servers.indexOf(actualServer),1);
+  const restartedUrl = await listen(makeServer());
+  const recoveredAfterRestart = await post(restartedUrl, {digest});
+  assert.equal(recoveredAfterRestart.status, 200);
+  assert.equal((await recoveredAfterRestart.json()).result, result.toString('base64'));
+  assert.equal(work, 0);
+
   assert.equal(await client.readContract({address:usdc,abi:erc20Abi,functionName:'balanceOf',args:[otherProvider.address]}),0n);
   assert.equal(await client.readContract({address:usdc,abi:erc20Abi,functionName:'balanceOf',args:[paidProvider.address]}),50000n);
 });
