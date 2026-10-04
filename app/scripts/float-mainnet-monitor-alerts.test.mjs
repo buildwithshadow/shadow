@@ -279,3 +279,21 @@ test('restart from a checking heartbeat preserves its last snapshot binding',asy
  assert.equal(failed.snapshotHash,JSON.parse(interrupted).previousSnapshotHash);
  }finally{f.cleanup();}
 });
+
+
+test('restart after snapshot publication inherits the matching interrupted generation',async()=>{
+ const f=fixture();let previous;let finish;let rejectCollect;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run(now,async()=>{throw Error('offline');});await f.run(now+1);await notify(now+1);
+ const next=structuredClone(f.snapshot);next.observedAt.blockNumber='101';next.observedAt.blockHash=hash(101);next.discovery.scanned.toBlock='101';next.executionAudit.toBlock='101';
+ let entered;let started=new Promise(r=>{entered=r;});let running=runMonitorOnce(f.context,{now:()=>now+2,collect:async()=>next,afterSnapshotPublished:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
+ const interrupted=readFileSync(join(f.context.stateDir,'heartbeat.json'),'utf8');
+ const marker=readFileSync(join(f.context.stateDir,'publication.json'),'utf8');
+ finish();await running;writeFileSync(join(f.context.stateDir,'heartbeat.json'),interrupted);writeFileSync(join(f.context.stateDir,'publication.json'),marker);
+ started=new Promise(r=>{entered=r;});running=f.run(now+3,async()=>{entered();return new Promise((resolve,reject)=>{rejectCollect=reject;});});await started;
+ assert.equal((await notify(now+4)).reason,'known-incident-scan-in-progress');assert.equal(sent,1);
+ rejectCollect(Error('restarted collection timed out'));const failed=await running;
+ assert.equal(failed.snapshotHash,JSON.parse(marker).snapshotHash);
+ assert.ok(!notificationState(f.context,now+5).codes.includes('SNAPSHOT_BINDING_MISMATCH'));
+ }finally{f.cleanup();}
+});
