@@ -1,8 +1,9 @@
-import { mkdir, lstat, realpath } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { mkdir, lstat, realpath, open } from 'node:fs/promises';
+import { resolve, dirname, join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
+import { constants } from 'node:fs';
 
 // A dedicated worker keeps a kernel cwd reference to the verified directory.
 // Every file operation is relative to that cwd. No later parent-path lookup can
@@ -27,7 +28,7 @@ for await(const line of createInterface({input:process.stdin})){
     if(r.op==='get'){
       let file;
       try{
-        file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);const m=await file.stat();
+        file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);const m=await file.stat();
         if(!m.isFile()||(m.mode&0o077)!==0||(process.getuid&&m.uid!==process.getuid())||m.size>2000000)throw Error('Circle journal record permissions or size are unsafe.');
         value=JSON.parse(await file.readFile('utf8'));
       }catch(e){if(e.code!=='ENOENT')throw e;}finally{if(file)await file.close();}
@@ -59,6 +60,31 @@ export async function createCircleAgentJournal(directory) {
       || (process.getuid && info.uid !== process.getuid())) {
     throw new Error('Circle journal must be an owner-controlled private directory without symlinked path components.');
   }
+  // Persist identity outside the replaceable root. A second adapter must not
+  // silently initialize an empty directory at the same configured pathname.
+  const parent = dirname(dir), parentInfo = await lstat(parent);
+  if ((parentInfo.mode & 0o022) !== 0 || (process.getuid && parentInfo.uid !== process.getuid())) {
+    throw new Error('Circle journal parent must be owner-controlled and not writable by other users.');
+  }
+  const anchor = join(parent, `.circle-journal-${createHash('sha256').update(dir).digest('hex')}.identity`);
+  const identity = { path: dir, dev: String(info.dev), ino: String(info.ino) };
+  let marker;
+  try {
+    marker = await open(anchor, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    await marker.writeFile(JSON.stringify(identity)); await marker.sync();
+    const folder = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY);
+    try { await folder.sync(); } finally { await folder.close(); }
+  } catch (error) {
+    if (error.code !== 'EEXIST') throw error;
+    const saved = await open(anchor, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+    try {
+      const metadata = await saved.stat();
+      if (!metadata.isFile() || (metadata.mode & 0o077) !== 0 || metadata.size > 4096
+          || (process.getuid && metadata.uid !== process.getuid())) throw new Error('Circle journal identity marker is unsafe.');
+      const previous = JSON.parse(await saved.readFile('utf8'));
+      if (JSON.stringify(previous) !== JSON.stringify(identity)) throw new Error('Circle journal root was replaced. Restore the original root or explicitly reconcile its full records and locks; do not reset its identity marker.');
+    } finally { await saved.close(); }
+  } finally { if (marker) await marker.close(); }
   const worker = spawn(process.execPath, ['--input-type=module', '-e', WORKER, String(info.dev), String(info.ino)], {
     cwd: dir, stdio: ['pipe', 'pipe', 'ignore'],
   });
@@ -95,6 +121,7 @@ export async function createCircleAgentJournal(directory) {
   // A probe waits for the child to verify its actual cwd before returning.
   await call('get', filename('journal-directory-probe'));
   return {
+    runtimeDirectory: join(dir, 'verified-circle-runtime'),
     get: key => call('get', filename(key)),
     put: (key, value) => call('put', filename(key), value),
     async withLock(key, action) {

@@ -34,13 +34,13 @@ export function rawCalldataCompatibility(source) {
 
 export function unwrapCircle(value) { return value?.data ?? value; }
 
-export async function createCircleCliTransport({ entrypoint, agent, journal, run = runFile }) {
+export async function createCircleCliTransport({ entrypoint, agent, journal, runtimeDirectory = journal?.runtimeDirectory, run = runFile }) {
   const address = getAddress(agent);
   const original = resolve(entrypoint);
   const source = await readFile(original, 'utf8');
   const patched = rawCalldataCompatibility(source);
-  const compatibility = await freezeCircleCliSource(patched, original);
-  entrypoint = await freezeCircleCliSource(source, original);
+  const compatibility = await freezeCircleCliSource(patched, original, runtimeDirectory);
+  entrypoint = await freezeCircleCliSource(source, original, runtimeDirectory);
   return createCircleCliDriver({ entrypoint, compatibility, agent: address, journal, run });
 }
 

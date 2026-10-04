@@ -19,7 +19,7 @@ export async function createCircleGuardedCliTransport(options) {
   const source = await readFile(original);
   must(createHash('sha256').update(source).digest('hex') === CIRCLE_CLI_SHA256,
     'Circle CLI differs from the reviewed runtime; review the new version before use.');
-  const entrypoint = await freezeCircleCliSource(source, original);
+  const entrypoint = await freezeCircleCliSource(source, original, options.runtimeDirectory ?? options.journal?.runtimeDirectory);
   return createCircleGuardedCliDriver({ ...options, entrypoint });
 }
 

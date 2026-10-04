@@ -55,3 +55,15 @@ test('intermediate aliases are refused and retargeting an opened directory retai
     j.close();
   } finally {await rm(parent,{recursive:true,force:true});}
 });
+
+
+test('a new ordinary directory at the old path cannot silently reset another operator’s journal identity',async()=>{
+  const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-replacement-')),dir=join(parent,'active');
+  try{
+    const original=await createCircleAgentJournal(dir);await original.put('wallet',{status:'unknown',request:'original'});
+    await rename(dir,join(parent,'original'));await mkdir(dir,{mode:0o700});
+    await assert.rejects(()=>createCircleAgentJournal(dir),/root was replaced/);
+    assert.deepEqual(await original.get('wallet'),{status:'unknown',request:'original'});
+    original.close();
+  }finally{await rm(parent,{recursive:true,force:true});}
+});
