@@ -392,3 +392,28 @@ test('a first collection failure without a snapshot alerts once across publicati
  }finally{if(finish){finish();await running;}}
  }finally{f.cleanup();}
 });
+
+test('restart from the first failed publication retains its codes even if the marker vanishes during read',async()=>{
+ const fs=await import('node:fs');const {syncBuiltinESMExports}=await import('node:module');const originalRead=fs.default.readFileSync;
+ const f=fixture();let previous;let sent=0;let finish;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{
+ let latched;const firstLatched=new Promise(r=>{latched=r;});
+ const first=runMonitorOnce(f.context,{now:()=>now,collect:async()=>{throw Error('offline');},afterHoldLatched:async()=>{latched();await new Promise(r=>{finish=r;});}});await firstLatched;
+ await notify(now);assert.equal(sent,1);const key=previous.key;
+ const savedHeartbeat=readFileSync(join(f.context.stateDir,'heartbeat.json'));const markerPath=join(f.context.stateDir,'publication.json');const savedMarker=readFileSync(markerPath);
+ assert.equal(JSON.parse(savedHeartbeat).previousFailureCodes,null);
+ finish();finish=null;await first;writeFileSync(join(f.context.stateDir,'heartbeat.json'),savedHeartbeat);writeFileSync(markerPath,savedMarker);
+ let collecting;let fail;const started=new Promise(r=>{collecting=r;});
+ const restarted=runMonitorOnce(f.context,{now:()=>now+1,afterCheckingPublished:async()=>{
+  assert.ok(JSON.parse(readFileSync(join(f.context.stateDir,'heartbeat.json'))).previousFailureCodes.includes('RPC_CHECK_FAILED'));
+  assert.equal(notificationState(f.context,now+1).key,key);
+  let intercepted=false;
+  fs.default.readFileSync=function(path,...args){if(path===markerPath&&!intercepted){intercepted=true;rmSync(markerPath);}return originalRead(path,...args);};syncBuiltinESMExports();
+  try{assert.equal((await notify(now+1)).sent,false);assert.equal(sent,1);assert.equal(intercepted,true);}
+  finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();}
+ },collect:async()=>{collecting();return new Promise((resolve,reject)=>{fail=reject;});}});await started;
+ try{assert.equal((await notify(now+1)).sent,false);assert.equal(sent,1);}finally{fail(Error('still offline'));await restarted;}
+ assert.equal(notificationState(f.context,now+1).key,key);assert.equal((await notify(now+1)).sent,false);assert.equal(sent,1);
+ }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();f.cleanup();}
+});

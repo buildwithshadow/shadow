@@ -119,6 +119,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     // never establishes freshness, healthy status or spend authorization.
     let retainedSnapshotHash = previous?.snapshotHash ?? previous?.previousSnapshotHash ?? null;
     let previousPublicationHash = null;
+    let recoveredFailureCodes = null;
     if (previous?.status === "checking") {
       try {
         const publication = optionalJson(resolve(context.stateDir, 'publication.json'));
@@ -130,14 +131,15 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
             new Date(Date.parse(publication.completedAt)).toISOString() === publication.completedAt &&
             Date.parse(publication.completedAt) >= Date.parse(previous.startedAt) && Date.parse(publication.completedAt) <= started &&
             (retained && publication.snapshotHash === digestJson(retained) ||
-              retained === null && retainedSnapshotHash === null && publication.snapshotHash === null)) {
+              retained === null && retainedSnapshotHash === null && publication.snapshotHash === null && publication.alertCodes.includes('RPC_CHECK_FAILED'))) {
           retainedSnapshotHash = publication.snapshotHash;
           previousPublicationHash = digestJson(publication);
+          recoveredFailureCodes = publication.alertCodes;
         }
       } catch { latch(context, [alert("LOCAL_STATE_INVALID", "interrupted publication was unreadable")], started); }
     }
     // Notifications validate the bound persisted snapshot during a scan.
-    const priorFailureCodes = previous?.status === 'checking' ? previous.previousFailureCodes : previous?.alerts?.map(entry => entry?.code);
+    const priorFailureCodes = recoveredFailureCodes ?? (previous?.status === 'checking' ? previous.previousFailureCodes : previous?.alerts?.map(entry => entry?.code));
     const previousFailureCodes = retainedSnapshotHash === null && Array.isArray(priorFailureCodes) &&
       priorFailureCodes.includes('RPC_CHECK_FAILED') && priorFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) ? priorFailureCodes : null;
     atomicJson(file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash, previousFailureCodes, previousPublicationHash });

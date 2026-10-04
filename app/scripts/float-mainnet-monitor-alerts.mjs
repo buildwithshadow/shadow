@@ -10,6 +10,13 @@ import { sendTelegram } from './public-testnet-observer-alerts.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const optionalJson = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; } };
+const optionalRecord = path => {
+  let data;
+  try { data = readFileSync(path, 'utf8'); }
+  catch (error) { return { exists: error.code !== 'ENOENT', value: null }; }
+  try { return { exists: true, value: JSON.parse(data) }; }
+  catch { return { exists: true, value: null }; }
+};
 
 export function loadMainnetContext(options) {
   const context = loadContext(options);
@@ -35,14 +42,14 @@ export function notificationState(context, now = Date.now()) {
     raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
     snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
     const publicationPath = resolve(context.stateDir, 'publication.json');
-    publicationExists = existsSync(publicationPath);
-    publication = optionalJson(publicationPath);
-    publicationExists = publicationExists || publication !== null;
-    // Cache existence before the read: a hold created after an absent read
-    // belongs to the next observation, never to a synthetic unknown incident.
-    holdExists = existsSync(holdPath);
-    hold = optionalJson(holdPath);
-    holdExists = holdExists || hold !== null;
+    const publicationRecord = optionalRecord(publicationPath);
+    publicationExists = publicationRecord.exists;
+    publication = publicationRecord.value;
+    // A single read distinguishes absence from corruption without an
+    // existence/read race. A later created hold belongs to the next sample.
+    const holdRecord = optionalRecord(holdPath);
+    holdExists = holdRecord.exists;
+    hold = holdRecord.value;
     const after = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
     if (JSON.stringify(raw) === JSON.stringify(after)) break;
     raw = after;
@@ -87,6 +94,7 @@ export function notificationState(context, now = Date.now()) {
     publicationBound = checkingShape && publishing && validCodes && typeof publication.completedAt === 'string' &&
       Number.isFinite(Date.parse(publication.completedAt)) && new Date(Date.parse(publication.completedAt)).toISOString() === publication.completedAt &&
       (publication.snapshotHash === null || typeof publication.snapshotHash === 'string' && /^[0-9a-f]{64}$/.test(publication.snapshotHash)) &&
+      (publication.snapshotHash !== null || publication.alertCodes.includes('RPC_CHECK_FAILED')) &&
       Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
       Date.parse(publication.completedAt) <= now;
     const priorPublicationBound = publication !== null && typeof raw?.previousPublicationHash === 'string' &&
