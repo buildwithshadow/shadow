@@ -476,17 +476,18 @@ test('three normal generation transitions yield an inconclusive sample rather th
 });
 
 test('completed-generation marker cleanup accepts valid leftovers and preserves malformed-marker incidents',async()=>{
- for(const mode of ['corrupt','healthy-leftover','snapshotless-leftover']){
+ for(const mode of ['corrupt','altered-codes','healthy-leftover','snapshotless-leftover']){
  const f=fixture();let savedMarker;const markerPath=join(f.context.stateDir,'publication.json');
  try{
  if(mode==='corrupt'){await f.run();writeFileSync(markerPath,'{');}
  else{
   const capture=async()=>{savedMarker=readFileSync(markerPath);};
   await runMonitorOnce(f.context,{now:()=>now,collect:mode==='snapshotless-leftover'?async()=>{throw Error('offline');}:async()=>f.snapshot,afterSnapshotPublished:capture,afterHoldLatched:capture});
+  if(mode==='altered-codes')savedMarker=JSON.stringify({...JSON.parse(savedMarker),alertCodes:['RPC_CHECK_FAILED']});
   writeFileSync(markerPath,savedMarker);
  }
  const next=await f.run(now+1);
- if(mode==='corrupt'){
+ if(mode==='corrupt'||mode==='altered-codes'){
   assert.equal(next.ok,false);assert.equal(next.hold,true);assert.ok(next.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
   assert.ok(notificationState(f.context,now+1).codes.includes('LOCAL_STATE_INVALID'));
   const held=JSON.parse(readFileSync(join(f.context.stateDir,'hold.json')));assert.ok(held.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));

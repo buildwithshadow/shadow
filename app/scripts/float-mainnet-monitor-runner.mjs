@@ -125,12 +125,17 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
       try {
         const publication = optionalJson(resolve(context.stateDir, 'publication.json'));
         const retained = optionalJson(file.snapshot);
+        // Only HOLD_LATCHED is added by the heartbeat after publication.
+        // A completed generation binds its remaining result codes exactly.
+        const completedCodesBound = Array.isArray(previous?.alerts) && Array.isArray(publication?.alertCodes) &&
+          JSON.stringify(previous.alerts.filter(entry => entry?.code !== 'HOLD_LATCHED').map(entry => entry?.code).sort()) ===
+          JSON.stringify([...publication.alertCodes].sort());
         const knownPrevious = previous && Object.entries(identity(context)).every(([key, value]) => previous[key] === value) &&
           typeof previous.runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(previous.runId) &&
           typeof previous.startedAt === 'string' && Number.isFinite(Date.parse(previous.startedAt)) &&
           new Date(Date.parse(previous.startedAt)).toISOString() === previous.startedAt &&
           (previous.status === 'checking' || ['healthy','hold'].includes(previous.status) &&
-            publication?.completedAt === previous.completedAt && publication?.snapshotHash === previous.snapshotHash);
+            publication?.completedAt === previous.completedAt && publication?.snapshotHash === previous.snapshotHash && completedCodesBound);
         if (knownPrevious && publication?.runId === previous.runId && publication.startedAt === previous.startedAt &&
             Object.entries(identity(context)).every(([key, value]) => publication[key] === value) &&
             Array.isArray(publication.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) &&
