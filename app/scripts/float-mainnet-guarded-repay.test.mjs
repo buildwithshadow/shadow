@@ -1,6 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {readFileSync} from 'node:fs';
+import {readFileSync,mkdtempSync,writeFileSync,rmSync} from 'node:fs';
+import {tmpdir} from 'node:os';
+import {join} from 'node:path';
 import {createPublicClient,createWalletClient,decodeFunctionData,defineChain,http,keccak256,stringToHex,erc20Abi} from 'viem';
 import {account,startAnvil,runTool,e2eSkip} from './float-mainnet-e2e.mjs';
 import {eip712Domain,SPEND_INTENT_TYPES} from './float-mainnet-config.mjs';
@@ -17,6 +19,10 @@ test('repayment CLI binds to a draw and refuses stale or implicit generic consen
  const usdc=await deploy('MockAsset',['test USDC','USDC',6]);
  const limits={protocolReserve:5000000n,lineReserve:1000000n,lineSpend:2000000n,perSpend:500000n,dailySpend:1000000n};
  const target=await deploy('ShadowFloatMainnetGuarded',[usdc,5042002n,limits,limits,3600n,86400n,172800n]);
+ const deployBlock=await c.getBlockNumber({cacheTime:0});
+ const evidenceDir=mkdtempSync(join(tmpdir(),'guarded-monitor-'));t.after(()=>rmSync(evidenceDir,{recursive:true,force:true}));
+ const manifest=join(evidenceDir,'manifest.json');
+ writeFileSync(manifest,JSON.stringify({ok:true,chainId:'5042002',contract:{address:target},deployment:{blockNumber:deployBlock.toString()},bytecode:{onchainRuntimeKeccak256:keccak256(await c.getCode({address:target}))}}));
  const abi=artifact('ShadowFloatMainnetGuarded').abi;
  const read=(functionName,args=[])=>c.readContract({address:target,abi,functionName,args});
  for(const who of [sponsor,agent]){await write(owner,usdc,artifact('MockAsset').abi,'mint',[who.address,1000000n]);await write(who,usdc,erc20Abi,'approve',[target,100000n]);}
@@ -31,7 +37,23 @@ test('repayment CLI binds to a draw and refuses stale or implicit generic consen
  const flags=['--line-id',id,'--full','--calldata','--from',sponsor.address];
  const implicit=await runTool('repay',flags,env);assert.notEqual(implicit.status,0);assert.match(JSON.stringify(implicit.json),/requires --allow-current-line-debt/);
  const valid=await runTool('repay',[...flags,'--expected-draw',first],env);assert.equal(valid.status,0,JSON.stringify(valid.json));assert.equal(decodeFunctionData({abi,data:valid.json.calls.at(-1).data}).functionName,'repayForDraw');assert.equal(valid.json.consent,'reviewed-purchase-only');
- await write(agent,target,abi,'repayForDraw',[id,first,50000n]);await draw(2n);
+ await write(agent,target,abi,'repayForDraw',[id,first,50000n]);
+ // Real guarded receipts contain Repaid AND DrawRepaid. Full canonical scans
+ // must decode both without treating a successful repayment as an RPC outage.
+ const snapshot=await runTool('monitor',['snapshot','--manifest',manifest],env);
+ assert.equal(snapshot.status,0,JSON.stringify(snapshot.json));
+ assert.equal(snapshot.json.lines.find(line=>line.lineId===id).principalOutstanding,'0');
+ assert(snapshot.json.accounting.checks.every(check=>check.status==='PASS'));
+ const indexPath=join(evidenceDir,'index.json');
+ const indexed=await runTool('indexer',['index','--manifest',manifest,'--out',indexPath],env);
+ assert.equal(indexed.status,0,JSON.stringify(indexed.json));
+ const events=JSON.parse(readFileSync(indexPath)).events;
+ const repaymentEvents=events.filter(event=>['Repaid','DrawRepaid'].includes(event.event));
+ assert.deepEqual(repaymentEvents.map(event=>event.event),['Repaid','DrawRepaid']);
+ assert.equal(repaymentEvents[1].args.drawDigest,first);
+ assert.equal(repaymentEvents[1].args.payer,agent.address);
+ assert.equal(repaymentEvents[1].args.amount,'50000');
+ await draw(2n);
  const stale=await runTool('repay',[...flags,'--expected-draw',first],env);assert.notEqual(stale.status,0);assert.match(JSON.stringify(stale.json),/not the current draw/);
  assert.equal((await read('getLine',[id])).principalOutstanding,50000n);
 });

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { BlockNotFoundError, decodeEventLog, getAddress } from "viem";
-import { floatAbi } from "./float-mainnet-config.mjs";
+import { floatEventAbi } from "./float-mainnet-config.mjs";
 import {
   UsageError,
   connect,
@@ -26,7 +26,7 @@ export const INDEX_KIND = "ShadowFloatMainnet.EventIndex";
 export const INDEX_SCHEMA = 1;
 // A block number in its stored form: a decimal string without leading zeros.
 const BLOCK_NUMBER = /^(0|[1-9]\d*)$/;
-const EVENT_INPUTS = new Map(floatAbi.filter((item) => item.type === "event").map((item) => [item.name, item.inputs]));
+const EVENT_INPUTS = new Map(floatEventAbi.filter((item) => item.type === "event").map((item) => [item.name, item.inputs]));
 
 const plain = (value) => JSON.parse(stableStringify(value));
 const position = (event) => [BigInt(event.blockNumber), BigInt(event.logIndex)];
@@ -59,7 +59,7 @@ async function enrich(connection, logs) {
   const senders = new Map();
   const events = [];
   for (const log of logs) {
-    const { eventName, args } = decodeEventLog({ abi: floatAbi, data: log.data, topics: log.topics });
+    const { eventName, args } = decodeEventLog({ abi: floatEventAbi, data: log.data, topics: log.topics });
     if (!blocks.has(log.blockNumber)) blocks.set(log.blockNumber, await connection.client.getBlock({ blockNumber: log.blockNumber }));
     const block = blocks.get(log.blockNumber);
     if (block.hash !== log.blockHash) {
@@ -87,7 +87,7 @@ async function scan(connection, fromBlock, toBlock) {
 }
 
 // Every Float event that carries a line's id (indexed in each of them).
-const LINE_EVENTS = floatAbi.filter((item) => item.type === "event" && item.inputs.some((input) => input.name === "lineId")).map((item) => item.name);
+const LINE_EVENTS = floatEventAbi.filter((item) => item.type === "event" && item.inputs.some((input) => input.name === "lineId")).map((item) => item.name);
 
 // The line's own events in [fromBlock, toBlock], as an index covering those
 // blocks holds them, in block and log order. Its lineId is an indexed topic,

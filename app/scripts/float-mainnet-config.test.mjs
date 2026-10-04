@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { http, keccak256, numberToHex, stringToBytes, toBytes } from "viem";
+import { decodeEventLog, http, keccak256, numberToHex, stringToBytes, toBytes } from "viem";
 
 import {
   BLOCK_REASONS,
@@ -11,6 +11,7 @@ import {
   SPEND_INTENT_TYPE_STRING,
   endpointHashFrom,
   floatAbi,
+  floatEventAbi,
   readDeployment,
   walletFromEnv,
 } from "./float-mainnet-config.mjs";
@@ -29,6 +30,16 @@ function enumMembers(name) {
 
 test("the committed ABI equals the compiled artifact's ABI", () => {
   assert.deepEqual(floatAbi, loadArtifact().abi);
+});
+
+test("canonical log decoding covers the compiled guarded events without changing callable legacy ABI", () => {
+  const guarded = JSON.parse(readFileSync(new URL("../../contracts/out/ShadowFloatMainnetGuarded.sol/ShadowFloatMainnetGuarded.json", import.meta.url))).abi;
+  const shape = event => ({ name: event.name, anonymous: Boolean(event.anonymous), inputs: event.inputs.map(({name,type,indexed}) => ({name,type,indexed:Boolean(indexed)})) });
+  for (const event of guarded.filter(item => item.type === "event")) {
+    assert.deepEqual(shape(floatEventAbi.find(item => item.name === event.name)), shape(event));
+  }
+  assert.equal(floatEventAbi.filter(item => item.name === "DrawRepaid").length, 1);
+  assert.throws(() => decodeEventLog({ abi: floatEventAbi, topics: ["0x" + "ff".repeat(32)], data: "0x" }), /not found on ABI/);
 });
 
 test("the EIP-712 SpendIntent type string is the contract's typehash preimage", () => {
