@@ -459,7 +459,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
     const output = child.output().toLowerCase();
     assert.equal(output.includes(keyOf(5).slice(2).toLowerCase()), false, "the server printed its key");
 
-    const repaid = await ok("repay", ["--line-id", lineId, "--full", "--execute"], AGENT);
+    const repaid = await ok("repay", ["--allow-current-line-debt", "--line-id", lineId, "--full", "--execute"], AGENT);
     assert.deepEqual([repaid.after.state, repaid.after.principalOutstanding], ["OPEN", "0"]);
     const closed = await ok("sponsor", ["close", "--line-id", lineId, "--execute"], SPONSOR);
     assert.deepEqual([closed.amount, closed.state], ["1000000", "CLOSED"]);
@@ -511,7 +511,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
       assert.deepEqual(isolated.stats.work, []);
     } finally {
       await stop(isolated.server);
-      await ok("repay", ["--line-id", lineId, "--full", "--execute"], AGENT);
+      await ok("repay", ["--allow-current-line-debt", "--line-id", lineId, "--full", "--execute"], AGENT);
       await ok("sponsor", ["close", "--line-id", lineId, "--execute"], SPONSOR);
     }
   });
@@ -572,7 +572,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
     assert.deepEqual([again.attempts, again.delivery, again.resultHash], [1, fetched.delivery, fetched.resultHash]);
     assert.deepEqual(readFileSync(path("result-b2.txt")), readFileSync(path("result-b.txt")));
     assert.deepEqual([current.stats.work, current.stats.signed - signedBefore], [[b.digest], 1]);
-    await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
   });
 
   test("a status outage does not consume the serve retry or strand a paid result", async () => {
@@ -645,7 +645,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
     assert.deepEqual([fetched.attempts, fetched.delivery.requestId], [1, "req-c"]);
     assert.deepEqual([current.stats.work, current.stats.signed], [[c.digest], 1]);
     assert.equal(readFileSync(join(store, `${c.digest}.acceptance.json`), "utf8"), storedAcceptance);
-    await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
     seen.c = { ...c, delivery: fetched.delivery };
   });
 
@@ -888,7 +888,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
     assert.deepEqual(current.stats.work.slice(workBefore), [d.digest]);
     assert.equal(readFileSync(path("result-d.txt"), "utf8"), (await exampleService({ digest: d.digest, requestId: "req-d" })).result);
     assert.equal(await executorNonce(), nonceBefore);
-    await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
   });
 
   test("POST /serve straight to the server: an unpaid or a blocked digest gets 402 and a digest with no acceptance 404, with no service run and nothing signed", async () => {
@@ -1089,7 +1089,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
       const directory = events.findIndex(([kind, target], k) => k > linked && kind === "fsync" && target === store);
       assert.equal(directory !== -1, process.platform !== "win32", `${slot}'s directory flush: ${JSON.stringify(events)}`);
     }
-    await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
   });
 
   test("a stored receipt is not re-verified when read, so an ERC-1271 provider that rotated its signer still serves what it stored", async () => {
@@ -1119,7 +1119,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
       assert.equal((await signatureAt(connection, { signer: smart, hash, signature })).valid, false);
 
       assert.deepEqual(await post(SMART_PORT, "/serve", { digest }), served);
-      await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+      await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
     } finally {
       await stop(server);
       assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);

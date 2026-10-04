@@ -623,21 +623,21 @@ describe("participant CLIs drive the full line lifecycle on a local chain", { sk
 
   test("repay --amount keeps the line DRAWN; repay --full reopens it with cumulative spend unchanged", async () => {
     const repayer = { FLOAT_REPAYER_PRIVATE_KEY: AGENT_KEY };
-    const dry = await sentNothing(agent.address, () => ok("repay", ["--line-id", seen.line1, "--amount", "400000"], repayer));
+    const dry = await sentNothing(agent.address, () => ok("repay", ["--allow-current-line-debt", "--line-id", seen.line1, "--amount", "400000"], repayer));
     assert.equal(dry.dryRun, true);
     assert.deepEqual(dry.calls.map((call) => call.functionName), ["approve", "repay"]);
     assert.deepEqual(dry.simulation.map((entry) => entry.status), ["ok", "skipped"]);
 
-    const partial = ok("repay", ["--line-id", seen.line1, "--amount", "400000", "--execute"], repayer);
+    const partial = ok("repay", ["--allow-current-line-debt", "--line-id", seen.line1, "--amount", "400000", "--execute"], repayer);
     assert.equal(partial.repayer, agent.address);
     assert.equal(partial.keyEnv, "FLOAT_REPAYER_PRIVATE_KEY");
     assert.equal(partial.txHashes.length, 2);
     assert.deepEqual(partial.after, { state: "DRAWN", principalOutstanding: "600000", availableReserve: "400000" });
 
-    const tooMuch = await sentNothing(agent.address, () => fails("repay", ["--line-id", seen.line1, "--amount", "600001"], repayer));
+    const tooMuch = await sentNothing(agent.address, () => fails("repay", ["--allow-current-line-debt", "--line-id", seen.line1, "--amount", "600001"], repayer));
     assert.match(tooMuch.message, /between 1 and principalOutstanding 600000/);
 
-    const full = ok("repay", ["--line-id", seen.line1, "--full", "--execute"], repayer);
+    const full = ok("repay", ["--allow-current-line-debt", "--line-id", seen.line1, "--full", "--execute"], repayer);
     assert.equal(full.amount, "600000");
     assert.deepEqual(full.after, { state: "OPEN", principalOutstanding: "0", availableReserve: "1000000" });
 
@@ -874,7 +874,7 @@ describe("participant CLIs drive the full line lifecycle on a local chain", { sk
     const nothing = await sentNothing(sponsor.address, () => fails("sponsor", ["claim-defaulted", "--line-id", line2], SPONSOR()));
     assert.match(nothing.message, /nothing to claim until repayment arrives/);
 
-    const repaid = ok("repay", ["--line-id", line2, "--full", "--execute"], { FLOAT_AGENT_PRIVATE_KEY: AGENT_KEY });
+    const repaid = ok("repay", ["--allow-current-line-debt", "--line-id", line2, "--full", "--execute"], { FLOAT_AGENT_PRIVATE_KEY: AGENT_KEY });
     assert.equal(repaid.keyEnv, "FLOAT_AGENT_PRIVATE_KEY");
     assert.equal(repaid.repayer, agent.address);
     assert.deepEqual(repaid.after, { state: "DEFAULTED", principalOutstanding: "0", availableReserve: "0", recoveryAvailable: "1000000" });

@@ -231,7 +231,7 @@ describe("evidence round trip: provider kit, indexer, exporter and independent v
         PROVIDER,
       );
       for (const amount of day === 2 ? [["--amount", "400000"], ["--full"]] : [["--full"]]) {
-        await ok("repay", ["--line-id", lineId, ...amount, "--execute"], AGENT);
+        await ok("repay", ["--allow-current-line-debt", "--line-id", lineId, ...amount, "--execute"], AGENT);
       }
       cycles.push({ digest: built.digest, requestId, spendBlock: BigInt(paid.providerPaid.blockNumber) });
     }

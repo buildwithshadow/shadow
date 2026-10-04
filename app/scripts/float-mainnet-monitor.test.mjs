@@ -576,9 +576,9 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     seen.dueAt = BigInt(paid.providerPaid.dueAt);
     // Line B draws and repays in two parts: back to OPEN.
     await purchase(agentB, AGENT_B, "b1");
-    await ok("repay", ["--line-id", seen.lineB, "--amount", "100000", "--execute"], AGENT_B);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineB, "--amount", "100000", "--execute"], AGENT_B);
     await reconciles({ balance: "1600000", totalSponsorObligations: "1600000", totalCommittedCapital: "2000000", surplus: "0" });
-    await ok("repay", ["--line-id", seen.lineB, "--full", "--execute"], AGENT_B);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineB, "--full", "--execute"], AGENT_B);
 
     const drawn = await monitor(["check"]);
     assert.deepEqual(drawn.alerts, []);
@@ -634,12 +634,12 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
   });
 
   test("reconcile stays clean through a partial repayment, a default, recovery and two claims", async () => {
-    await ok("repay", ["--line-id", seen.lineA, "--amount", "50000", "--execute"], AGENT_A);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineA, "--amount", "50000", "--execute"], AGENT_A);
     // A: available 800000, principal 200000. B: available 1000000.
     await reconciles({ balance: "1800000", totalSponsorObligations: "1800000", totalCommittedCapital: "2000000", surplus: "0" });
 
     await ok("sponsor", ["declare-default", "--line-id", seen.lineA, "--execute"], SPONSOR);
-    await ok("repay", ["--line-id", seen.lineA, "--amount", "50000", "--execute"], AGENT_A);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineA, "--amount", "50000", "--execute"], AGENT_A);
     // A: available 800000, principal 150000, recovery 50000.
     await reconciles({ balance: "1850000", totalSponsorObligations: "1850000", totalCommittedCapital: "2000000", surplus: "0" });
 
@@ -648,7 +648,7 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     // The unrepaid principal stays committed after the claim.
     await reconciles({ balance: "1000000", totalSponsorObligations: "1000000", totalCommittedCapital: "1150000", surplus: "0" });
 
-    await ok("repay", ["--line-id", seen.lineA, "--amount", "50000", "--execute"], AGENT_A);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineA, "--amount", "50000", "--execute"], AGENT_A);
     await reconciles({ balance: "1050000", totalSponsorObligations: "1050000", totalCommittedCapital: "1150000", surplus: "0" });
     assert.equal((await ok("sponsor", ["claim-defaulted", "--line-id", seen.lineA, "--execute"], SPONSOR)).amount, "50000");
     const settled = await reconciles({ balance: "1000000", totalSponsorObligations: "1000000", totalCommittedCapital: "1100000", surplus: "0" });

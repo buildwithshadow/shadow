@@ -484,7 +484,7 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
   });
 
   test("a blocked digest is refused at acceptance and at delivery", async () => {
-    await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
     const status = await ok("line", ["status", "--line-id", seen.lineId, "--provider", provider.address]);
     const overCap = BigInt(status.providers[0].remaining.nextSpendMax) + 1n;
     const over = await signedIntent("over", overCap, ["--allow-block"]);
@@ -654,18 +654,15 @@ describe("provider verification kit", { skip: e2eSkip }, () => {
     );
     const checked = await ok("provider", ["deliver", "--acceptance", path("acceptance-a.json"), "--result-hash", keccak256(toBytes("x"))], PROVIDER);
     assert.equal(checked.crossCheck, `passed: ProviderPaid in ${seen.a.paid.txHash} pays this acceptance's provider and principal`);
-    // A lookup that finds no ProviderPaid (it starts after the payment) cannot cross-check, and says so.
+    // A paid status alone cannot identify who received funds.
     const head = await client.getBlockNumber();
-    const skipped = await ok(
-      "provider",
-      ["deliver", "--acceptance", path("acceptance-a.json"), "--result-hash", keccak256(toBytes("x")), "--from-block", head.toString()],
-      PROVIDER,
-    );
-    assert.match(skipped.crossCheck, /^skipped: receiptStatus is paid \(authoritative\), but no ProviderPaid log for this digest is in blocks \d+-\d+; pass an earlier --from-block$/);
+    await fails("provider", ["deliver", "--acceptance", path("acceptance-a.json"), "--result-hash", keccak256(toBytes("x")), "--from-block", head.toString()], PROVIDER, /paid provider\/principal binding is unavailable/);
+    const recovered = await ok("provider", ["deliver", "--acceptance", path("acceptance-a.json"), "--result-hash", keccak256(toBytes("x")), "--from-block", head.toString(), "--payment-tx", seen.a.paid.txHash], PROVIDER);
+    assert.match(recovered.crossCheck, /^passed:/);
   });
 
   test("with --store the CLI accepts and delivers once per digest; without it the output says nothing was de-duplicated", async () => {
-    await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
     const e = await signedIntent("e", PRINCIPAL);
     const store = path("store");
     const none = "none: pass --store, or de-duplicate by digest in your server";

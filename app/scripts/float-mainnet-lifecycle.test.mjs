@@ -256,7 +256,7 @@ describe("pilot lifecycle through the participant CLIs", { skip: e2eSkip }, () =
     // with both hashes: a blind re-run of --amount would repay twice.
     const sentBefore = await client.getTransactionCount({ address: agent.address });
     const partial = await withReadsFailingAfterSend((rpc) =>
-      cli("repay", ["--line-id", seen.lineId, "--amount", "100000", "--execute"], { ...AGENT, ARC_RPC_URL: rpc }),
+      cli("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--amount", "100000", "--execute"], { ...AGENT, ARC_RPC_URL: rpc }),
     );
     assert.equal(partial.status, 1, JSON.stringify(partial.json, null, 2));
     const { json: sent } = partial;
@@ -293,7 +293,7 @@ describe("pilot lifecycle through the participant CLIs", { skip: e2eSkip }, () =
     const providerBefore = await balance(provider.address);
     let interrupted;
     try {
-      interrupted = await cli("repay", ["--line-id", seen.lineId, "--amount", "50000", "--execute"], {
+      interrupted = await cli("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--amount", "50000", "--execute"], {
         ...AGENT,
         ARC_RPC_URL: `http://127.0.0.1:${REPAY_PROXY_PORT}`,
       });
@@ -329,7 +329,7 @@ describe("pilot lifecycle through the participant CLIs", { skip: e2eSkip }, () =
 
     // Once the specific hash is accounted for, --full reads only the remaining
     // principal. Repeating --amount 50000 here would duplicate the repayment.
-    const repaid = await ok("repay", ["--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    const repaid = await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
     assert.equal(repaid.amount, "100000");
     assert.deepEqual(repaid.after, { state: "OPEN", principalOutstanding: "0", availableReserve: "1000000" });
     assert.equal((await lineStatus()).state, "OPEN");

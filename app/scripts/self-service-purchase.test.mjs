@@ -110,10 +110,7 @@ function setup() {
     };
     const signature = await provider.signTypedData(typedData);
     if (receiptTamper) message.principal = "50001";
-    return {
-      ok: true,
-      text: async () => JSON.stringify({ typedData, signature }),
-    };
+    return new Response(JSON.stringify({ typedData, signature }));
   };
   const create = () =>
     createSelfServicePurchase({

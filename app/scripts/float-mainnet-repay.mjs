@@ -1,4 +1,5 @@
 import { floatAbi } from "./float-mainnet-config.mjs";
+import { parseAbi } from "viem";
 import {
   WRITE_OPTIONS,
   UsageError,
@@ -31,6 +32,9 @@ function repayerKey(env = process.env) {
 
 async function repay(values) {
   const lineId = bytes32Flag(values, "line-id");
+  const expectedDraw = values["expected-draw"] === undefined ? null : bytes32Flag(values, "expected-draw");
+  if (expectedDraw && values["allow-current-line-debt"]) throw new UsageError("purchase-bound repayment and generic-current-debt consent are mutually exclusive");
+  if (!expectedDraw && !values["allow-current-line-debt"]) throw new UsageError("pass --expected-draw <purchase digest> for guarded repayment; legacy V1 repayment requires --allow-current-line-debt and can settle a newer purchase after a delayed approval");
   if ((values.amount === undefined) === (values.full !== true)) throw new UsageError("pass --amount <n> or --full");
   const requested = values.full ? null : uintFlag(values, "amount");
   const mode = writeMode(values);
@@ -40,6 +44,11 @@ async function repay(values) {
   const signer = signerFor(connection, mode, keyEnv);
   const block = await latestBlock(connection);
   const line = await readLine(connection, lineId, block.number);
+  const guardedAbi = parseAbi(["function repaymentBindingVersion() view returns (uint256)", "function currentDrawDigest(bytes32) view returns (bytes32)", "function repayForDraw(bytes32,bytes32,uint256)"]);
+  if (expectedDraw) {
+    const at = (functionName, args = []) => connection.client.readContract({ address: connection.address, abi: guardedAbi, functionName, args, blockNumber: block.number });
+    if (await at("repaymentBindingVersion") !== 2n || (await at("currentDrawDigest", [lineId])).toLowerCase() !== expectedDraw.toLowerCase()) throw new Error("the reviewed purchase is not the current draw on a guarded contract; no repayment or approval was prepared");
+  }
   const state = stateName(line);
   const amount = requested ?? line.principalOutstanding;
   const funding = await usdcFunding(connection, signer.address, amount);
@@ -54,7 +63,9 @@ async function repay(values) {
 
   const calls = [
     funding.approval,
-    { address: connection.address, abi: floatAbi, functionName: "repay", args: [lineId, amount] },
+    expectedDraw
+      ? { address: connection.address, abi: guardedAbi, functionName: "repayForDraw", args: [lineId, expectedDraw, amount] }
+      : { address: connection.address, abi: floatAbi, functionName: "repay", args: [lineId, amount] },
   ].filter(Boolean);
   const result = await runCalls(connection, signer, calls);
   const output = {
@@ -63,6 +74,8 @@ async function repay(values) {
     repayer: signer.address,
     keyEnv,
     amount,
+    expectedDraw,
+    consent: expectedDraw ? "reviewed-purchase-only" : "any-current-line-debt-at-execution",
     approvalIncluded: funding.approval !== null,
     before: { state, principalOutstanding: line.principalOutstanding },
   };
@@ -78,12 +91,12 @@ async function repay(values) {
 
 const COMMANDS = {
   repay: {
-    options: { ...WRITE_OPTIONS, "line-id": { type: "string" }, amount: { type: "string" }, full: { type: "boolean" } },
+    options: { ...WRITE_OPTIONS, "line-id": { type: "string" }, "expected-draw": { type: "string" }, "allow-current-line-debt": { type: "boolean" }, amount: { type: "string" }, full: { type: "boolean" } },
     run: repay,
   },
 };
 const USAGE = [
-  "node app/scripts/float-mainnet-repay.mjs --line-id <bytes32> (--amount <n> | --full) [--execute | --calldata --from <payer>] [--manifest <path>]",
+  "node app/scripts/float-mainnet-repay.mjs --line-id <bytes32> (--expected-draw <purchase digest> | --allow-current-line-debt) (--amount <n> | --full) [--execute | --calldata --from <payer>] [--manifest <path>]",
   "Amounts are atomic USDC. Signs with FLOAT_REPAYER_PRIVATE_KEY, or FLOAT_AGENT_PRIVATE_KEY when that is unset (never printed); without --execute it only simulates. --calldata --from <payer> needs no key.",
 ];
 

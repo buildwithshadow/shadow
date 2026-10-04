@@ -191,6 +191,11 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
         withLock: async (_k, work) => work(),
         fetchImpl: async (url, options) => {
           const path = new URL(url).pathname;
+          if (path === "/serve") {
+            const body = JSON.parse(options.body);
+            const saved = [...map.values()].map(value => JSON.parse(value)).find(record => record.intent?.digest === body.digest);
+            assert.equal(body.paymentTransactionHash, saved.txHash ?? undefined, "browser forwards the original hash when retained, never invents a replacement after lost wallet response");
+          }
           const response = await fetch(`http://127.0.0.1:${server.address().port}${path}`, options);
           if (fault === "delivery-response" && path === "/serve" && response.ok && !droppedDelivery) {
             await response.arrayBuffer(); // Server completed the paid job, client never receives it.

@@ -607,7 +607,7 @@ describe("evidence for a pilot line run through the participant CLIs", { skip: e
 
       const repayments = [];
       for (const amount of day === 2 ? [["--amount", "400000"], ["--full"]] : [["--full"]]) {
-        const repaid = eventOf(await ok("repay", ["--line-id", seen.line.lineId, ...amount, "--execute"], AGENT), "Repaid");
+        const repaid = eventOf(await ok("repay", ["--allow-current-line-debt", "--line-id", seen.line.lineId, ...amount, "--execute"], AGENT), "Repaid");
         repayments.push({ txHash: repaid.transactionHash, blockNumber: repaid.blockNumber, payer: agent.address, amount: repaid.args.amount });
       }
       seen.cycles.push({

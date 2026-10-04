@@ -6,6 +6,7 @@ import {
   stringToHex,
 } from "viem";
 import abi from "../scripts/float-mainnet-abi.json" with { type: "json" };
+import { readBoundedJson } from "./boundedResponse.mjs";
 
 // Wallet-executed testnet purchases. No enrollment bearer token or server signer.
 const TYPES = {
@@ -215,9 +216,7 @@ export function createSelfServicePurchase({
       response.ok,
       `Provider unavailable (${response.status}). Keep the original purchase and retry recovery.`,
     );
-    const text = await response.text();
-    assert(text.length <= 1_000_000, "Provider response is too large.");
-    return JSON.parse(text);
+    return readBoundedJson(response);
   }
   async function signedReceipt(file, types, primaryType) {
     const expected = {
@@ -450,7 +449,7 @@ export function createSelfServicePurchase({
     const result =
       record.stage === "delivered"
         ? record.result
-        : await post("/serve", { digest: record.intent.digest });
+        : await post("/serve", { digest: record.intent.digest, ...(record.txHash ? { paymentTransactionHash: record.txHash } : {}) });
     const d = await signedReceipt(result.delivery, DELIVERY, "DeliveryReceipt");
     assert(
       same(d.digest, record.intent.digest) &&
