@@ -527,7 +527,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         <h2 id="funding-review-title">{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : "Reclaim eligible funds"}</h2>
         <p id="funding-review-description">{prepared.summary}</p>
         <dl className="fundingDetails"><div><dt>Wallet</dt><dd><code>{prepared.account}</code></dd></div>
-          <div><dt>Amount</dt><dd>{usdc(prepared.amount)} test USDC</dd></div>
+          <div><dt>Amount</dt><dd>{usdc(prepared.amount)} {mainnet ? 'USDC' : 'test USDC'}</dd></div>
           <div><dt>Contract receiving the call</dt><dd><code>{prepared.to}</code></dd></div>
           {prepared.lineId && <div><dt>Line ID</dt><dd><code>{prepared.lineId}</code></dd></div>}
         </dl>
