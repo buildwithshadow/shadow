@@ -6,6 +6,7 @@ import {
   connectCandidate,
   endpointHashFrom,
   floatAbi,
+  floatEventAbi,
   printJson,
   readDeployment,
   revertName,
@@ -212,7 +213,7 @@ export function eventRecord(log) {
 }
 
 function eventItem(eventName) {
-  return floatAbi.find((item) => item.type === "event" && item.name === eventName);
+  return floatEventAbi.find((item) => item.name === eventName);
 }
 
 // -32005/"Request exceeds defined limit" alone may mean a quota, not a
@@ -441,7 +442,7 @@ export async function runCalls(connection, signer, calls, { simulate = true, che
       throw new SendFailure(`${call.functionName} transaction ${txHash} reverted onchain`, { status: "reverted", txHash, txHashes });
     }
     const logs = receipt.logs.filter((log) => isAddressEqual(log.address, connection.address));
-    events.push(...parseEventLogs({ abi: floatAbi, logs }).map(eventRecord));
+    events.push(...parseEventLogs({ abi: floatEventAbi, logs }).map(eventRecord));
   }
   return { ok: true, dryRun: false, txHashes, events };
 }

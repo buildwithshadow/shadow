@@ -1,5 +1,5 @@
 import { decodeEventLog, decodeFunctionData, erc20Abi, keccak256, zeroAddress } from "viem";
-import { floatAbi } from "./float-mainnet-config.mjs";
+import { floatAbi, floatEventAbi } from "./float-mainnet-config.mjs";
 import {
   UsageError,
   connect,
@@ -76,7 +76,7 @@ async function discover(connection, indexPath, pinned) {
   const scanned = from <= pinned.number ? { fromBlock: from, toBlock: pinned.number } : null;
   const logs = scanned ? await findLogs(connection, undefined, undefined, from, pinned.number) : [];
   for (const log of logs) {
-    const { eventName, args } = decodeEventLog({ abi: floatAbi, data: log.data, topics: log.topics });
+    const { eventName, args } = decodeEventLog({ abi: floatEventAbi, data: log.data, topics: log.topics });
     events.push({ event: eventName, args, blockNumber: log.blockNumber, transactionHash: log.transactionHash });
   }
 
