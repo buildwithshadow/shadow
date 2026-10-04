@@ -16,13 +16,14 @@ import {
 import { account, startAnvil, e2eSkip } from "./float-mainnet-e2e.mjs";
 import { connectCandidate } from "./float-mainnet-config.mjs";
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
-import { createSelfServicePurchase } from "../src/selfServicePurchase.mjs";
+import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
 
-for (const fault of ["wallet-response", "delivery-response"]) test(
-  `new sponsor: ${fault} lost after payment succeeds; retry delivers once, repays and reclaims`,
+for (const mainnet of [false,true]) for (const fault of ["wallet-response", "delivery-response"]) test(
+  `new ${mainnet?"guarded mainnet":"testnet"} sponsor: ${fault} lost after payment succeeds; retry delivers once, repays and reclaims`,
   { skip: e2eSkip, timeout: 120000 },
   async (t) => {
-    const anvil = await startAnvil(18731);
+    const chainId=mainnet?5042:5042002,price=mainnet?5000n:50000n;
+    const anvil = await startAnvil(18731,[],BigInt(chainId));
     const dir = mkdtempSync(join(tmpdir(), "shadow-public-"));
     let server;
     t.after(async () => {
@@ -34,7 +35,7 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
       rmSync(dir, { recursive: true, force: true });
     });
     const chain = defineChain({
-      id: 5042002,
+      id: chainId,
       name: "local",
       nativeCurrency: { name: "test", symbol: "test", decimals: 18 },
       rpcUrls: { default: { http: [anvil.rpc] } },
@@ -53,7 +54,7 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
           "utf8",
         ),
       );
-    const compiled = artifact("ShadowFloatPublicTestnet"),
+    const compiled = artifact(mainnet?"ShadowFloatMainnetGuarded":"ShadowFloatPublicTestnet"),
       tokenArtifact = artifact("MockAsset");
     const mine = async (hash) => {
       const r = await client.waitForTransactionReceipt({ hash });
@@ -80,14 +81,7 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
       perSpend: 100000n,
       dailySpend: 1000000n,
     };
-    const contract = await deploy(compiled, [
-      token,
-      caps,
-      caps,
-      60n,
-      86400n,
-      86400n,
-    ]);
+    const contract = await deploy(compiled, [token,...(mainnet?[BigInt(chainId)]:[]),caps,caps,60n,86400n,86400n]);
     const write = async (a, address, abi, functionName, args = []) =>
       mine(await wallet(a).writeContract({ address, abi, functionName, args }));
     const read = async (functionName, args = []) => {
@@ -110,7 +104,11 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
       100000n,
     ]);
     // No owner allowlisting or API enrollment step.
-    await write(sponsor, contract, compiled.abi, "registerSponsor");
+    if(mainnet){
+      await write(owner,contract,compiled.abi,'setSponsorAllowed',[sponsor.address,true]);
+      await write(owner,contract,compiled.abi,'setOpeningsPaused',[false]);
+      await write(owner,contract,compiled.abi,'setSpendsPaused',[false]);
+    }else await write(sponsor, contract, compiled.abi, "registerSponsor");
     await write(sponsor, token, erc20Abi, "approve", [contract, 100000n]);
     const now = (await client.getBlock()).timestamp,
       endpoint = "https://service.example/report";
@@ -134,7 +132,7 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
     const connection = await connectCandidate({
       rpcUrl: anvil.rpc,
       address: contract,
-      expectedChainId: 5042002n,
+      expectedChainId: BigInt(chainId),
       runtimeHash,
       deployBlock: 0n,
     });
@@ -144,7 +142,7 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
       connection,
       account: provider,
       endpointHash: keccak256(stringToHex(endpoint)),
-      price: 50000n,
+      price,
       storeDir: dir,
       service: async () => {
         jobs++;
@@ -160,7 +158,7 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
       };
     const agentWallet = {
       chain,
-      getChainId: async () => 5042002,
+      getChainId: async () => chainId,
       getAddresses: async () => [agent.address],
       request: async ({ params }) => agent.signTypedData(JSON.parse(params[1])),
       sendTransaction: async (args) => {
@@ -172,18 +170,18 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
       },
     };
     const config = {
-      chainId: 5042002,
+      chainId,
       account: agent.address,
       contract,
       runtimeHash,
       provider: provider.address,
       providerUrl: "https://service.example",
       endpoint,
-      principal: "50000",
+      principal: String(price),
     };
     let droppedDelivery = false;
     const create = () =>
-      createSelfServicePurchase({
+      (mainnet?createGuardedMainnetPurchase:createSelfServicePurchase)({
         client,
         wallet: agentWallet,
         config,
@@ -223,7 +221,7 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
     await create().recover();
     assert.equal(sends, 1);
     assert.equal(jobs, 1);
-    assert.equal((await read("lines", [lineId])).principalOutstanding, 50000n);
+    assert.equal((await read("lines", [lineId])).principalOutstanding, price);
     assert.equal(
       await client.readContract({
         address: token,
@@ -231,14 +229,15 @@ for (const fault of ["wallet-response", "delivery-response"]) test(
         functionName: "balanceOf",
         args: [provider.address],
       }),
-      50000n,
+      price,
     );
     await write(owner, token, tokenArtifact.abi, "mint", [
       agent.address,
-      50000n,
+      price,
     ]);
-    await write(agent, token, erc20Abi, "approve", [contract, 50000n]);
-    await write(agent, contract, compiled.abi, "repay", [lineId, 50000n]);
+    await write(agent, token, erc20Abi, "approve", [contract, price]);
+    if(mainnet){const draw=await read('currentDrawDigest',[lineId]);await write(agent,contract,compiled.abi,'repayForDraw',[lineId,draw,price]);}
+    else await write(agent,contract,compiled.abi,'repay',[lineId,price]);
     await write(sponsor, contract, compiled.abi, "closeLine", [lineId]);
     assert.equal(
       await client.readContract({

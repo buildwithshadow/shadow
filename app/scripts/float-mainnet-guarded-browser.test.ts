@@ -4,12 +4,16 @@ import test from 'node:test'
 import {createPublicClient,createTestClient,createWalletClient,decodeFunctionData,getAddress,http,keccak256,stringToHex,toHex,zeroHash,zeroAddress,type Address} from 'viem'
 // @ts-expect-error shared Anvil fixture is JavaScript
 import {account,startAnvil,e2eSkip} from './float-mainnet-e2e.mjs'
-import {CANDIDATE_FUNDING,candidateFundingAbi,candidateFundingChain,createCandidateFundingKit,type CandidateWalletClient,type CandidateOpenInput} from '../src/candidateFunding.ts'
+import {CANDIDATE_FUNDING as TESTNET_FUNDING,candidateFundingAbi,candidateFundingChain as testnetFundingChain,guardedMainnetChain,createCandidateFundingKit,createGuardedMainnetFundingKit,type CandidateWalletClient,type CandidateOpenInput} from '../src/candidateFunding.ts'
+import {GUARDED_MAINNET} from '../src/guardedMainnet.ts'
 const guardedArtifact=JSON.parse(readFileSync(new URL('../../contracts/out/ShadowFloatMainnetGuarded.sol/ShadowFloatMainnetGuarded.json',import.meta.url),'utf8'))
 const input: CandidateOpenInput = { agent:account(2).address,provider:account(3).address,endpoint:'https://provider.example/result',reserve:'0.10',lineSpendCap:'0.15',dailySpendCap:'0.10',providerPerSpendCap:'0.05',providerDailyCap:'0.10',expiryDays:'7',repaymentHours:'24'}
 const typeString='SpendIntent(address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor)'
-test('guarded browser repayment binds calldata and onchain confirmation to the reviewed draw', { skip: e2eSkip, timeout: 60_000 }, async () => {
-  const anvil = await startAnvil(18581)
+for(const mainnet of [false,true]) test(`guarded ${mainnet?'mainnet':'testnet'} participant repayment binds the draw and recovers a lost wallet confirmation without resending`, { skip: e2eSkip, timeout: 60_000 }, async () => {
+  const CANDIDATE_FUNDING = mainnet ? GUARDED_MAINNET : TESTNET_FUNDING
+  const candidateFundingChain = mainnet ? guardedMainnetChain : testnetFundingChain
+  const price = mainnet ? 5_000n : 50_000n
+  const anvil = await startAnvil(18581, [], BigInt(CANDIDATE_FUNDING.chainId))
   try {
     const owner = account(0), sponsorAccount = account(6), agentAccount = account(2), providerAccount = account(3)
     const publicClient = createPublicClient({ chain: candidateFundingChain, transport: http(anvil.rpc), cacheTime: 0, pollingInterval: 20 })
@@ -48,8 +52,15 @@ test('guarded browser repayment binds calldata and onchain confirmation to the r
     assert.equal(await publicClient.readContract({address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,functionName:'openingsPaused'}),true);
     assert.equal(await publicClient.readContract({address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,functionName:'spendsPaused'}),true);
     const deployment = {...CANDIDATE_FUNDING, runtimeHash:keccak256((await publicClient.getCode({address:CANDIDATE_FUNDING.address}))!), drawBoundRepayment:true};
-    const {verifyCandidate, createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, readCandidateLine} = createCandidateFundingKit(deployment);
+    const {verifyCandidate, createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, readCandidateLine, reconcileCandidatePending} = (mainnet ? createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment);
     await verifyCandidate(publicClient)
+    if(mainnet){
+      assert.throws(()=>createCandidateFundingKit(deployment),/testnet/);
+      for(const patch of [{drawBoundRepayment:false},{selfRegistration:true},{maxReserve:100001n},{maxPerSpend:5001n},{maxLineSpend:5001n}]){
+        assert.throws(()=>createGuardedMainnetFundingKit({...deployment,...patch}));
+      }
+      await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...input,provider:providerAccount.address}),/enabled|paused/);
+    }
     async function write(who: any, request: any) {
       const hash = await localWallet(who).writeContract(request)
       const receipt = await publicClient.waitForTransactionReceipt({ hash })
@@ -65,7 +76,11 @@ test('guarded browser repayment binds calldata and onchain confirmation to the r
       return { publicClient, walletClient: injectedWallet(who), account: who, journal }
     }
     const sponsorSession = makeSession(sponsorAccount.address)
-    const localInput = { ...input, agent: agentAccount.address, provider: providerAccount.address }
+    const localInput = { ...input, ...(mainnet?{lineSpendCap:'0.005',dailySpendCap:'0.005',providerPerSpendCap:'0.005',providerDailyCap:'0.005'}:{}), agent: agentAccount.address, provider: providerAccount.address }
+    if(mainnet){
+      await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...localInput,provider:CANDIDATE_FUNDING.usdc}),/EOA/);
+      await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...localInput,lineSpendCap:'0.005001'}),/limit/);
+    }
     const approve = await prepareCandidateOpen(publicClient, sponsorAccount.address, localInput)
     assert.equal(approve.kind, 'approve')
     assert.equal((await executeCandidateCall(sponsorSession, approve)).status, 'confirmed')
@@ -76,11 +91,11 @@ test('guarded browser repayment binds calldata and onchain confirmation to the r
     assert.equal((await readCandidateLine(publicClient, id)).availableReserve, 100_000n)
     const block = await publicClient.getBlock()
     const termsHash = await publicClient.readContract({ address: CANDIDATE_FUNDING.address, abi: candidateFundingAbi, functionName: 'currentTermsHash', args: [id, providerAccount.address] })
-    const message = { agent: agentAccount.address, sponsor: sponsorAccount.address, lineId: id, lineEpoch: 1n, termsHash, provider: providerAccount.address, endpointHash: keccak256(stringToHex(localInput.endpoint)), principal: 50_000n, maximumTotalDebt: 50_000n, dueAt: block.timestamp + 7_200n, nonce: 0n, signatureExpiry: block.timestamp + 900n, executor: zeroAddress }
+    const message = { agent: agentAccount.address, sponsor: sponsorAccount.address, lineId: id, lineEpoch: 1n, termsHash, provider: providerAccount.address, endpointHash: keccak256(stringToHex(localInput.endpoint)), principal: price, maximumTotalDebt: price, dueAt: block.timestamp + 7_200n, nonce: 0n, signatureExpiry: block.timestamp + 900n, executor: zeroAddress }
     const types = { SpendIntent: typeString.slice('SpendIntent('.length, -1).split(',').map(item => { const [type, name] = item.split(' '); return { type, name } }) }
     const signature = await agentAccount.signTypedData({ domain: { name: 'ShadowFloatMainnet', version: '1', chainId: CANDIDATE_FUNDING.chainId, verifyingContract: CANDIDATE_FUNDING.address }, types, primaryType: 'SpendIntent', message })
     await write(agentAccount, { address: CANDIDATE_FUNDING.address, abi: candidateFundingAbi, functionName: 'executeSpend', args: [message, signature] })
-    assert.equal((await readCandidateLine(publicClient, id)).principalOutstanding, 50_000n)
+    assert.equal((await readCandidateLine(publicClient, id)).principalOutstanding, price)
     const repayerSession = makeSession(agentAccount.address)
     assert.equal((await executeCandidateCall(repayerSession, await prepareCandidateRepay(publicClient, agentAccount.address, id))).status, 'confirmed')
     const repayment = await prepareCandidateRepay(publicClient, agentAccount.address, id)
@@ -88,16 +103,31 @@ test('guarded browser repayment binds calldata and onchain confirmation to the r
     const decoded=decodeFunctionData({abi:guardedArtifact.abi,data:repayment.data});
     assert.equal(decoded.functionName,'repayForDraw');
     assert.equal(decoded.args![1],await publicClient.readContract({address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,functionName:'currentDrawDigest',args:[id]}));
-    assert.equal((await executeCandidateCall(repayerSession, repayment)).status, 'confirmed')
+    let originalHash: any;
+    const originalSend = repayerSession.walletClient.sendTransaction;
+    repayerSession.walletClient.sendTransaction = async request => {
+      originalHash = await originalSend(request);
+      await publicClient.waitForTransactionReceipt({hash: originalHash});
+      throw new Error('deliberately lost repayment confirmation');
+    };
+    assert.equal((await executeCandidateCall(repayerSession, repayment)).status, 'unknown');
+    const held = repayerSession.journal.load()!;
+    assert.equal(held.kind, 'repay'); assert.equal(held.txHash, null);
+    await assert.rejects(() => executeCandidateCall(repayerSession, repayment));
+    const resolved = await reconcileCandidatePending(publicClient, held, originalHash);
+    assert.equal(resolved.status, 'confirmed');
+    repayerSession.journal.clear();
+    const repayments = await publicClient.getContractEvents({address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,eventName:'DrawRepaid',fromBlock:0n});
+    assert.equal(repayments.length,1);
     const repaid = await readCandidateLine(publicClient, id)
-    assert.equal(repaid.stateName, 'OPEN'); assert.equal(repaid.principalOutstanding, 0n); assert.equal(repaid.cumulativePrincipalPaid, 50_000n)
+    assert.equal(repaid.stateName, 'OPEN'); assert.equal(repaid.principalOutstanding, 0n); assert.equal(repaid.cumulativePrincipalPaid, price)
     const close = await prepareCandidateReclaim(publicClient, sponsorAccount.address, id)
     assert.equal(close.amount, 100_000n)
     assert.equal((await executeCandidateCall(sponsorSession, close)).status, 'confirmed')
     assert.equal((await readCandidateLine(publicClient, id)).stateName, 'CLOSED')
     const balance = (who: Address) => publicClient.readContract({ address: CANDIDATE_FUNDING.usdc, abi: tokenArtifact.abi, functionName: 'balanceOf', args: [who] })
     assert.equal(await balance(sponsorAccount.address), 1_000_000n)
-    assert.equal(await balance(providerAccount.address), 50_000n)
+    assert.equal(await balance(providerAccount.address), price)
     assert.equal(await balance(CANDIDATE_FUNDING.address), 0n)
   } finally { anvil.stop() }
 })

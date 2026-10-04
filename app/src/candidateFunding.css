@@ -99,3 +99,5 @@
 .gatewayFunding [role="status"]:not(:empty), .gatewayFunding [role="alert"]:not(:empty) { margin-top: 16px; line-height: 1.6; overflow-wrap: anywhere; }
 .gatewayFunding a { display: inline-flex; align-items: center; min-height: 44px; text-decoration: underline; }
 .fundingDesk [hidden] { display: none !important; }
+
+.candidateShell :is(.fundingFoot, .siteFooter) a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }

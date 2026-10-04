@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
+import { GUARDED_MAINNET, GUARDED_MAINNET_SERVICE } from "./guardedMainnet";
 import { PUBLIC_TESTNET, PUBLIC_TEST_SERVICE } from "./publicTestnet";
 import { HomePage } from "./HomePage";
 import { CandidateFundingDesk } from "./CandidateFundingDesk";
@@ -1768,7 +1769,8 @@ function App() {
   const { pathname } = useLocation();
   const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
   const isRecordsRoute = route === "/records";
-  const isFundingDeskRoute = route === "/funding" || route === "/start";
+  const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
+  const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet";
   const [state, setState] = useState<ShadowState | null>(null);
   const [loading, setLoading] = useState(false);
   const [account, setAccount] = useState<Address>();
@@ -2625,7 +2627,7 @@ function App() {
           <NavLink to="/builders" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Builders
           </NavLink>
-          <NavLink to="/start" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
+          <NavLink to={isGuardedMainnetRoute ? "/mainnet" : "/start"} className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Funding
           </NavLink>
           <NavLink to="/roadmap" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
@@ -2642,7 +2644,7 @@ function App() {
             <span className="navWalletDot" />
             {account ? shortAddress(account) : "Wallet"}
           </button>}
-          <Link to="/start" className="navCta">
+          <Link to={isGuardedMainnetRoute ? "/mainnet" : "/start"} className="navCta">
             Fund an agent
           </Link>
         </div>
@@ -2662,13 +2664,14 @@ function App() {
         <Route path="/proof" element={<Navigate to="/float" replace />} />
         <Route path="/builders" element={buildersPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
+        {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="guarded-mainnet" deployment={GUARDED_MAINNET} service={GUARDED_MAINNET_SERVICE} />} />}
         <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
         <Route path="/archive" element={<Navigate to="/float" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
-      <SiteFooter />
+      <SiteFooter mainnetCandidate={isGuardedMainnetRoute} />
     </main>
   );
 }
@@ -7272,7 +7275,7 @@ function ShadowMark() {
   );
 }
 
-function SiteFooter() {
+function SiteFooter({mainnetCandidate = false}: {mainnetCandidate?: boolean}) {
   const sections: Array<{ title: string; links: Array<{ label: string; href: string }> }> = [
     {
       title: "Product",
@@ -7315,7 +7318,7 @@ function SiteFooter() {
           </p>
           <div className="siteFooterBadge">
             <span className="heroBadgeDot" />
-            live on arc testnet · chain 5042002
+            {mainnetCandidate ? "controlled Arc mainnet candidate · chain 5042" : "live on arc testnet · chain 5042002"}
           </div>
         </div>
         <div className="siteFooterColumns">
@@ -7341,7 +7344,7 @@ function SiteFooter() {
         </div>
       </div>
       <div className="siteFooterBottom">
-        <span>Built on Arc testnet with Circle USDC · 2026</span>
+        <span>Built on Arc {mainnetCandidate ? "mainnet" : "testnet"} with Circle USDC · 2026</span>
         <span>Shadow Float · spending lines, controls, and receipts on Arc</span>
       </div>
     </footer>

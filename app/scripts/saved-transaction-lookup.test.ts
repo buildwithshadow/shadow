@@ -112,7 +112,7 @@ test("a chain without a known explorer is not looked up", async () => {
   assert.equal(
     await findSentTransactionHash({
       ...base(17, 21, fetchImpl),
-      chainId: 5042,
+      chainId: 123456,
     }),
     null,
   );
@@ -146,4 +146,11 @@ test("explorer failures and malformed results throw instead of guessing", async 
     findSentTransactionHash(base(17, 21, badHash.fetchImpl)),
     /malformed/,
   );
+});
+
+
+test('mainnet nonce lookup uses its own explorer and never the testnet host',async()=>{
+  const x=explorer([{items:[item(17)],next_page_params:null}]);
+  assert.equal(await findSentTransactionHash({...base(17,21,x.fetchImpl),chainId:5042}),hashFor(17));
+  assert(x.urls[0].startsWith('https://explorer.arc.io/api/v2/'));
 });

@@ -4,6 +4,7 @@ import {
   hashTypedData,
   keccak256,
   stringToHex,
+  parseAbi,
 } from "viem";
 import abi from "../scripts/float-mainnet-abi.json" with { type: "json" };
 import { readBoundedJson } from "./boundedResponse.mjs";
@@ -60,7 +61,17 @@ const textHash = (x) => keccak256(stringToHex(x));
 const serial = (x) =>
   JSON.stringify(x, (_, v) => (typeof v === "bigint" ? v.toString() : v));
 const locks = new Set();
-export function createSelfServicePurchase({
+export function createSelfServicePurchase(options) {
+  assert(options.config.chainId === 5042002, 'Only Arc testnet is supported.');
+  return createPurchase(options, false);
+}
+export function createGuardedMainnetPurchase(options) {
+  const principal = BigInt(options.config.principal);
+  assert(options.config.chainId === 5042 && principal > 0n && principal <= 5000n,
+    'Guarded mainnet supports a bounded purchase of at most 0.005 USDC.');
+  return createPurchase(options, true);
+}
+function createPurchase({
   client,
   wallet,
   config,
@@ -77,9 +88,9 @@ export function createSelfServicePurchase({
     });
   },
   random = () => crypto.getRandomValues(new Uint8Array(32)),
-}) {
+}, mainnet) {
   config = Object.freeze({ ...config });
-  assert(config.chainId === 5042002, "Only Arc testnet is supported.");
+  const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
   const account = getAddress(config.account),
     contract = getAddress(config.contract),
     provider = getAddress(config.provider);
@@ -181,19 +192,26 @@ export function createSelfServicePurchase({
   async function identity() {
     assert(
       (await client.getChainId()) === config.chainId,
-      "Switch to Arc testnet.",
+      `Switch to ${network}.`,
     );
     const code = await client.getCode({ address: contract });
     assert(
       code && keccak256(code) === config.runtimeHash,
       "Contract does not match the approved release.",
     );
+    if (mainnet) await guardedIdentity();
+  }
+  async function guardedIdentity() {
+    const binding = await client.readContract({ address: contract, abi: parseAbi(['function repaymentBindingVersion() view returns (uint256)']), functionName: 'repaymentBindingVersion' });
+    assert(binding === 2n, 'Guarded repayment identity is inconsistent.');
+    const code = await client.getCode({ address: provider });
+    assert((code ?? '0x') === '0x', 'This release supports providers with ordinary EOA wallets only.');
   }
   async function connected() {
     await identity();
     assert(
       (await wallet.getChainId()) === config.chainId,
-      "Switch your wallet to Arc testnet.",
+      `Switch your wallet to ${network}.`,
     );
     const addresses = await wallet.getAddresses();
     assert(
@@ -272,9 +290,9 @@ export function createSelfServicePurchase({
     const principal = BigInt(config.principal);
     assert(
       principal > 0n &&
-        principal <= 1000000n &&
+        principal <= (mainnet ? 5000n : 1000000n) &&
         principal <= line.availableReserve,
-      "Insufficient authorized testnet funding.",
+      "Insufficient authorized funding.",
     );
     const block = await client.getBlock();
     const minimum = await read("minimumRepaymentWindow");
