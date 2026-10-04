@@ -58,10 +58,36 @@ export interface CandidateJournal { key: string; load(): CandidatePending | null
 export interface CandidateSession { publicClient: CandidateReadClient; walletClient: CandidateWalletClient; account: Address; journal: CandidateJournal; onStage?: (pending: CandidatePending) => void }
 export type CandidateResolution = { status: 'confirmed' | 'reverted' | 'replaced' | 'unknown'; txHash: Hash | null; message: string; lineId?: Hash }
 
-export type CandidateDeployment = Omit<typeof CANDIDATE_FUNDING, 'address' | 'runtimeHash'> & { address: Address; runtimeHash: Hash; selfRegistration?: boolean; drawBoundRepayment?: boolean }
+export interface CandidateDeployment {
+  chainId: number; address: Address; usdc: Address; runtimeHash: Hash; signatureTtl: bigint;
+  maxReserve: bigint; maxLineSpend: bigint; maxDailySpend: bigint; maxPerSpend: bigint;
+  selfRegistration?: boolean; drawBoundRepayment?: boolean;
+}
+export const guardedMainnetChain = defineChain({ id: 5042, name: 'Arc Mainnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.mainnet.arc.io'] } }, blockExplorers: { default: { name: 'Arc explorer', url: 'https://explorer.arc.io' } } })
+export function candidateChainFor(deployment: CandidateDeployment) {
+  if (deployment.chainId === 5042002) return candidateFundingChain
+  if (deployment.chainId === 5042 && deployment.drawBoundRepayment && !deployment.selfRegistration) return guardedMainnetChain
+  throw new Error('Unsupported funding deployment.')
+}
+export function createGuardedMainnetFundingKit(deployment: CandidateDeployment) {
+  if (deployment.chainId !== 5042 || !deployment.drawBoundRepayment || deployment.selfRegistration
+      || deployment.maxReserve <= 0n || deployment.maxReserve > 100_000n
+      || [deployment.maxLineSpend, deployment.maxDailySpend, deployment.maxPerSpend].some(cap => cap <= 0n || cap > 5_000n)) {
+    throw new Error('Guarded mainnet requires draw-bound repayment, admitted sponsors and the bounded release limits.')
+  }
+  return createFundingKit(deployment)
+}
 export function createCandidateFundingKit(deployment: CandidateDeployment) {
-  const CANDIDATE_FUNDING = Object.freeze({ ...deployment })
-  if (CANDIDATE_FUNDING.chainId !== 5042002) throw new Error('Only Arc testnet is supported.')
+  if (deployment.chainId !== 5042002) throw new Error('Only Arc testnet is supported.')
+  return createFundingKit(deployment)
+}
+function createFundingKit(inputDeployment: CandidateDeployment) {
+  const deployment = Object.freeze({ ...inputDeployment })
+  const CANDIDATE_FUNDING = deployment
+  const candidateFundingChain = candidateChainFor(deployment)
+  const mainnet = deployment.chainId === 5042
+  const network = mainnet ? 'Arc mainnet' : 'Arc testnet'
+  const currency = mainnet ? 'USDC' : 'testnet USDC'
   const baseAbi: Abi = deployment.selfRegistration ? [...candidateAbiJson,
     { type: 'function', name: 'registerSponsor', inputs: [], outputs: [], stateMutability: 'nonpayable' },
     { type: 'function', name: 'sponsorAdmissionRevoked', inputs: [{ name: 'sponsor', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
@@ -86,7 +112,7 @@ function same(a: string, b: string) { return a.toLowerCase() === b.toLowerCase()
 function amount(raw: string, label: string, ceiling: bigint): bigint {
   if (!/^\d{1,12}(\.\d{1,6})?$/.test(raw)) throw new Error(`${label} must be a positive USDC amount with up to six decimal places.`)
   const parsed = parseUnits(raw, 6)
-  if (parsed <= 0n || parsed > ceiling) throw new Error(`${label} is outside the current testnet limit.`)
+  if (parsed <= 0n || parsed > ceiling) throw new Error(`${label} is outside the current ${mainnet ? 'release' : 'testnet'} limit.`)
   return parsed
 }
 function duration(raw: string, multiplier: bigint, label: string): bigint {
@@ -106,9 +132,9 @@ function candidateErrorMessage(error: unknown): string {
 }
 
 async function verifyCandidate(client: CandidateReadClient): Promise<void> {
-  if (await client.getChainId() !== CANDIDATE_FUNDING.chainId) throw new Error('This workflow only supports Arc testnet.')
+  if (await client.getChainId() !== CANDIDATE_FUNDING.chainId) throw new Error(`This workflow only supports ${network}.`)
   const code = await client.getCode({ address: CANDIDATE_FUNDING.address })
-  if (!code || keccak256(code) !== CANDIDATE_FUNDING.runtimeHash) throw new Error('The deployed contract does not match the verified Shadow testnet candidate.')
+  if (!code || keccak256(code) !== CANDIDATE_FUNDING.runtimeHash) throw new Error(`The deployed contract does not match the verified Shadow ${network} release.`)
   // The browser transport serializes requests. Start each read only after the
   // preceding one succeeds, so an RPC failure leaves no stale batch queued.
   const name = await read(client, 'NAME_HASH')
@@ -169,7 +195,7 @@ function predictedLine(sponsor: Address, agent: Address, epoch: bigint): Hash {
   return keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint64' }], [BigInt(CANDIDATE_FUNDING.chainId), CANDIDATE_FUNDING.address, sponsor, agent, epoch]))
 }
 function approval(account: Address, value: bigint, observedBlock: bigint, nextAction: 'open' | 'repay'): CandidatePrepared {
-  return { kind: 'approve', account, to: CANDIDATE_FUNDING.usdc, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [CANDIDATE_FUNDING.address, value] }), value: '0', amount: value, lineId: null, agent: null, expectedEpoch: null, observedBlock, summary: 'Approve exactly this testnet USDC amount for Shadow. Funding requires a separate confirmation.', nextAction }
+  return { kind: 'approve', account, to: CANDIDATE_FUNDING.usdc, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [CANDIDATE_FUNDING.address, value] }), value: '0', amount: value, lineId: null, agent: null, expectedEpoch: null, observedBlock, summary: `Approve exactly this ${currency} amount for Shadow. Funding requires a separate confirmation.`, nextAction }
 }
 function fingerprint(line: CandidateLine): string {
   return [line.state, line.principalOutstanding, line.cumulativePrincipalPaid, line.dueAt, line.availableReserve, line.recoveryAvailable, line.drawDigest ?? 'legacy'].join(':')
@@ -184,7 +210,8 @@ async function prepareCandidateOpen(client: CandidateReadClient, rawAccount: str
   try { endpoint = new URL(input.endpoint) } catch { throw new Error('Enter the exact HTTPS endpoint agreed with your provider.') }
   if (input.endpoint !== input.endpoint.trim() || endpoint.protocol !== 'https:' || !endpoint.hostname || endpoint.username || endpoint.password || endpoint.hash) throw new Error('Use the exact HTTPS provider endpoint without credentials, fragments, or surrounding spaces.')
   const snapshot = await readCandidateSnapshot(client, { sponsor: account, agent })
-  if (!snapshot.sponsorAllowed) throw new Error(deployment.selfRegistration ? 'Register this wallet as a sponsor before funding.' : 'This sponsor has not been enabled for the testnet pilot. Request access before funding.')
+  if (mainnet && (await client.getCode({ address: provider, blockNumber: snapshot.observedBlock }) ?? '0x') !== '0x') throw new Error('This release supports providers with ordinary EOA wallets only.')
+  if (!snapshot.sponsorAllowed) throw new Error(deployment.selfRegistration ? 'Register this wallet as a sponsor before funding.' : `This sponsor has not been enabled for this ${network} release. Request access before funding.`)
   if (snapshot.openingsPaused) throw new Error('Opening new funding lines is currently paused.')
   if (snapshot.activeLine && !['CLOSED', 'DEFAULTED'].includes(snapshot.activeLine.stateName)) throw new Error('This sponsor and agent already have an active funding line. Manage that line first.')
   const reserve = amount(input.reserve, 'Reserve', min(snapshot.limits.lineReserve, CANDIDATE_FUNDING.maxReserve))
@@ -198,21 +225,21 @@ async function prepareCandidateOpen(client: CandidateReadClient, rawAccount: str
   if (lifetime < floor || lifetime > 7n * 86_400n) throw new Error('Use a funding-line lifetime of one to seven days.')
   if (maximumRepaymentWindow < floor || maximumRepaymentWindow > snapshot.maximumRepaymentWindow) throw new Error('The repayment window must allow the minimum repayment period plus 15 minutes for signing, within the contract maximum.')
   if (snapshot.totalCommittedCapital + reserve > snapshot.limits.protocolReserve) throw new Error('The pilot has insufficient remaining reserve capacity.')
-  if (snapshot.balance < reserve) throw new Error('This wallet does not have enough testnet USDC for the reserve.')
+  if (snapshot.balance < reserve) throw new Error(`This wallet does not have enough ${currency} for the reserve.`)
   const lineId = predictedLine(account, agent, snapshot.nextEpoch)
   if (snapshot.allowance < reserve) return approval(account, reserve, snapshot.observedBlock, 'open')
   const params = { agent, reserve, lineSpendCap, dailySpendCap, lineExpiry: snapshot.observedTimestamp + lifetime, maximumRepaymentWindow, provider, endpointHash: keccak256(stringToHex(input.endpoint)), providerPerSpendCap, providerDailyCap, providerExpiry: snapshot.observedTimestamp + lifetime }
-  return { kind: 'open', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'openLine', args: [params] }), value: '0', amount: reserve, lineId, agent, expectedEpoch: snapshot.nextEpoch, observedBlock: snapshot.observedBlock, summary: 'Fund this line with testnet USDC. The provider can only be paid under the limits shown.' }
+  return { kind: 'open', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'openLine', args: [params] }), value: '0', amount: reserve, lineId, agent, expectedEpoch: snapshot.nextEpoch, observedBlock: snapshot.observedBlock, summary: `Fund this line with ${currency}. The provider can only be paid under the limits shown.` }
 }
 
 async function prepareCandidateRepay(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
   const account = address(rawAccount)
   const line = await readCandidateLine(client, rawLineId)
   if (!['DRAWN', 'DEFAULTED'].includes(line.stateName) || line.principalOutstanding <= 0n) throw new Error('This line has no outstanding debt to repay.')
-  if (line.principalOutstanding > CANDIDATE_FUNDING.maxReserve) throw new Error('This repayment exceeds the browser testnet limit.')
+  if (line.principalOutstanding > CANDIDATE_FUNDING.maxReserve) throw new Error('This repayment exceeds the browser release limit.')
   const balance = await tokenRead(client, 'balanceOf', [account], line.observedBlock)
   const allowance = await tokenRead(client, 'allowance', [account, CANDIDATE_FUNDING.address], line.observedBlock)
-  if (BigInt(balance) < line.principalOutstanding) throw new Error('This wallet does not have enough testnet USDC to repay the debt.')
+  if (BigInt(balance) < line.principalOutstanding) throw new Error(`This wallet does not have enough ${currency} to repay the debt.`)
   if (BigInt(allowance) < line.principalOutstanding) return approval(account, line.principalOutstanding, line.observedBlock, 'repay')
   if (deployment.drawBoundRepayment && (!line.drawDigest || line.drawDigest === zeroHash)) throw new Error('The current purchase identity is unavailable. No repayment was prepared.')
   return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', args: deployment.drawBoundRepayment ? [line.lineId, line.drawDigest!, line.principalOutstanding] : [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: deployment.drawBoundRepayment ? `Repay purchase ${line.drawDigest}. The transaction reverts if another purchase replaces it.` : 'Pay this fixed amount toward whatever debt this line has when the transaction executes. A delayed approval can pay a newer purchase. This legacy contract does not bind repayment to the purchase shown now.' }
@@ -226,7 +253,7 @@ async function prepareCandidateReclaim(client: CandidateReadClient, rawAccount: 
   if (!close && line.stateName !== 'DEFAULTED') throw new Error('Reclaim requires a debt-free open line, or recoverable funds on a defaulted line.')
   const value = close ? line.availableReserve : line.availableReserve + line.recoveryAvailable
   if (value <= 0n) throw new Error('There are no funds available to reclaim.')
-  return { kind: close ? 'close' : 'claim-defaulted', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: close ? 'closeLine' : 'claimDefaulted', args: [line.lineId] }), value: '0', amount: value, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: close ? 'Close the funding line and return its available testnet USDC to the sponsor.' : 'Return available reserve and recovered repayments to the sponsor. Outstanding unpaid debt is not recovered by this action.' }
+  return { kind: close ? 'close' : 'claim-defaulted', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: close ? 'closeLine' : 'claimDefaulted', args: [line.lineId] }), value: '0', amount: value, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: close ? `Close the funding line and return its available ${currency} to the sponsor.` : 'Return available reserve and recovered repayments to the sponsor. Outstanding unpaid debt is not recovered by this action.' }
 }
 
 function checkPending(value: unknown, expectedAccount?: Address): CandidatePending {
@@ -263,7 +290,7 @@ function createCandidateJournal(storage: CandidateStorage, rawAccount: string): 
 
 function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'value' | 'lineId'> & { amount: bigint | string }) {
   const isApproval = record.kind === 'approve'
-  if (!same(record.to, isApproval ? CANDIDATE_FUNDING.usdc : CANDIDATE_FUNDING.address) || record.value !== '0') throw new Error('The transaction does not target the expected testnet contract.')
+  if (!same(record.to, isApproval ? CANDIDATE_FUNDING.usdc : CANDIDATE_FUNDING.address) || record.value !== '0') throw new Error('The transaction does not target the expected release contract.')
   const abi: Abi = isApproval ? erc20Abi : candidateFundingAbi
   const decoded = decodeFunctionData({ abi, data: record.data })
   const expectedName = { register: 'registerSponsor', approve: 'approve', open: 'openLine', repay: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', close: 'closeLine', 'claim-defaulted': 'claimDefaulted' }[record.kind]
@@ -275,10 +302,10 @@ function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'v
     return { abi, functionName: decoded.functionName, args };
   }
   if (value <= 0n) throw new Error('The transaction amount must be positive.')
-  if (isApproval && (!same(args[0], CANDIDATE_FUNDING.address) || BigInt(args[1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('Only an exact bounded approval to the testnet candidate is supported.')
+  if (isApproval && (!same(args[0], CANDIDATE_FUNDING.address) || BigInt(args[1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('Only an exact bounded approval to this release is supported.')
   if (record.kind === 'open') {
     const p = args[0]
-    if (BigInt(p.reserve) !== value || value > CANDIDATE_FUNDING.maxReserve || BigInt(p.lineSpendCap) <= 0n || BigInt(p.lineSpendCap) > CANDIDATE_FUNDING.maxLineSpend || BigInt(p.dailySpendCap) <= 0n || BigInt(p.dailySpendCap) > CANDIDATE_FUNDING.maxDailySpend || BigInt(p.providerPerSpendCap) <= 0n || BigInt(p.providerPerSpendCap) > CANDIDATE_FUNDING.maxPerSpend || BigInt(p.providerDailyCap) <= 0n || BigInt(p.providerDailyCap) > CANDIDATE_FUNDING.maxDailySpend) throw new Error('The funding line exceeds this browser release’s testnet limits.')
+    if (BigInt(p.reserve) !== value || value > CANDIDATE_FUNDING.maxReserve || BigInt(p.lineSpendCap) <= 0n || BigInt(p.lineSpendCap) > CANDIDATE_FUNDING.maxLineSpend || BigInt(p.dailySpendCap) <= 0n || BigInt(p.dailySpendCap) > CANDIDATE_FUNDING.maxDailySpend || BigInt(p.providerPerSpendCap) <= 0n || BigInt(p.providerPerSpendCap) > CANDIDATE_FUNDING.maxPerSpend || BigInt(p.providerDailyCap) <= 0n || BigInt(p.providerDailyCap) > CANDIDATE_FUNDING.maxDailySpend) throw new Error('The funding line exceeds this browser release’s limits.')
   } else if (!isApproval) {
     if (!record.lineId || !same(args[0], record.lineId)) throw new Error('The transaction line does not match its calldata.')
     if (record.kind === 'repay' && (BigInt(args[deployment.drawBoundRepayment ? 2 : 1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('The repayment must equal the displayed bounded amount.')
@@ -303,7 +330,7 @@ function stage(session: CandidateSession, pending: CandidatePending) {
 }
 async function walletMatches(session: CandidateSession) {
   const chainId = await session.walletClient.getChainId()
-  if (chainId !== CANDIDATE_FUNDING.chainId) throw new Error('Switch the connected wallet to Arc testnet before confirming.')
+  if (chainId !== CANDIDATE_FUNDING.chainId) throw new Error(`Switch the connected wallet to ${network} before confirming.`)
   const accounts = await session.walletClient.getAddresses()
   if (!accounts[0] || !same(accounts[0], session.account)) throw new Error('The selected wallet account changed. Refresh the action before signing.')
 }
@@ -333,6 +360,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
     if (prepared.kind === 'open') {
       const p = call.args[0]
       const current = await readCandidateSnapshot(client, { sponsor: session.account, agent: p.agent })
+      if (mainnet && (await client.getCode({address:p.provider,blockNumber:current.observedBlock}) ?? '0x') !== '0x') throw new Error('Provider wallet is no longer an ordinary EOA. Review the provider again.')
       if (prepared.expectedEpoch !== current.nextEpoch || !prepared.lineId || !same(predictedLine(session.account, p.agent, current.nextEpoch), prepared.lineId)) throw new Error('The funding-line epoch changed. Refresh before opening a line.')
       if (BigInt(p.lineExpiry) < current.observedTimestamp + current.minimumRepaymentWindow + CANDIDATE_FUNDING.signatureTtl || BigInt(p.providerExpiry) < current.observedTimestamp + current.minimumRepaymentWindow + CANDIDATE_FUNDING.signatureTtl) throw new Error('This prepared line expires too soon. Refresh before funding.')
     } else if (prepared.kind !== 'approve' && prepared.kind !== 'register') {

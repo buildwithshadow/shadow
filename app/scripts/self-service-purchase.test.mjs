@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { keccak256, toHex, hashTypedData } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { createSelfServicePurchase } from "../src/selfServicePurchase.mjs";
+import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
 const agent = privateKeyToAccount(`0x${"11".repeat(32)}`),
   provider = privateKeyToAccount(`0x${"22".repeat(32)}`);
 const contract = `0x${"33".repeat(20)}`,
@@ -32,7 +32,8 @@ const acceptanceTypes = {
     return { name, type };
   }),
 };
-function setup() {
+function setup({mainnet=false,providerCode='0x',bindingVersion=2n}={}) {
+  const selectedConfig = mainnet ? {...config,chainId:5042,principal:'5000'} : config;
   const data = new Map();
   let now = 1000n;
   let sends = 0,
@@ -47,8 +48,8 @@ function setup() {
     removeItem: (k) => data.delete(k),
   };
   const client = {
-    getChainId: async () => 5042002,
-    getCode: async () => code,
+    getChainId: async () => selectedConfig.chainId,
+    getCode: async ({address}) => address.toLowerCase()===contract.toLowerCase()?code:providerCode,
     getBlock: async () => ({ number: 123n, timestamp: now }),
     readContract: async ({ functionName }) =>
       ({
@@ -63,6 +64,7 @@ function setup() {
         },
         activeLineId: lineId,
         minimumRepaymentWindow: 60n,
+        repaymentBindingVersion: bindingVersion,
         currentTermsHash: `0x${"66".repeat(32)}`,
         receiptStatus: status,
       })[functionName],
@@ -73,7 +75,7 @@ function setup() {
     },
   };
   const wallet = {
-    getChainId: async () => 5042002,
+    getChainId: async () => selectedConfig.chainId,
     getAddresses: async () => [agent.address],
     request: async ({ params }) => {
       signs++;
@@ -93,7 +95,7 @@ function setup() {
       digest: intent.digest,
       provider: provider.address,
       endpointHash: intent.typedData.message.endpointHash,
-      principal: "50000",
+      principal: selectedConfig.principal,
       requestIdHash: keccak256(toHex(requestId)),
       acceptedAt: "1000",
     };
@@ -101,7 +103,7 @@ function setup() {
       domain: {
         name: "ShadowFloatMainnetProvider",
         version: "1",
-        chainId: 5042002,
+        chainId: selectedConfig.chainId,
         verifyingContract: contract,
       },
       types: acceptanceTypes,
@@ -113,10 +115,10 @@ function setup() {
     return new Response(JSON.stringify({ typedData, signature }));
   };
   const create = () =>
-    createSelfServicePurchase({
+    (mainnet?createGuardedMainnetPurchase:createSelfServicePurchase)({
       client,
       wallet,
-      config,
+      config: selectedConfig,
       storage,
       fetchImpl,
       withLock: async (_key, work) => work(),
@@ -249,4 +251,19 @@ test("purchase caps the due time at line expiry and rejects an unusable minimum 
   short.client.readContract=async(args)=>args.functionName==='lines'?{...await read(args),expiry:1659n}:read(args);
   await assert.rejects(short.create().prepare(lineId,'job-too-short'),/repayment window is too short/);
   assert.equal(short.counts().signs,0);
+});
+
+
+test('guarded mainnet refuses smart providers, wrong repayment binding and network misuse before signing',async()=>{
+  for(const patch of [{providerCode:'0x6001'},{bindingVersion:1n}]){
+    const h=setup({mainnet:true,...patch});await assert.rejects(()=>h.create().prepare(lineId,'bounded-1'));
+    assert.deepEqual(h.counts(),{sends:0,signs:0});
+  }
+  const h=setup({mainnet:true});const flow=h.create();await flow.prepare(lineId,'bounded-2');
+  assert.equal(flow.load().intent.typedData.domain.chainId,5042);
+  assert.equal(flow.load().intent.typedData.message.principal,'5000');
+  assert.throws(()=>createSelfServicePurchase({config:{...config,chainId:5042}}),/testnet/);
+  for(const patch of [{chainId:5042002},{principal:'5001'},{principal:'0'}]){
+    assert.throws(()=>createGuardedMainnetPurchase({config:{...config,chainId:5042,principal:'5000',...patch}}));
+  }
 });

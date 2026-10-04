@@ -2,6 +2,7 @@ import { getAddress, isHash, type Address, type Hash } from "viem";
 
 // Explorer APIs by chain. testnet.arcscan.app redirects to this host, and only this host sends CORS headers.
 const EXPLORER_API: Record<number, string> = {
+  5042: "https://explorer.arc.io/api/v2",
   5042002: "https://explorer.testnet.arc.io/api/v2",
 };
 const MAX_PAGES = 10;

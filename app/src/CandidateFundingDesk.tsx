@@ -3,7 +3,7 @@ import { Link } from "react-router-dom";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
-  CANDIDATE_FUNDING as LEGACY_FUNDING, candidateErrorMessage, candidateFundingChain, createCandidateFundingKit,
+  CANDIDATE_FUNDING as LEGACY_FUNDING, candidateErrorMessage, candidateFundingChain, candidateChainFor, createCandidateFundingKit, createGuardedMainnetFundingKit,
   type CandidateDeployment, type CandidateLine, type CandidateOpenInput, type CandidatePending, type CandidatePrepared,
   type CandidateResolution, type CandidateSnapshot,
 } from "./candidateFunding";
@@ -21,7 +21,7 @@ const initialForm: CandidateOpenInput = {
   agent: "", provider: "", endpoint: "", reserve: "0.10", lineSpendCap: "0.15", dailySpendCap: "0.10",
   providerPerSpendCap: "0.05", providerDailyCap: "0.10", expiryDays: "7", repaymentHours: "24",
 };
-const explorer = "https://testnet.arcscan.app";
+
 const usdc = (value: bigint) => formatUnits(value, 6);
 const compact = (value: string) => `${value.slice(0, 8)}…${value.slice(-6)}`;
 const when = (value: bigint) => new Date(Number(value) * 1000).toLocaleString();
@@ -45,12 +45,19 @@ function Field({ label, name, value, onChange, hint, decimal = false, required =
 
 export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: { deployment?: CandidateDeployment; service?: PublicService }) {
   const CANDIDATE_FUNDING = deployment;
+  const mainnet = deployment.chainId === 5042;
+  const chain = useMemo(() => candidateChainFor(deployment), [deployment]);
+  const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
+  const explorer = chain.blockExplorers.default.url;
   const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
-    readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => createCandidateFundingKit(deployment), [deployment]);
-  const client = useMemo(() => deployment.selfRegistration ? createPublicClient({ chain: candidateFundingChain,
+    readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => (mainnet ? createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment), [deployment, mainnet]);
+  const client = useMemo(() => mainnet ? createPublicClient({ chain, transport: createRpcReadTransport('https://rpc.mainnet.arc.io', {
+    timeout: 15_000, fallbackUrls: ['https://rpc.blockdaemon.mainnet.arc.io'], expectedChainId: 5042,
+    queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
+  }) }) : deployment.selfRegistration ? createPublicClient({ chain: candidateFundingChain,
     transport: createRpcReadTransport("https://rpc.drpc.testnet.arc.io", { timeout: 15_000,
       fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", "https://rpc.testnet.arc.network"], expectedChainId: deployment.chainId,
-      queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment]);
+      queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment, chain, mainnet]);
   const [mode, setMode] = useState<"open" | "manage">(() => new URLSearchParams(window.location.search).has("line") ? "manage" : "open");
   const [role, setRole] = useState<"sponsor" | "agent" | null>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -61,6 +68,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [form, setForm] = useState(() => ({ ...initialForm,
     agent: service ? new URLSearchParams(window.location.search).get("agent") || "" : "",
     ...(service ? { provider: service.provider, endpoint: service.endpoint } : {}),
+    ...(mainnet ? { lineSpendCap: '0.005', dailySpendCap: '0.005', providerPerSpendCap: '0.005', providerDailyCap: '0.005' } : {}),
   }));
   const [providerAgreed, setProviderAgreed] = useState(false);
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
@@ -70,7 +78,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [pending, setPending] = useState<CandidatePending | null>(null);
   const [journalError, setJournalError] = useState("");
   const [gatewayHeld, setGatewayHeld] = useState(false);
-  const gatewayEnabled = Boolean(service && import.meta.env.VITE_SHADOW_GATEWAY_TESTNET === "true");
+  const gatewayEnabled = Boolean(!mainnet && service && import.meta.env.VITE_SHADOW_GATEWAY_TESTNET === "true");
   const [recoveryHash, setRecoveryHash] = useState("");
   const [prepared, setPrepared] = useState<CandidatePrepared | null>(null);
   const [reviewInput, setReviewInput] = useState<CandidateOpenInput | null>(null);
@@ -199,7 +207,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
   async function switchNetwork() {
     setError("");
-    setBusy("Switching to Arc testnet…");
+    setBusy(`Switching to ${network}…`);
     try {
       if (!window.ethereum) throw new Error("Connect your browser wallet first.");
       try {
@@ -207,9 +215,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       } catch (cause) {
         if ((cause as { code?: number }).code !== 4902) throw cause;
         await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
-          chainId: `0x${CANDIDATE_FUNDING.chainId.toString(16)}`, chainName: "Arc Testnet",
+          chainId: `0x${CANDIDATE_FUNDING.chainId.toString(16)}`, chainName: chain.name,
           nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
-          rpcUrls: ["https://rpc.testnet.arc.network"], blockExplorerUrls: [explorer],
+          rpcUrls: [...chain.rpcUrls.default.http], blockExplorerUrls: [explorer],
         }] });
       }
       invalidate();
@@ -301,13 +309,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     try {
       if (!navigator.locks) throw new Error("This browser cannot protect concurrent transactions. Use a current browser over HTTPS.");
       const journal = createCandidateJournal(window.localStorage, sender);
-      await navigator.locks.request(gatewayWalletLockKey(account), { ifAvailable: true }, async (lock) => {
+      await navigator.locks.request(gatewayWalletLockKey(account, deployment.chainId), { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("Another Shadow tab is handling this wallet. Finish that transaction there first.");
-        assertGatewayFundingResolved(sender);
-        assertCandidateFundingResolved(sender);
+        if (!mainnet) assertGatewayFundingResolved(sender);
+        assertCandidateFundingResolved(sender, window.localStorage, deployment.chainId);
         const result = await executeCandidateCall({
           publicClient: client,
-          walletClient: createWalletClient({ chain: candidateFundingChain, transport: custom(window.ethereum!), account: sender }),
+          walletClient: createWalletClient({ chain, transport: custom(window.ethereum!), account: sender }),
           account: sender, journal,
           onStage: (value) => { if (isCurrent()) { setPending(value); setBusy(value.txHash ? "Checking transaction confirmation…" : "Check and approve this transaction in your wallet…"); } },
         }, intent);
@@ -333,7 +341,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     try {
       if (!navigator.locks) throw new Error("Use a current browser over HTTPS to check transaction recovery.");
       const journal = createCandidateJournal(window.localStorage, account);
-      await navigator.locks.request(gatewayWalletLockKey(account), { ifAvailable: true }, async (lock) => {
+      await navigator.locks.request(gatewayWalletLockKey(account, deployment.chainId), { ifAvailable: true }, async (lock) => {
         if (!lock) throw new Error("A wallet request is still open in another Shadow tab. Finish it there first.");
         const saved = journal.load();
         if (!saved) { if (isCurrent()) { setPending(null); setRecoveryHash(""); } return; }
@@ -369,17 +377,17 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     (line.stateName === "DEFAULTED" && line.availableReserve + line.recoveryAvailable > 0n));
   const shareable = Boolean(service && line && isSponsor && line.stateName === "OPEN" && line.expiry > line.observedTimestamp &&
     line.sponsorAllowed && !line.spendsPaused);
-  const openBlocker = !account ? "Connect your wallet to review and fund." : !correctNetwork ? "Switch to Arc testnet to continue."
+  const openBlocker = !account ? "Connect your wallet to review and fund." : !correctNetwork ? `Switch to ${network} to continue.`
     : gatewayHeld ? "Resolve Gateway funding above before opening a line." : pending ? "Check the previous transaction above before funding." : journalError ? "Transaction recovery is unavailable in this browser. See the message above."
     : snapshot?.openingsPaused ? "New lines are currently paused."
     : snapshot?.sponsorAllowed === false ? (deployment.selfRegistration ? "Register this wallet above before funding." : "This wallet is not approved as a sponsor yet.")
     : !providerAgreed ? "Confirm the provider agreement above to continue." : null;
-  const lineBlocker = !account ? "Connect your wallet to repay." : !correctNetwork ? "Switch to Arc testnet to continue."
+  const lineBlocker = !account ? "Connect your wallet to repay." : !correctNetwork ? `Switch to ${network} to continue.`
     : gatewayHeld ? "Resolve Gateway funding above before continuing." : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
-      <div><p className="pageEyebrow">{service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
+      <div><p className="pageEyebrow">{mainnet ? "Arc mainnet · Controlled participant candidate" : service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
         <h1>{service ? <>Fund an agent.<br />Keep the limits.</> : "Earlier candidate"}</h1>
         <p>{service ? "Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet." : <>Shadow’s earlier testnet contract. Approved sponsors can open lines here and manage existing ones. To fund an agent without operator approval and buy a service, use <Link to="/start">Fund an agent</Link>.</>}</p>
       </div>
@@ -387,13 +395,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         <span>{account ? "Connected browser wallet" : "Your wallet stays in control"}</span>
         {account && <code title={account}>{compact(account)}</code>}
         <button type="button" onClick={connect} disabled={Boolean(busy)}>{account ? "Refresh wallet" : "Connect wallet"}</button>
-        {account && !correctNetwork && <button type="button" onClick={switchNetwork} disabled={Boolean(busy)}>Switch to Arc testnet</button>}
-        {account && correctNetwork && <small>Arc testnet connected</small>}
+        {account && !correctNetwork && <button type="button" onClick={switchNetwork} disabled={Boolean(busy)}>Switch to {network}</button>}
+        {account && correctNetwork && <small>{network} connected</small>}
       </div>
     </header>
 
-    <p className="fundingScope">{service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
-    {service && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase.</p>}
+    <p className="fundingScope">{mainnet ? "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
+    {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase.</p>}
     {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
       <span id="funding-role-title">Which are you?</span>
       <button type="button" aria-pressed={role === "sponsor"} onClick={() => setRole(role === "sponsor" ? null : "sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
@@ -504,18 +512,18 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
             <div><dt>Line daily limit</dt><dd>{usdc(line.dailySpendCap)} USDC</dd></div><div><dt>Line epoch</dt><dd>{line.epoch.toString()}</dd></div></dl>
           <p>{service ? "The agent buys the service below, signing with its own wallet; this line pays the price. This section manages funding, repayment and reclaim." : <>The agent signs a purchase and an executor submits it using the <a href="https://github.com/buildwithshadow/shadow/blob/main/docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md" target="_blank" rel="noreferrer">candidate participant tools</a>. This page manages funding, repayment and reclaim.</>}</p>
         </details>
-        {service && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} />}
+        {service && !mainnet && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} />}
       </div>}
     </section>}
 
     {service && <div className="fundingSlot" hidden={role === "sponsor"}><PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
       client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} /></div>}
-    <footer className="fundingFoot">{service && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · Arc testnet</p>
+    <footer className="fundingFoot">{service && !mainnet && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · {network}</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 
     <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description"
       onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}>
-      {prepared && <><p className="pageEyebrow">Arc testnet · Wallet confirmation</p>
+      {prepared && <><p className="pageEyebrow">{network} · Wallet confirmation</p>
         <h2 id="funding-review-title">{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : "Reclaim eligible funds"}</h2>
         <p id="funding-review-description">{prepared.summary}</p>
         <dl className="fundingDetails"><div><dt>Wallet</dt><dd><code>{prepared.account}</code></dd></div>

@@ -15,3 +15,5 @@ export function createSelfServicePurchase(input: {
   archive(): Promise<void>;
   load(): PurchaseRecord | null;
 };
+
+export const createGuardedMainnetPurchase: typeof createSelfServicePurchase;
