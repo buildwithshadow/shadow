@@ -474,3 +474,27 @@ test('three normal generation transitions yield an inconclusive sample rather th
  releaseChecking();releaseChecking=null;await collectingStarted;finish(next);finish=null;await running;assert.equal(notificationState(f.context,now+2).key,key);assert.equal((await notify(now+2)).sent,false);assert.equal(sent,2);
  }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();if(releaseChecking){releaseChecking();await collectingStarted;}if(finish){finish(f.snapshot);await running;}f.cleanup();}
 });
+
+test('completed-generation marker cleanup accepts valid leftovers and preserves malformed-marker incidents',async()=>{
+ for(const mode of ['corrupt','healthy-leftover','snapshotless-leftover']){
+ const f=fixture();let savedMarker;const markerPath=join(f.context.stateDir,'publication.json');
+ try{
+ if(mode==='corrupt'){await f.run();writeFileSync(markerPath,'{');}
+ else{
+  const capture=async()=>{savedMarker=readFileSync(markerPath);};
+  await runMonitorOnce(f.context,{now:()=>now,collect:mode==='snapshotless-leftover'?async()=>{throw Error('offline');}:async()=>f.snapshot,afterSnapshotPublished:capture,afterHoldLatched:capture});
+  writeFileSync(markerPath,savedMarker);
+ }
+ const next=await f.run(now+1);
+ if(mode==='corrupt'){
+  assert.equal(next.ok,false);assert.equal(next.hold,true);assert.ok(next.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
+  assert.ok(notificationState(f.context,now+1).codes.includes('LOCAL_STATE_INVALID'));
+  const held=JSON.parse(readFileSync(join(f.context.stateDir,'hold.json')));assert.ok(held.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
+  const refreshed=await f.run(now+2);assert.equal(refreshed.hold,true);assert.equal(refreshed.ok,false);
+ }else{
+  assert.ok(!next.alerts.some(a=>a.code==='LOCAL_STATE_INVALID'));
+  assert.equal(next.ok,mode==='healthy-leftover');assert.equal(next.hold,mode==='snapshotless-leftover');
+ }
+ }finally{f.cleanup();}
+ }
+});

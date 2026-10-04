@@ -120,11 +120,18 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     let retainedSnapshotHash = previous?.snapshotHash ?? previous?.previousSnapshotHash ?? null;
     let previousPublicationHash = null;
     let recoveredFailureCodes = null;
-    if (previous?.status === "checking") {
+    const publicationAlerts = [];
+    if (existsSync(resolve(context.stateDir, 'publication.json'))) {
       try {
         const publication = optionalJson(resolve(context.stateDir, 'publication.json'));
         const retained = optionalJson(file.snapshot);
-        if (publication?.runId === previous.runId && publication.startedAt === previous.startedAt &&
+        const knownPrevious = previous && Object.entries(identity(context)).every(([key, value]) => previous[key] === value) &&
+          typeof previous.runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(previous.runId) &&
+          typeof previous.startedAt === 'string' && Number.isFinite(Date.parse(previous.startedAt)) &&
+          new Date(Date.parse(previous.startedAt)).toISOString() === previous.startedAt &&
+          (previous.status === 'checking' || ['healthy','hold'].includes(previous.status) &&
+            publication?.completedAt === previous.completedAt && publication?.snapshotHash === previous.snapshotHash);
+        if (knownPrevious && publication?.runId === previous.runId && publication.startedAt === previous.startedAt &&
             Object.entries(identity(context)).every(([key, value]) => publication[key] === value) &&
             Array.isArray(publication.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) &&
             typeof publication.completedAt === 'string' && Number.isFinite(Date.parse(publication.completedAt)) &&
@@ -135,8 +142,11 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
           retainedSnapshotHash = publication.snapshotHash;
           previousPublicationHash = digestJson(publication);
           recoveredFailureCodes = publication.alertCodes;
-        }
-      } catch { latch(context, [alert("LOCAL_STATE_INVALID", "interrupted publication was unreadable")], started); }
+        } else throw new Error('invalid prior publication');
+      } catch {
+        publicationAlerts.push(alert("LOCAL_STATE_INVALID", "prior publication was malformed or did not match its recorded generation"));
+        latch(context, publicationAlerts, started);
+      }
     }
     // Notifications validate the bound persisted snapshot during a scan.
     const priorFailureCodes = recoveredFailureCodes ?? (previous?.status === 'checking' ? previous.previousFailureCodes : previous?.alerts?.map(entry => entry?.code));
@@ -150,6 +160,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     let snapshot; let result;
     try { snapshot = await collect(context); result = evaluateSnapshot(context.baseline, snapshot, now()); }
     catch { result = { ok: false, hold: true, alerts: [alert("RPC_CHECK_FAILED", "read-only monitor failed or timed out; partial results are not healthy")] }; }
+    if (publicationAlerts.length) result = { ...result, ok: false, hold: true, alerts: [...publicationAlerts, ...result.alerts] };
     if (snapshot?.observedAt && previous?.observedAt) {
       try {
         const before = BigInt(previous.observedAt.blockNumber); const after = BigInt(snapshot.observedAt.blockNumber);
