@@ -206,3 +206,44 @@ test('six-hour reminder in a held scan retains completed key and avoids duplicat
     await f.run(now+5,async()=>{throw Error('offline again');});await notify(now+5);assert.equal(sent,3);
   }finally{f.cleanup();}
 });
+
+
+test('collection failures retain the last snapshot binding for the next bounded scan', async () => {
+ const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run();const failed=await f.run(now+1,async()=>{throw Error('RPC timeout');});await notify(now+1);
+ assert.ok(failed.snapshotHash);let entered;const started=new Promise(r=>{entered=r;});
+ const running=f.run(now+2,async()=>{entered();return new Promise(r=>{finish=r;});});await started;
+ assert.equal((await notify(now+3)).reason,'known-incident-scan-in-progress');assert.equal(sent,1);
+ finish(f.snapshot);await running;
+ }finally{f.cleanup();}
+});
+
+test('snapshot publication generation is quiet while corruption and stale publication still alert',async()=>{
+ const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run(now,async()=>{throw Error('offline');});await f.run(now+1);await notify(now+1);
+ const next=structuredClone(f.snapshot);next.observedAt.blockNumber='101';next.observedAt.blockHash=hash(101);next.discovery.scanned.toBlock='101';next.executionAudit.toBlock='101';
+ let entered;const started=new Promise(r=>{entered=r;});
+ const running=runMonitorOnce(f.context,{now:()=>now+2,collect:async()=>next,afterSnapshotPublished:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
+ assert.equal((await notify(now+3)).reason,'known-incident-scan-in-progress');assert.equal(sent,1);
+ writeFileSync(join(f.context.stateDir,'snapshot.json'),'{}');await notify(now+3);assert.equal(sent,2);
+ writeFileSync(join(f.context.stateDir,'snapshot.json'),JSON.stringify(next));
+ assert.notEqual(notificationState(f.context,now+5003).checking,true);
+ assert.ok(notificationState(f.context,now+5003).codes.includes('HEARTBEAT_STALE'));
+ assert.notEqual((await notify(now+5003)).reason,'known-incident-scan-in-progress');
+ finish();await running;
+ }finally{f.cleanup();}
+});
+
+test('continuing outage with a stale retained snapshot does not alternate scan alerts',async()=>{
+ const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run();await f.run(now+1,async()=>{throw Error('offline');});await notify(now+1);
+ const later=now+121000;await f.run(later,async()=>{throw Error('still offline');});await notify(later);const count=sent;
+ let entered;const started=new Promise(r=>{entered=r;});const running=f.run(later+1,async()=>{entered();return new Promise(r=>{finish=r;});});await started;
+ assert.equal(notificationState(f.context,later+2).checking,true);
+ assert.equal((await notify(later+2)).reason,'known-incident-scan-in-progress');assert.equal(sent,count);
+ finish(f.snapshot);await running;
+ }finally{f.cleanup();}
+});

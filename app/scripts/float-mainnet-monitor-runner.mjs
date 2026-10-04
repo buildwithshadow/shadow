@@ -103,7 +103,7 @@ export function heartbeatStatus(context, nowMs = Date.now()) {
   } catch { return { ...common, ok: false, hold: true, status: "hold", alerts: [alert("LOCAL_STATE_INVALID", "heartbeat, snapshot or local hold is unreadable/malformed")] }; }
 }
 
-export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now } = {}) {
+export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now, afterSnapshotPublished = async () => {} } = {}) {
   const release = acquire(context.stateDir);
   const file = paths(context);
   const started = now();
@@ -129,15 +129,22 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     }
     const completed = now();
     if (completed < started || completed - started > context.baseline.policy.runTimeoutMs) result = { ok: false, hold: true, alerts: [...result.alerts, alert("CHECK_TIMEOUT", "check exceeded the approved wall-time bound")] };
-    if (snapshot) atomicJson(file.snapshot, snapshot);
+    const publication = resolve(context.stateDir, 'publication.json');
+    if (snapshot) {
+      atomicJson(publication, { ...identity(context), runId: common.runId,
+        startedAt: common.startedAt, snapshotHash: digestJson(snapshot) });
+      atomicJson(file.snapshot, snapshot);
+      await afterSnapshotPublished();
+    }
     if (result.hold) latch(context, result.alerts, completed);
     const incident = optionalJson(file.hold);
     const heartbeat = { ...common, completedAt: new Date(completed).toISOString(), observedAt: snapshot?.observedAt ?? null,
-      snapshotHash: snapshot ? digestJson(snapshot) : null, ok: result.ok && !incident, hold: result.hold || !!incident,
+      snapshotHash: snapshot ? digestJson(snapshot) : (previous?.snapshotHash ?? null), ok: result.ok && !incident, hold: result.hold || !!incident,
       status: result.ok && !incident ? "healthy" : "hold", checks: { snapshotHealthy: result.ok },
       incidentId: incident?.incidentId ?? null, alerts: [...result.alerts, ...(incident && result.ok ? [alert("HOLD_LATCHED", `incident ${incident.incidentId} requires local acknowledgement after recovery`)] : [])] };
     event(context, { runId: heartbeat.runId, completedAt: heartbeat.completedAt, ok: heartbeat.ok, hold: heartbeat.hold, baselineHash: context.baselineHash, observedAt: heartbeat.observedAt, alerts: heartbeat.alerts });
     atomicJson(file.heartbeat, heartbeat);
+    rmSync(publication, { force: true });
     return heartbeat;
   } finally { release(); }
 }

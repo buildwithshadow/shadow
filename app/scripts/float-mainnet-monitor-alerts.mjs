@@ -27,7 +27,17 @@ export function loadMainnetContext(options) {
 
 export function notificationState(context, now = Date.now()) {
   if (context.baseline.identity.chainId !== '5042') throw new Error('MAINNET_ONLY');
-  const raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
+  // Read the heartbeat around its snapshot/publication generation. A normal
+  // two-file publication can finish between any of these reads.
+  let raw, snapshot, publication;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
+    snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
+    publication = optionalJson(resolve(context.stateDir, 'publication.json'));
+    const after = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
+    if (JSON.stringify(raw) === JSON.stringify(after)) break;
+    raw = after;
+  }
   const b = context.baseline;
   const identity = { schemaVersion: 1, kind: 'shadow-monitor-heartbeat', chainId: b.identity.chainId,
     address: b.identity.address, runtimeCodeHash: b.identity.runtimeCodeHash,
@@ -48,15 +58,23 @@ export function notificationState(context, now = Date.now()) {
   // incomplete heartbeat is not a new incident or a recovery. Only notify an
   // already delivered incident again after its reminder deadline; completed
   // checks still validate snapshot, accounting and any newly failing codes.
-  const snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
   let completedSnapshotValid = false;
-  try { completedSnapshotValid = snapshot !== null && raw?.previousSnapshotHash === digestJson(snapshot) && evaluateSnapshot(b, snapshot, now).ok; } catch { /* invalid state remains audible below */ }
+  let snapshotAlerts = [];
+  try {
+    const publishing = publication && publication.runId === raw?.runId &&
+      publication.startedAt === raw?.startedAt &&
+      Object.entries(identity).every(([key, value]) => publication[key] === value);
+    completedSnapshotValid = snapshot !== null &&
+      (raw?.previousSnapshotHash === digestJson(snapshot) || publishing && publication.snapshotHash === digestJson(snapshot));
+    if (completedSnapshotValid) snapshotAlerts = evaluateSnapshot(b, snapshot, now).alerts;
+  } catch { /* invalid state remains audible below */ }
   if (boundedScan && completedSnapshotValid && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
-    const codes = [...new Set(['HOLD_LATCHED', ...hold.alerts.map(entry => entry.code)])].sort();
-    return { ok: false, codes, incidentId, checking: true,
+    const validationCodes = [...new Set(snapshotAlerts.map(entry => entry.code))].sort();
+    const codes = [...new Set(['HOLD_LATCHED', ...hold.alerts.map(entry => entry.code), ...validationCodes])].sort();
+    return { ok: false, codes, validationCodes, incidentId, checking: true,
       key: `failure:${hash(JSON.stringify({ codes, incidentId }))}` };
   }
   // Revalidates persisted snapshot/accounting, freshness, hashes and hold latch.
@@ -74,8 +92,9 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
   const binding = hash(JSON.stringify([context.manifestHash, context.baselineHash]));
   const same = previous?.destinationId === String(destinationId) && previous?.binding === binding;
   const age = now - Date.parse(previous?.sentAt);
-  if (same && current.checking && previous?.incidentId === current.incidentId &&
-      previous?.key?.startsWith('failure:') && age >= 0 && age < 21600000) return { sent: false, reason: 'known-incident-scan-in-progress' };
+  const knownHeldScan = same && current.checking && previous?.incidentId === current.incidentId &&
+    previous?.key?.startsWith('failure:') && current.validationCodes.every(code => previous?.codes?.includes(code));
+  if (knownHeldScan && age >= 0 && age < 21600000) return { sent: false, reason: 'known-incident-scan-in-progress' };
   if (same && previous?.key === current.key && (current.ok || (age >= 0 && age < 21600000))) return { sent: false, reason: 'unchanged' };
   const label = current.ok ? (same && previous?.key?.startsWith('failure:') ? 'RECOVERED' : 'CONNECTED') : 'ATTENTION';
   const address = context.baseline.identity.address;
@@ -87,9 +106,8 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
   // Failed delivery never suppresses retries. Persist only after success.
   // A reminder during an unchanged scan retains the last completed-state
   // fingerprint, so its completion does not send a second reminder.
-  const key = same && current.checking && previous?.incidentId === current.incidentId &&
-    previous?.key?.startsWith('failure:') ? previous.key : current.key;
-  await save({ destinationId: String(destinationId), binding, key, incidentId: current.incidentId, sentAt: new Date(now).toISOString() });
+  const key = knownHeldScan ? previous.key : current.key;
+  await save({ destinationId: String(destinationId), binding, key, codes: knownHeldScan ? previous.codes : current.codes, incidentId: current.incidentId, sentAt: new Date(now).toISOString() });
   return { sent: true, state: current.ok ? 'healthy' : 'failure', codes: current.codes };
 }
 
