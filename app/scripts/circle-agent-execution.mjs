@@ -1,9 +1,15 @@
 import { randomUUID } from 'node:crypto';
 import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
-import abi from './float-mainnet-abi.json' with { type: 'json' };
+import legacyAbi from './float-mainnet-abi.json' with { type: 'json' };
 
-const CHAIN = 5042002;
+const TESTNET = 5042002;
+export const circleGuardedRepaymentAbi = [...legacyAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...parseAbi([
+  'function repayForDraw(bytes32 lineId,bytes32 expectedDraw,uint256 amount)',
+  'function currentDrawDigest(bytes32 lineId) view returns (bytes32)',
+  'function repaymentBindingVersion() pure returns (uint256)',
+  'event DrawRepaid(bytes32 indexed lineId,bytes32 indexed drawDigest,address indexed payer,uint256 amount,uint256 principalRemaining)',
+])];
 const USDC = '0x3600000000000000000000000000000000000000';
 const accountAbi = parseAbi(['function execute(address target,uint256 value,bytes data)']);
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -15,11 +21,28 @@ const hash = (value) => keccak256(stringToHex(JSON.stringify(value)));
  * circle.lookup is read-only and returns a response bound to the original idempotency key.
  * journal must durably persist get/put and serialize withLock across processes.
  */
-export function createCircleAgentExecutor({ client, circle, journal, config }) {
-  requireThat(config.chainId === CHAIN, 'Only Arc testnet is enabled.');
+export function createCircleAgentExecutor(options) {
+  requireThat(options.config.chainId === TESTNET, 'Only Arc testnet is enabled.');
+  return createExecutor(options, false);
+}
+
+/** Explicit bounded guarded repayment only; does not enable purchases or public onboarding.
+ * The same wallet-wide namespace preserves earlier activation/uncertainty barriers.
+ */
+export function createCircleGuardedRepayer(options) {
+  requireThat(options.config.chainId === 5042, 'Only Arc mainnet guarded repayment is enabled.');
+  return createExecutor(options, true);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded) {
+  const config = Object.freeze({ ...suppliedConfig });
+  const CHAIN = guarded ? 5042 : TESTNET;
+  const network = guarded ? 'ARC' : 'ARC-TESTNET';
+  const abi = guarded ? circleGuardedRepaymentAbi : legacyAbi;
   const agent = getAddress(config.agent), contract = getAddress(config.contract);
   const cap = BigInt(config.maxAmount), feeCap = BigInt(config.maxNetworkFee);
-  requireThat(cap > 0n && cap <= 1_000_000n && feeCap > 0n && feeCap <= parseUnits('0.1', 18), 'Invalid testnet limits.');
+  requireThat(cap > 0n && cap <= (guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= parseUnits(guarded ? '0.02' : '0.1', 18), 'Invalid bounded execution limits.');
+  if (guarded) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && /^0x[0-9a-fA-F]{64}$/.test(config.expectedDraw) && !/^0x0{64}$/.test(config.expectedDraw), 'Pin the exact line and nonzero reviewed draw.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.runtimeHash), 'Pin the deployed runtime hash.');
   requireThat(['get', 'put', 'withLock'].every(k => typeof journal[k] === 'function'), 'A durable locked journal is required.');
   const namespace = hash({ chainId: CHAIN, agent });
@@ -41,22 +64,30 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     if (same(to, USDC)) {
       requireThat(call.functionName === 'approve' && same(call.args[0], contract), 'Only exact Shadow allowance is supported.');
       amount = call.args[1];
-    } else if (call.functionName === 'executeSpend') {
+    } else if (guarded && call.functionName === 'repayForDraw') {
+      [lineId, digest, amount] = call.args;
+      requireThat(same(lineId, config.expectedLineId) && same(digest, config.expectedDraw), 'Line or reviewed draw changed.');
+    } else if (!guarded && call.functionName === 'executeSpend') {
       const intent = call.args[0];
       requireThat(same(intent.agent, agent) && same(intent.executor, agent), 'Purchase belongs to another agent or executor.');
       amount = intent.principal; lineId = intent.lineId;
       requireThat(intent.maximumTotalDebt <= cap, 'Debt exceeds adapter limit.');
       requireThat(same(intent.provider, config.provider) && same(intent.endpointHash, config.endpointHash), 'Provider or endpoint is not approved.');
-    } else if (call.functionName === 'repay') {
+    } else if (!guarded && call.functionName === 'repay') {
       [lineId, amount] = call.args;
     } else throw new Error('Unsupported Shadow operation.');
-    requireThat(amount > 0n && amount <= cap, 'Amount exceeds adapter limit.');
+    requireThat(amount > 0n && (guarded ? amount === cap : amount <= cap), 'Amount exceeds adapter limit.');
     return { to, callAbi, ...call, amount, lineId, digest };
   }
   async function prepare(request) {
     await identity();
     const decoded = decode(request);
-    if (decoded.lineId) {
+    if (guarded) {
+      const read = (functionName, args = []) => client.readContract({ address: contract, abi, functionName, args });
+      requireThat(await read('repaymentBindingVersion') === 2n && same(await read('currentDrawDigest', [config.expectedLineId]), config.expectedDraw), 'Reviewed draw is stale.');
+      const line = await read('getLine', [config.expectedLineId]);
+      requireThat(same(line.agent, agent) && [2, 3].includes(Number(line.state)) && line.principalOutstanding >= cap, 'Exact reviewed agent debt required.');
+    } else if (decoded.lineId) {
       const line = await client.readContract({ address: contract, abi, functionName: 'lines', args: [decoded.lineId] });
       const owner = Array.isArray(line) ? line[abi.find(x => x.name === 'lines').outputs.findIndex(x => x.name === 'agent')] : line.agent;
       requireThat(same(owner, agent), 'Funding line belongs to another agent.');
@@ -69,19 +100,26 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     const simulation = await client.simulateContract({ address: decoded.to, abi: decoded.callAbi, functionName: decoded.functionName, args: decoded.args, account: agent });
     if (decoded.functionName === 'executeSpend') requireThat(simulation.result?.[0] === true, 'Shadow policy refused the purchase.');
     const block = await client.getBlock();
-    return { operation: decoded.functionName, amount: decoded.amount.toString(), lineId: decoded.lineId ?? null, digest: decoded.digest ?? null, fromBlock: block.number.toString() };
+    return { operation: decoded.functionName, amount: decoded.amount.toString(), lineId: decoded.lineId ?? null, digest: decoded.digest ?? (guarded ? config.expectedDraw : null), fromBlock: block.number.toString() };
   }
   function envelope(request, idempotencyKey) {
-    return { blockchain: 'ARC-TESTNET', sourceAddress: agent, contractAddress: getAddress(request.to), callData: request.data, amount: '0', idempotencyKey };
+    return { blockchain: network, sourceAddress: agent, contractAddress: getAddress(request.to), callData: request.data, amount: '0', idempotencyKey };
   }
   function bound(record, response) {
     requireThat(response && response.idempotencyKey === record.request.idempotencyKey, 'Unbound Circle response.');
-    requireThat(response.blockchain === 'ARC-TESTNET' && same(response.sourceAddress, agent) && same(response.contractAddress, record.request.contractAddress), 'Circle response identity mismatch.');
+    requireThat(response.blockchain === network && same(response.sourceAddress, agent) && same(response.contractAddress, record.request.contractAddress), 'Circle response identity mismatch.');
     requireThat(typeof response.id === 'string' && response.id.length > 0, 'Missing Circle transaction ID.');
     requireThat(!record.transactionId || record.transactionId === response.id, 'Circle transaction ID changed.');
     requireThat(!record.txHash || !response.txHash || same(record.txHash, response.txHash), 'Circle transaction hash changed.');
   }
+  function validateGuardedRecord(record) {
+    if (!guarded) return;
+    requireThat(record.request.blockchain === network && same(record.request.sourceAddress, agent), 'Journal network or wallet changed.');
+    const decoded = decode({ to: record.request.contractAddress, data: record.request.callData, value: record.request.amount });
+    requireThat(record.expected.operation === decoded.functionName && record.expected.amount === decoded.amount.toString() && same(record.expected.digest, config.expectedDraw) && (decoded.lineId ? same(record.expected.lineId, decoded.lineId) : record.expected.lineId === null), 'Journal repayment attribution changed.');
+  }
   async function verifyReceipt(record, txHash) {
+    validateGuardedRecord(record);
     requireThat(/^0x[0-9a-fA-F]{64}$/.test(txHash), 'Invalid transaction hash.');
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     requireThat(receipt.blockNumber >= BigInt(record.expected.fromBlock), 'Receipt predates the request.');
@@ -116,12 +154,14 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     const end = ends[0].index, start = boundaries.filter(x => x.index < end).at(-1)?.index;
     requireThat(start !== undefined, 'Missing user-operation log boundary.');
     const events = receipt.logs.slice(start + 1, end).flatMap(log => {
-      if (!same(log.address, record.request.contractAddress)) return [];
-      try { return [decodeEventLog({ abi: record.expected.operation === 'approve' ? erc20Abi : abi, data: log.data, topics: log.topics })]; } catch { return []; }
+      const tokenLog = guarded && same(log.address, USDC);
+      if (!same(log.address, record.request.contractAddress) && !(record.expected.operation === 'repayForDraw' && tokenLog)) return [];
+      try { return [decodeEventLog({ abi: record.expected.operation === 'approve' || tokenLog ? erc20Abi : abi, data: log.data, topics: log.topics })]; } catch { return []; }
     });
     const matches = events.filter(event => {
       const a = event.args, amount = BigInt(record.expected.amount);
       if (record.expected.operation === 'approve') return event.eventName === 'Approval' && same(a.owner, agent) && same(a.spender, contract) && a.value === amount;
+      if (record.expected.operation === 'repayForDraw') return event.eventName === 'DrawRepaid' && same(a.lineId, record.expected.lineId) && same(a.drawDigest, record.expected.digest) && same(a.payer, agent) && a.amount === amount;
       if (record.expected.operation === 'repay') return event.eventName === 'Repaid' && same(a.lineId, record.expected.lineId) && same(a.payer, agent) && a.amount === amount;
       return event.eventName === 'ProviderPaid' && same(a.digest, record.expected.digest) && same(a.lineId, record.expected.lineId) && same(a.provider, config.provider) && a.principal === amount;
     });
@@ -129,6 +169,11 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
     if (blocked.length === 1 && matches.length === 0) {
       requireThat(Number(await client.readContract({ address: contract, abi, functionName: 'receiptStatus', args: [record.expected.digest], blockNumber: receipt.blockNumber })) === 1, 'Blocked receipt is not terminal on chain.');
       return { status: 'blocked', txHash, userOpHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() };
+    }
+    if (record.expected.operation === 'repayForDraw') {
+      const repayment = matches[0];
+      requireThat(events.filter(e => e.eventName === 'Repaid' && same(e.args.lineId, record.expected.lineId) && same(e.args.payer, agent) && e.args.amount === BigInt(record.expected.amount) && e.args.principalRemaining === repayment?.args.principalRemaining).length === 1, 'Missing exact companion repayment event.');
+      requireThat(events.filter(e => e.eventName === 'Transfer' && same(e.args.from, agent) && same(e.args.to, contract) && e.args.value === BigInt(record.expected.amount)).length === 1, 'Missing exact agent-to-Shadow token transfer.');
     }
     requireThat(matches.length === 1 && blocked.length === 0, 'Receipt does not prove the exact requested operation.');
     return { status: 'confirmed', txHash, userOpHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() };
@@ -158,6 +203,7 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       await identity();
       const existing = await journal.get(key);
       if (existing) {
+        validateGuardedRecord(existing);
         requireThat(existing.namespace === namespace && hash(existing.request) === existing.requestHash, 'Execution journal was altered.');
         requireThat(same(existing.request.contractAddress, request.to) && same(existing.request.callData, request.data), 'Operation ID was reused for different calldata.');
         if (existing.notSubmitted !== true) {
@@ -183,7 +229,7 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
       const payload = envelope(request, randomUUID());
       const estimate = await circle.estimate(payload);
       requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
-      requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, 'Estimated fee exceeds testnet budget.');
+      requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, 'Estimated fee exceeds execution budget.');
       // Refresh policy after the remote estimate. No spend request if conditions changed.
       await prepare(request);
       const record = { version: 1, namespace, operationId: request.operationId, request: payload, requestHash: hash(payload), expected, createdAt: new Date().toISOString() };
@@ -212,6 +258,7 @@ export function createCircleAgentExecutor({ client, circle, journal, config }) {
         requireThat(await journal.get(activeKey) !== key, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
         return { status: 'not-submitted', key };
       }
+      validateGuardedRecord(record);
       requireThat(record.namespace === namespace && hash(record.request) === record.requestHash, 'Unknown or altered execution journal.');
       requireThat(requestKey({ operationId: record.operationId }) === key, 'Journal request key mismatch.');
       if (record.notSubmitted === true) {

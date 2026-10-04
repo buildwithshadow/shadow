@@ -1,4 +1,5 @@
-import { mkdir, open, readFile, rename, unlink } from 'node:fs/promises';
+import { mkdir, open, lstat, rename, unlink } from 'node:fs/promises';
+import { constants } from 'node:fs';
 import { resolve, join } from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 
@@ -6,11 +7,27 @@ import { randomUUID, createHash } from 'node:crypto';
 export async function createCircleAgentJournal(directory) {
   const dir = resolve(directory);
   await mkdir(dir, { recursive: true, mode: 0o700 });
+  const directoryStat = await lstat(dir);
+  if (!directoryStat.isDirectory() || directoryStat.isSymbolicLink()
+      || (directoryStat.mode & 0o077) !== 0
+      || (process.getuid && directoryStat.uid !== process.getuid())) {
+    throw new Error('Circle journal must be an owner-controlled private directory; inspect restored permissions before continuing.');
+  }
   const filename = key => join(dir, `${createHash('sha256').update(key).digest('hex')}.json`);
   return {
     async get(key) {
-      try { return JSON.parse(await readFile(filename(key), 'utf8')); }
+      let file;
+      try {
+        file = await open(filename(key), constants.O_RDONLY | constants.O_NOFOLLOW);
+        const metadata = await file.stat();
+        if (!metadata.isFile() || (metadata.mode & 0o077) !== 0
+            || (process.getuid && metadata.uid !== process.getuid())) {
+          throw new Error('Circle journal record permissions are unsafe; do not restore or resend from this record.');
+        }
+        return JSON.parse(await file.readFile('utf8'));
+      }
       catch (error) { if (error.code === 'ENOENT') return null; throw error; }
+      finally { if (file) await file.close(); }
     },
     async put(key, value) {
       const target = filename(key), temp = `${target}.${randomUUID()}.tmp`;
