@@ -150,14 +150,14 @@ test('cached success is revalidated against canonical chain before being returne
   await assert.rejects(()=>adapter.reconcile(done.key),/canonical and finalized/);assert.equal(state.sends,1);
 });
 test('file journal survives recreation, restricts file permissions and serializes independent instances',async()=>{
-  const dir=await mkdtemp(join(await realpath(tmpdir()),'shadow-circle-journal-'));
+  const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-circle-journal-')),dir=join(sandbox,'journal');
   try{
     const a=await createCircleAgentJournal(dir);await a.put('entry',{key:'stable'});
     const b=await createCircleAgentJournal(dir);assert.deepEqual(await b.get('entry'),{key:'stable'});
     for(const name of await readdir(dir))assert.equal((await stat(join(dir,name))).mode&0o777,0o600);
     await a.withLock('wallet',async()=>{await assert.rejects(()=>b.withLock('wallet',async()=>{}),/locked/);});
     await b.withLock('wallet',async()=>{});
-  }finally{await rm(dir,{recursive:true,force:true});}
+  }finally{await rm(sandbox,{recursive:true,force:true});}
 });
 
 test('preflight rejection can be reconciled as unsent without a Circle request',async()=>{

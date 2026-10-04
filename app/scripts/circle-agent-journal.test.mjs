@@ -21,21 +21,21 @@ test('an abrupt operator process death preserves its uncertain request and stale
   } finally {await rm(parent,{recursive:true,force:true});}
 });
 test('insecure restored directories and symlinked journal roots fail closed',async()=>{
-  const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-permissions-')),alias=parent+'-alias';
+  const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-permissions-')),parent=join(sandbox,'journal'),alias=join(sandbox,'alias');await mkdir(parent,{mode:0o700});
   try {
     await chmod(parent,0o755);await assert.rejects(()=>createCircleAgentJournal(parent),/private directory/);
     await chmod(parent,0o700);await symlink(parent,alias);await assert.rejects(()=>createCircleAgentJournal(alias),/private directory/);
-  } finally {await rm(alias,{force:true});await rm(parent,{recursive:true,force:true});}
+  } finally {await rm(sandbox,{recursive:true,force:true});}
 });
 test('record symlinks and broadly readable restored records cannot be consumed',async()=>{
-  const dir=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-record-'));
+  const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-record-')),dir=join(sandbox,'journal');
   try {
     const j=await createCircleAgentJournal(dir);await j.put('entry',{status:'unknown'});
     const name=(await readdir(dir))[0],path=join(dir,name);
     await chmod(path,0o644);await assert.rejects(()=>j.get('entry'),/permissions or size are unsafe/);
     await rm(path);const other=join(dir,'other');await writeFile(other,'{}',{mode:0o600});await symlink(other,path);
     await assert.rejects(()=>j.get('entry'));
-  } finally {await rm(dir,{recursive:true,force:true});}
+  } finally {await rm(sandbox,{recursive:true,force:true});}
 });
 
 
@@ -66,4 +66,11 @@ test('a new ordinary directory at the old path cannot silently reset another ope
     assert.deepEqual(await original.get('wallet'),{status:'unknown',request:'original'});
     original.close();
   }finally{await rm(parent,{recursive:true,force:true});}
+});
+
+
+test('a journal identity cannot be anchored in a parent writable by other users',async()=>{
+ const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-parent-'));
+ try{await chmod(sandbox,0o777);await assert.rejects(()=>createCircleAgentJournal(join(sandbox,'journal')),/parent must/);}
+ finally{await chmod(sandbox,0o700);await rm(sandbox,{recursive:true,force:true});}
 });

@@ -100,7 +100,7 @@ test('journal records cannot silently switch wallet identity',async()=>{
 test('activation holds across journal recreation and competing instances cannot submit twice',async()=>{
   const {mkdtemp,rm,realpath}=await import('node:fs/promises');const {tmpdir}=await import('node:os');const {join}=await import('node:path');
   const {createCircleAgentJournal}=await import('./circle-agent-journal.mjs');
-  const dir=await mkdtemp(join(await realpath(tmpdir()),'shadow-activation-'));
+  const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-activation-')),dir=join(sandbox,'journal');
   try {
     const x=fixture();let release,entered;const gate=new Promise(r=>{release=r;});const started=new Promise(r=>{entered=r;});
     x.circle.activate=async()=>{x.events.push('send');entered();await gate;throw new Error('lost response');};
@@ -112,5 +112,5 @@ test('activation holds across journal recreation and competing instances cannot 
     assert.equal((await first).status,'unknown');
     const next=await setupCircleAgentWallet({agent,client:x.client,circle:x.circle,journal:await createCircleAgentJournal(dir),confirm:true});
     assert.equal(next.status,'unknown');assert.equal(x.events.filter(x=>x==='send').length,1);
-  } finally {await rm(dir,{recursive:true,force:true});}
+  } finally {await rm(sandbox,{recursive:true,force:true});}
 });

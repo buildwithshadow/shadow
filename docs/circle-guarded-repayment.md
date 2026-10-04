@@ -64,3 +64,6 @@ CLI logout clears local authentication. It is not evidence that a copied remote
 credential has been revoked. Provider-side session revocation, signer compromise
 response and the Safe owner's private recovery method need their own supported
 procedures and exercises.
+
+
+The journal requires a canonical owner-only root under an owner-controlled parent that other users cannot write. An identity marker in that parent pins the root across adapter creation. Keep the marker with the state backup; a replaced root is refused rather than silently initialized. A worker holds the original directory as its kernel cwd for relative record and lock operations. The verified CLI runs from private writable journal/runtime state, not the vendor installation. Read-only vendor packages are supported; dependencies still come from the isolated installation and require their own supply-chain review.
