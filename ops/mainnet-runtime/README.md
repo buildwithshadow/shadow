@@ -7,6 +7,12 @@ baseline and allowed write paths. It contains no credentials.
 
 Before activation, validate against the actual unit with `systemd-analyze verify`,
 archive its existing drop-ins and record data-directory ownership and checksums.
+Install it as an instance-specific `zzzz-shadow-security.conf` drop-in after
+checking existing platform overrides. Some container hosts apply a generic
+`zzz-lxc-service.conf` that disables NoNewPrivileges; an earlier-sorting filename
+will not enforce the intended setting. Use a disposable, credential-free service
+probe and verify `/proc/self/status` reports `NoNewPrivs: 1` before activation.
+
 Activate during an idle, paused rehearsal; do not interrupt unresolved writes.
 After restart verify effective properties, original store/baseline identity,
 provider health, a completed healthy observer heartbeat and the alerts timer.
