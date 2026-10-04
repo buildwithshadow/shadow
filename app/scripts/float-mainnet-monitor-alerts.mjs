@@ -60,15 +60,23 @@ export function notificationState(context, now = Date.now()) {
   // checks still validate snapshot, accounting and any newly failing codes.
   let completedSnapshotValid = false;
   let snapshotAlerts = [];
+  let publishing = false;
+  let publicationFresh = false;
   try {
-    const publishing = publication && publication.runId === raw?.runId &&
+    publishing = publication && publication.runId === raw?.runId &&
       publication.startedAt === raw?.startedAt &&
       Object.entries(identity).every(([key, value]) => publication[key] === value);
     completedSnapshotValid = snapshot !== null &&
       (raw?.previousSnapshotHash === digestJson(snapshot) || publishing && publication.snapshotHash === digestJson(snapshot));
-    if (completedSnapshotValid) snapshotAlerts = evaluateSnapshot(b, snapshot, now).alerts;
+    const validCodes = Array.isArray(publication?.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
+    publicationFresh = publishing && validCodes && Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
+      Date.parse(publication.completedAt) <= now && now - Date.parse(publication.completedAt) <= 1000;
+    if (completedSnapshotValid) {
+      snapshotAlerts = evaluateSnapshot(b, snapshot, now).alerts;
+      if (publicationFresh && publication.snapshotHash === digestJson(snapshot)) snapshotAlerts.push(...publication.alertCodes.map(code => ({code})));
+    }
   } catch { /* invalid state remains audible below */ }
-  if (boundedScan && completedSnapshotValid && incidentId && hold.baselineHash === context.baselineHash &&
+  if ((boundedScan || publicationFresh) && completedSnapshotValid && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {

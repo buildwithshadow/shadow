@@ -297,3 +297,18 @@ test('restart after snapshot publication inherits the matching interrupted gener
  assert.ok(!notificationState(f.context,now+5).codes.includes('SNAPSHOT_BINDING_MISMATCH'));
  }finally{f.cleanup();}
 });
+
+
+test('new runner-only incident exposed during publication has the completed fingerprint',async()=>{
+ for(const cause of ['head-regression','timeout']){
+ const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{await f.run();await notify(now);const next=structuredClone(f.snapshot);let time=now+1;
+ if(cause==='head-regression'){next.observedAt.blockNumber='99';next.observedAt.blockHash=hash(99);next.discovery.scanned.toBlock='99';next.executionAudit.toBlock='99';}
+ let entered;const started=new Promise(r=>{entered=r;});const running=runMonitorOnce(f.context,{now:()=>time,collect:async()=>{if(cause==='timeout')time=now+6001;return next;},afterHoldLatched:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
+ const expected=cause==='timeout'?'CHECK_TIMEOUT':'CANONICAL_HEAD_CHANGED';
+ assert.equal((await notify(time)).sent,true);assert.equal(sent,2);assert.ok(previous.codes.includes(expected));const key=previous.key;
+ finish();await running;assert.equal(notificationState(f.context,time).key,key);assert.equal((await notify(time)).sent,false);assert.equal(sent,2);
+ }finally{f.cleanup();}
+ }
+});

@@ -103,7 +103,7 @@ export function heartbeatStatus(context, nowMs = Date.now()) {
   } catch { return { ...common, ok: false, hold: true, status: "hold", alerts: [alert("LOCAL_STATE_INVALID", "heartbeat, snapshot or local hold is unreadable/malformed")] }; }
 }
 
-export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now, afterSnapshotPublished = async () => {} } = {}) {
+export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now, afterSnapshotPublished = async () => {}, afterHoldLatched = async () => {} } = {}) {
   const release = acquire(context.stateDir);
   const file = paths(context);
   const started = now();
@@ -141,13 +141,15 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     const completed = now();
     if (completed < started || completed - started > context.baseline.policy.runTimeoutMs) result = { ok: false, hold: true, alerts: [...result.alerts, alert("CHECK_TIMEOUT", "check exceeded the approved wall-time bound")] };
     const publication = resolve(context.stateDir, 'publication.json');
+    atomicJson(publication, { ...identity(context), runId: common.runId,
+      startedAt: common.startedAt, completedAt: new Date(completed).toISOString(),
+      snapshotHash: snapshot ? digestJson(snapshot) : retainedSnapshotHash,
+      alertCodes: result.alerts.map(entry => entry.code) });
     if (snapshot) {
-      atomicJson(publication, { ...identity(context), runId: common.runId,
-        startedAt: common.startedAt, snapshotHash: digestJson(snapshot) });
       atomicJson(file.snapshot, snapshot);
       await afterSnapshotPublished();
     }
-    if (result.hold) latch(context, result.alerts, completed);
+    if (result.hold) { latch(context, result.alerts, completed); await afterHoldLatched(); }
     const incident = optionalJson(file.hold);
     const heartbeat = { ...common, completedAt: new Date(completed).toISOString(), observedAt: snapshot?.observedAt ?? null,
       snapshotHash: snapshot ? digestJson(snapshot) : retainedSnapshotHash, ok: result.ok && !incident, hold: result.hold || !!incident,
