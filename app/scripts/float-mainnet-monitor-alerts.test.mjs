@@ -361,6 +361,17 @@ test('a first collection failure without a snapshot alerts once across publicati
  }finally{failCollect(Error('still offline'));await retry;}
  assert.equal(notificationState(f.context,now+offset).key,key);assert.equal((await notify(now+offset)).sent,false);assert.equal(sent,1);
  }
+ let stalled;const latched=new Promise(r=>{stalled=r;});let resume;
+ // Use the runner's actual snapshot-less publication.
+ const publishing=runMonitorOnce(f.context,{now:()=>now+3,collect:async()=>{throw Error('offline');},afterHoldLatched:async()=>{stalled();await new Promise(r=>{resume=r;});}});await latched;
+ const savedHeartbeat=readFileSync(join(f.context.stateDir,'heartbeat.json'));const savedMarker=readFileSync(join(f.context.stateDir,'publication.json'));
+ resume();await publishing;
+ writeFileSync(join(f.context.stateDir,'heartbeat.json'),savedHeartbeat);writeFileSync(join(f.context.stateDir,'publication.json'),savedMarker);
+ let enteredRetry;let failRetry;const retryStarted=new Promise(r=>{enteredRetry=r;});
+ const restarted=f.run(now+4,async()=>{enteredRetry();return new Promise((resolve,reject)=>{failRetry=reject;});});await retryStarted;
+ try{assert.equal(notificationState(f.context,now+4).key,key);assert.equal((await notify(now+4)).sent,false);assert.equal(sent,1);}
+ finally{failRetry(Error('still offline after restart'));await restarted;}
+ assert.equal((await notify(now+4)).sent,false);assert.equal(sent,1);
  }finally{if(finish){finish();await running;}}
  }finally{f.cleanup();}
 });
