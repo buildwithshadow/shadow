@@ -34,19 +34,33 @@ export function notificationState(context, now = Date.now()) {
   const age = now - Date.parse(raw?.startedAt);
   // An ordinary bounded scan is quiet, but cannot mask a latched incident,
   // mismatched release, corrupt heartbeat or stopped/stuck runner.
-  if (Object.entries(identity).every(([key, value]) => raw?.[key] === value) &&
+  const holdPath = resolve(context.stateDir, 'hold.json');
+  const hold = optionalJson(holdPath);
+  const incidentId = typeof hold?.incidentId === 'string' && /^[0-9a-f-]{36}$/.test(hold.incidentId) ? hold.incidentId : null;
+  const boundedScan = Object.entries(identity).every(([key, value]) => raw?.[key] === value) &&
       raw.status === 'checking' && raw.ok === false && raw.hold === true &&
       raw.completedAt === null && raw.checks?.snapshotHealthy === false &&
       Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS' &&
-      age >= 0 && age <= b.policy.runTimeoutMs && !existsSync(resolve(context.stateDir, 'hold.json'))) return null;
+      age >= 0 && age <= b.policy.runTimeoutMs;
+  if (boundedScan && !existsSync(holdPath)) return null;
+  // A known incident stays a failure during a normal bounded scan. Its
+  // incomplete heartbeat is not a new incident or a recovery. Only notify an
+  // already delivered incident again after its reminder deadline; completed
+  // checks still validate snapshot, accounting and any newly failing codes.
+  if (boundedScan && incidentId && hold.baselineHash === context.baselineHash &&
+      Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
+      Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
+        typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
+    const codes = [...new Set(['HOLD_LATCHED', ...hold.alerts.map(entry => entry.code)])].sort();
+    return { ok: false, codes, incidentId, checking: true,
+      key: `failure:${hash(JSON.stringify({ codes, incidentId }))}` };
+  }
   // Revalidates persisted snapshot/accounting, freshness, hashes and hold latch.
   // Reading a stored ok:true alone is never sufficient for recovery.
   const checked = heartbeatStatus(context, now);
   const codes = [...new Set((checked.alerts ?? []).map(entry => entry?.code)
     .filter(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)))].sort();
-  const hold = optionalJson(resolve(context.stateDir, 'hold.json'));
-  const incidentId = typeof hold?.incidentId === 'string' && /^[0-9a-f-]{36}$/.test(hold.incidentId) ? hold.incidentId : null;
-  return { ok: checked.ok === true, codes, key: checked.ok === true ? 'healthy' : `failure:${hash(JSON.stringify({ codes, incidentId }))}` };
+  return { ok: checked.ok === true, codes, incidentId, key: checked.ok === true ? 'healthy' : `failure:${hash(JSON.stringify({ codes, incidentId }))}` };
 }
 
 export async function notifyMainnet({ context, previous, destinationId, send, save, now = Date.now() }) {
@@ -56,6 +70,8 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
   const binding = hash(JSON.stringify([context.manifestHash, context.baselineHash]));
   const same = previous?.destinationId === String(destinationId) && previous?.binding === binding;
   const age = now - Date.parse(previous?.sentAt);
+  if (same && current.checking && previous?.incidentId === current.incidentId &&
+      previous?.key?.startsWith('failure:') && age >= 0 && age < 21600000) return { sent: false, reason: 'known-incident-scan-in-progress' };
   if (same && previous?.key === current.key && (current.ok || (age >= 0 && age < 21600000))) return { sent: false, reason: 'unchanged' };
   const label = current.ok ? (same && previous?.key?.startsWith('failure:') ? 'RECOVERED' : 'CONNECTED') : 'ATTENTION';
   const address = context.baseline.identity.address;
@@ -65,7 +81,7 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
     '\nThis alert does not pause or authorize payments, or acknowledge an incident.';
   await send(message);
   // Failed delivery never suppresses retries. Persist only after success.
-  await save({ destinationId: String(destinationId), binding, key: current.key, sentAt: new Date(now).toISOString() });
+  await save({ destinationId: String(destinationId), binding, key: current.key, incidentId: current.incidentId, sentAt: new Date(now).toISOString() });
   return { sent: true, state: current.ok ? 'healthy' : 'failure', codes: current.codes };
 }
 

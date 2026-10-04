@@ -125,3 +125,51 @@ test('a newly latched incident with the same codes alerts even if recovery was n
     await notify(now + 2); assert.equal(messages.length, 2);
   } finally { f.cleanup(); }
 });
+
+
+test('a bounded scan of an already notified hold does not alternate transient failure alerts', async () => {
+  const f = fixture(); let previous; const messages = []; let finish;
+  const notify = (time = now, context = f.context) => notifyMainnet({ context, previous, destinationId: '-123', now: time,
+    send: async m => messages.push(m), save: async p => { previous = p; } });
+  try {
+    await f.run(now, async () => { throw Error('RPC timed out'); });
+    await notify(now);
+    const completed = await f.run(now + 1); await notify(now + 1);
+    const count = messages.length;
+    let entered; const started = new Promise(resolve => { entered = resolve; });
+    const running = f.run(now + 2, async () => { entered(); return new Promise(resolve => { finish = resolve; }); });
+    await started;
+    const inFlight = notificationState(f.context, now + 2);
+    assert.equal(inFlight.ok, false); assert.equal(inFlight.checking, true);
+    assert.equal(inFlight.incidentId, completed.incidentId);
+    assert.equal((await notify(now + 2)).reason, 'known-incident-scan-in-progress');
+    assert.equal(messages.length, count);
+    // A genuinely stuck scan and a changed binding still notify immediately.
+    await notify(now + 5003); assert.equal(messages.length, count + 1);
+    await notify(now + 3, { ...f.context, manifestHash: 'different' });
+    assert.equal(messages.length, count + 2);
+    finish(f.snapshot); await running;
+    assert.equal(notificationState(f.context, now + 3).ok, false);
+    assert.doesNotMatch(messages.join('\n'), /RECOVERED/);
+  } finally { f.cleanup(); }
+});
+
+test('an unseen hold and malformed hold remain audible during a bounded scan', async () => {
+  const f = fixture(); let finish;
+  try {
+    const failed = await f.run(now, async () => { throw Error('RPC timed out'); });
+    let entered; const started = new Promise(resolve => { entered = resolve; });
+    const running = f.run(now + 1, async () => { entered(); return new Promise(resolve => { finish = resolve; }); });
+    await started;
+    let message; let saved;
+    const sent = await notifyMainnet({context:f.context,destinationId:'-123',now:now+1,send:async m=>{message=m;},save:async p=>{saved=p;}});
+    assert.equal(sent.sent,true); assert.match(message,/RPC_CHECK_FAILED.*HOLD_LATCHED|HOLD_LATCHED.*RPC_CHECK_FAILED/);
+    assert.equal(saved.incidentId,failed.incidentId);
+    writeFileSync(join(f.context.stateDir,'hold.json'), '{');
+    assert.equal(notificationState(f.context,now+1).ok,false);
+    assert.notEqual(notificationState(f.context,now+1).checking,true);
+    writeFileSync(join(f.context.stateDir,'hold.json'),JSON.stringify({incidentId:failed.incidentId,baselineHash:'wrong',createdAt:new Date(now).toISOString(),alerts:[{code:'RPC_CHECK_FAILED'}]}));
+    assert.notEqual(notificationState(f.context,now+1).checking,true);
+    finish(f.snapshot); await running;
+  } finally { f.cleanup(); }
+});
