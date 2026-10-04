@@ -50,7 +50,10 @@ export function notificationState(context, now = Date.now()) {
   const incidentId = typeof hold?.incidentId === 'string' && /^[0-9a-f-]{36}$/.test(hold.incidentId) ? hold.incidentId : null;
   const checkingShape = Object.entries(identity).every(([key, value]) => raw?.[key] === value) &&
       raw.status === 'checking' && raw.ok === false && raw.hold === true &&
-      raw.completedAt === null && raw.checks?.snapshotHealthy === false &&
+      raw.completedAt === null && raw.snapshotHash === null && raw.observedAt === null &&
+      typeof raw.runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(raw.runId) &&
+      (raw.previousSnapshotHash === null || typeof raw.previousSnapshotHash === 'string' && /^[0-9a-f]{64}$/.test(raw.previousSnapshotHash)) &&
+      raw.checks?.snapshotHealthy === false &&
       Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS';
   const boundedScan = checkingShape && age >= 0 && age <= b.policy.runTimeoutMs;
   if (boundedScan && !existsSync(holdPath)) return null;
@@ -62,6 +65,7 @@ export function notificationState(context, now = Date.now()) {
   let snapshotAlerts = [];
   let publishing = false;
   let publicationFresh = false;
+  let publicationBound = false;
   try {
     publishing = publication && publication.runId === raw?.runId &&
       publication.startedAt === raw?.startedAt &&
@@ -69,11 +73,12 @@ export function notificationState(context, now = Date.now()) {
     completedSnapshotValid = snapshot !== null &&
       (raw?.previousSnapshotHash === digestJson(snapshot) || publishing && publication.snapshotHash === digestJson(snapshot));
     const validCodes = Array.isArray(publication?.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
-    publicationFresh = checkingShape && publishing && validCodes && Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
-      Date.parse(publication.completedAt) <= now && now - Date.parse(publication.completedAt) <= 1000;
+    publicationBound = checkingShape && publishing && validCodes && Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
+      Date.parse(publication.completedAt) <= now;
+    publicationFresh = publicationBound && now - Date.parse(publication.completedAt) <= b.policy.runTimeoutMs;
     if (completedSnapshotValid) {
       snapshotAlerts = evaluateSnapshot(b, snapshot, now).alerts;
-      if (publicationFresh && publication.snapshotHash === digestJson(snapshot)) snapshotAlerts.push(...publication.alertCodes.map(code => ({code})));
+      if (publicationBound && publication.snapshotHash === digestJson(snapshot)) snapshotAlerts.push(...publication.alertCodes.map(code => ({code})));
     }
   } catch { /* invalid state remains audible below */ }
   if ((boundedScan || publicationFresh) && completedSnapshotValid && incidentId && hold.baselineHash === context.baselineHash &&

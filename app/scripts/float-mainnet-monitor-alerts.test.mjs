@@ -231,6 +231,10 @@ test('snapshot publication generation is quiet while corruption and stale public
  writeFileSync(join(f.context.stateDir,'heartbeat.json'),JSON.stringify({...JSON.parse(rawHeartbeat),manifestHash:'wrong'}));
  assert.notEqual(notificationState(f.context,now+3).checking,true);
  assert.ok(notificationState(f.context,now+3).codes.includes('HEARTBEAT_BINDING_MISMATCH'));
+ for(const corrupt of [{snapshotHash:'wrong'}, {observedAt:{}}, {runId:'invalid'}]){
+  writeFileSync(join(f.context.stateDir,'heartbeat.json'),JSON.stringify({...JSON.parse(rawHeartbeat),...corrupt}));
+  assert.notEqual(notificationState(f.context,now+3).checking,true);
+ }
  writeFileSync(join(f.context.stateDir,'heartbeat.json'),rawHeartbeat);
  writeFileSync(join(f.context.stateDir,'snapshot.json'),'{}');await notify(now+3);assert.equal(sent,2);
  writeFileSync(join(f.context.stateDir,'snapshot.json'),JSON.stringify(next));
@@ -312,8 +316,9 @@ test('new runner-only incident exposed during publication has the completed fing
  if(cause==='head-regression'){next.observedAt.blockNumber='99';next.observedAt.blockHash=hash(99);next.discovery.scanned.toBlock='99';next.executionAudit.toBlock='99';}
  let entered;const started=new Promise(r=>{entered=r;});const running=runMonitorOnce(f.context,{now:()=>time,collect:async()=>{if(cause==='timeout')time=now+6001;return next;},afterHoldLatched:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
  const expected=cause==='timeout'?'CHECK_TIMEOUT':'CANONICAL_HEAD_CHANGED';
- assert.equal((await notify(time)).sent,true);assert.equal(sent,2);assert.ok(previous.codes.includes(expected));const key=previous.key;
- finish();await running;assert.equal(notificationState(f.context,time).key,key);assert.equal((await notify(time)).sent,false);assert.equal(sent,2);
+ const notificationTime=time+1500; // descheduled publication beyond the old one-second cutoff
+ assert.equal((await notify(notificationTime)).sent,true);assert.equal(sent,2);assert.ok(previous.codes.includes(expected));const key=previous.key;
+ finish();await running;assert.equal(notificationState(f.context,notificationTime).key,key);assert.equal((await notify(notificationTime)).sent,false);assert.equal(sent,2);
  }finally{f.cleanup();}
  }
 });
