@@ -135,7 +135,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
           typeof priorHold.createdAt === 'string' && Number.isFinite(Date.parse(priorHold.createdAt)) &&
           new Date(Date.parse(priorHold.createdAt)).toISOString() === priorHold.createdAt && Date.parse(priorHold.createdAt) <= Date.parse(previous.completedAt) &&
           Array.isArray(priorHold.alerts) && priorHold.alerts.length > 0 && priorHold.alerts.every(entry =>
-            typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code) && entry.severity === 'critical' && typeof entry.detail === 'string') &&
+            typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code) && ['critical','warning'].includes(entry.severity) && typeof entry.detail === 'string') &&
           priorHold?.incidentId === previous.incidentId && priorHold?.baselineHash === context.baselineHash &&
           previous.alerts[0]?.detail === `incident ${previous.incidentId} requires local acknowledgement after recovery`;
         const completedCodesBound = Array.isArray(previous?.alerts) && Array.isArray(publication?.alertCodes) &&
