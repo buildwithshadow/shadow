@@ -86,7 +86,9 @@ permissions:
 jobs:
   mainnet-tooling-gate:
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    # Linux compilation plus the full serial fault/recovery suite exceeded 20m.
+    # Preserve every assertion; allow the complete gate to finish.
+    timeout-minutes: 35
     steps:
       - uses: actions/checkout@v4
         with:
