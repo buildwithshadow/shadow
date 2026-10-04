@@ -341,3 +341,18 @@ test('a newly created hold after an absent read cannot cause a transient unknown
  await notify(now+1);assert.equal(sent,2);await notify(now+1);assert.equal(sent,2);
  }finally{fs.default.readFileSync=originalRead;syncBuiltinESMExports();f.cleanup();}
 });
+
+test('a first collection failure without a snapshot alerts once across publication and completion',async()=>{
+ const f=fixture();let previous;let finish;let sent=0;
+ const notify=time=>notifyMainnet({context:f.context,previous,destinationId:'-123',now:time,send:async()=>{sent++;},save:async p=>{previous=p;}});
+ try{
+ let entered;const started=new Promise(r=>{entered=r;});const running=runMonitorOnce(f.context,{now:()=>now,collect:async()=>{throw Error('offline');},afterHoldLatched:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
+ try{
+ await notify(now);assert.equal(sent,1);assert.ok(previous.codes.includes('RPC_CHECK_FAILED'));assert.ok(previous.codes.includes('SNAPSHOT_BINDING_MISMATCH'));assert.ok(!previous.codes.includes('CHECK_IN_PROGRESS'));
+ const key=previous.key;
+ writeFileSync(join(f.context.stateDir,'snapshot.json'),'{');assert.ok(notificationState(f.context,now).codes.includes('LOCAL_STATE_INVALID'));rmSync(join(f.context.stateDir,'snapshot.json'));
+ finish();finish=null;await running;
+ assert.equal(notificationState(f.context,now).key,key);assert.equal((await notify(now)).sent,false);assert.equal(sent,1);
+ }finally{if(finish){finish();await running;}}
+ }finally{f.cleanup();}
+});

@@ -72,6 +72,7 @@ export function notificationState(context, now = Date.now()) {
   let publishing = false;
   let publicationFresh = false;
   let publicationBound = false;
+  let firstFailurePublication = false;
   try {
     publishing = publication && publication.runId === raw?.runId &&
       publication.startedAt === raw?.startedAt &&
@@ -86,8 +87,15 @@ export function notificationState(context, now = Date.now()) {
       snapshotAlerts = evaluateSnapshot(b, snapshot, now).alerts;
       if (publicationBound && publication.snapshotHash === digestJson(snapshot)) snapshotAlerts.push(...publication.alertCodes.map(code => ({code})));
     }
+    // A first collection failure has no snapshot to bind. Preserve its real
+    // failure and missing-snapshot codes while publishing, never a healthy
+    // result or a transient checking fingerprint. Corrupt files stay audible.
+    firstFailurePublication = publicationBound && publication.snapshotHash === null &&
+      raw.previousSnapshotHash === null && snapshot === null &&
+      !existsSync(resolve(context.stateDir, 'snapshot.json')) && publication.alertCodes.includes('RPC_CHECK_FAILED');
+    if (firstFailurePublication) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...publication.alertCodes.map(code => ({code})));
   } catch { /* invalid state remains audible below */ }
-  if ((boundedScan || publicationFresh) && completedSnapshotValid && incidentId && hold.baselineHash === context.baselineHash &&
+  if ((boundedScan || publicationFresh) && (completedSnapshotValid || firstFailurePublication) && incidentId && hold.baselineHash === context.baselineHash &&
       Number.isFinite(Date.parse(hold.createdAt)) && Date.parse(hold.createdAt) <= now &&
       Array.isArray(hold.alerts) && hold.alerts.length > 0 && hold.alerts.every(entry =>
         typeof entry?.code === 'string' && /^[A-Z_0-9]{1,80}$/.test(entry.code))) {
