@@ -48,11 +48,11 @@ export function notificationState(context, now = Date.now()) {
   const holdPath = resolve(context.stateDir, 'hold.json');
   const hold = optionalJson(holdPath);
   const incidentId = typeof hold?.incidentId === 'string' && /^[0-9a-f-]{36}$/.test(hold.incidentId) ? hold.incidentId : null;
-  const boundedScan = Object.entries(identity).every(([key, value]) => raw?.[key] === value) &&
+  const checkingShape = Object.entries(identity).every(([key, value]) => raw?.[key] === value) &&
       raw.status === 'checking' && raw.ok === false && raw.hold === true &&
       raw.completedAt === null && raw.checks?.snapshotHealthy === false &&
-      Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS' &&
-      age >= 0 && age <= b.policy.runTimeoutMs;
+      Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS';
+  const boundedScan = checkingShape && age >= 0 && age <= b.policy.runTimeoutMs;
   if (boundedScan && !existsSync(holdPath)) return null;
   // A known incident stays a failure during a normal bounded scan. Its
   // incomplete heartbeat is not a new incident or a recovery. Only notify an
@@ -69,7 +69,7 @@ export function notificationState(context, now = Date.now()) {
     completedSnapshotValid = snapshot !== null &&
       (raw?.previousSnapshotHash === digestJson(snapshot) || publishing && publication.snapshotHash === digestJson(snapshot));
     const validCodes = Array.isArray(publication?.alertCodes) && publication.alertCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
-    publicationFresh = publishing && validCodes && Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
+    publicationFresh = checkingShape && publishing && validCodes && Date.parse(publication.completedAt) >= Date.parse(raw.startedAt) &&
       Date.parse(publication.completedAt) <= now && now - Date.parse(publication.completedAt) <= 1000;
     if (completedSnapshotValid) {
       snapshotAlerts = evaluateSnapshot(b, snapshot, now).alerts;

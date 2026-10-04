@@ -227,6 +227,11 @@ test('snapshot publication generation is quiet while corruption and stale public
  let entered;const started=new Promise(r=>{entered=r;});
  const running=runMonitorOnce(f.context,{now:()=>now+2,collect:async()=>next,afterSnapshotPublished:async()=>{entered();await new Promise(r=>{finish=r;});}});await started;
  assert.equal((await notify(now+3)).reason,'known-incident-scan-in-progress');assert.equal(sent,1);
+ const rawHeartbeat=readFileSync(join(f.context.stateDir,'heartbeat.json'),'utf8');
+ writeFileSync(join(f.context.stateDir,'heartbeat.json'),JSON.stringify({...JSON.parse(rawHeartbeat),manifestHash:'wrong'}));
+ assert.notEqual(notificationState(f.context,now+3).checking,true);
+ assert.ok(notificationState(f.context,now+3).codes.includes('HEARTBEAT_BINDING_MISMATCH'));
+ writeFileSync(join(f.context.stateDir,'heartbeat.json'),rawHeartbeat);
  writeFileSync(join(f.context.stateDir,'snapshot.json'),'{}');await notify(now+3);assert.equal(sent,2);
  writeFileSync(join(f.context.stateDir,'snapshot.json'),JSON.stringify(next));
  assert.notEqual(notificationState(f.context,now+5003).checking,true);
