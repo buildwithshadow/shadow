@@ -50,11 +50,13 @@ export function notificationState(context, now = Date.now()) {
   const incidentId = typeof hold?.incidentId === 'string' && /^[0-9a-f-]{36}$/.test(hold.incidentId) ? hold.incidentId : null;
   const checkingShape = Object.entries(identity).every(([key, value]) => raw?.[key] === value) &&
       raw.status === 'checking' && raw.ok === false && raw.hold === true &&
+      typeof raw.startedAt === 'string' && Number.isFinite(Date.parse(raw.startedAt)) && new Date(Date.parse(raw.startedAt)).toISOString() === raw.startedAt &&
       raw.completedAt === null && raw.snapshotHash === null && raw.observedAt === null &&
       typeof raw.runId === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(raw.runId) &&
       (raw.previousSnapshotHash === null || typeof raw.previousSnapshotHash === 'string' && /^[0-9a-f]{64}$/.test(raw.previousSnapshotHash)) &&
       raw.checks?.snapshotHealthy === false &&
-      Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS';
+      Array.isArray(raw.alerts) && raw.alerts.length === 1 && raw.alerts[0]?.code === 'CHECK_IN_PROGRESS' &&
+      raw.alerts[0]?.severity === 'critical' && typeof raw.alerts[0]?.detail === 'string';
   const boundedScan = checkingShape && age >= 0 && age <= b.policy.runTimeoutMs;
   if (boundedScan && !existsSync(holdPath)) return null;
   // A known incident stays a failure during a normal bounded scan. Its

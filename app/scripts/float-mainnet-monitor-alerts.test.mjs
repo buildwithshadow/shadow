@@ -231,7 +231,7 @@ test('snapshot publication generation is quiet while corruption and stale public
  writeFileSync(join(f.context.stateDir,'heartbeat.json'),JSON.stringify({...JSON.parse(rawHeartbeat),manifestHash:'wrong'}));
  assert.notEqual(notificationState(f.context,now+3).checking,true);
  assert.ok(notificationState(f.context,now+3).codes.includes('HEARTBEAT_BINDING_MISMATCH'));
- for(const corrupt of [{snapshotHash:'wrong'}, {observedAt:{}}, {runId:'invalid'}]){
+ for(const corrupt of [{snapshotHash:'wrong'}, {observedAt:{}}, {runId:'invalid'}, {startedAt:[JSON.parse(rawHeartbeat).startedAt]}, {alerts:[{code:'CHECK_IN_PROGRESS',severity:'warning',detail:'invalid'}]}]){
   writeFileSync(join(f.context.stateDir,'heartbeat.json'),JSON.stringify({...JSON.parse(rawHeartbeat),...corrupt}));
   assert.notEqual(notificationState(f.context,now+3).checking,true);
  }
