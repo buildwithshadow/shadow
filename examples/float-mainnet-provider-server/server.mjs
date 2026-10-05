@@ -81,6 +81,9 @@ async function jsonBody(request) {
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError("the request body is not a JSON object");
   return body;
+  } catch (error) {
+    if (request.aborted && !(error instanceof HttpError)) throw new HttpError('Request body interrupted', 400);
+    throw error;
   } finally { clearTimeout(timer); }
 }
 
@@ -501,7 +504,11 @@ export function createProviderServer({ connection, account, endpointHash, price,
     let status;
     let body;
     try {
-      if (recoveryOnly && routeKind === 'accept') throw new HttpError('Provider is in recovery-only mode; no new acceptances or purchases are offered', 503);
+      if (recoveryOnly && routeKind === 'accept') {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(stableStringify({error: 'Provider is in recovery-only mode; no new acceptances or purchases are offered'}));
+        return;
+      }
       let inputBody;
       if (request.method === 'POST') {
         // Independent bounded ingress lanes; slow purchase bodies cannot
@@ -532,7 +539,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
       if (remaining) callerActive.set(activeKey, remaining); else callerActive.delete(activeKey);
     }
   });
-  server.maxConnections = 32;
+  // Service slots plus both eight-connection body-ingress pools.
+  server.maxConnections = Math.max(32, maxConcurrent + 16);
   return server;
 }
 

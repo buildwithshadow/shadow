@@ -117,3 +117,34 @@ test('slow bodies in both lanes cannot block complete requests and are closed on
     assert.ok(slow.every(x=>x.req.destroyed));
   } finally {for(const x of slow){clearInterval(x.timer);x.req.destroy();}}
 });
+
+
+test('recovery-only admission refusal does not log a provider failure',async t=>{
+  const errors=t.mock.method(console,'error',()=>{});
+  const url=await fixture(t,{recoveryOnly:true});
+  const response=await fetch(url+'/accept',{method:'POST',body:'invalid'});
+  assert.equal(response.status,503);
+  assert.match((await response.json()).error,/recovery-only/);
+  assert.equal(errors.mock.callCount(),0);
+});
+
+test('normal work plus slow ingress preserves every configured recovery connection',async t=>{
+  let release,started,server,reads=0;
+  const held=new Promise(resolve=>{release=resolve});
+  const ready=new Promise(resolve=>{started=resolve});
+  const url=await fixture(t,{publicOrigin:null,maxConcurrent:32,trustLoopbackProxy:true,onServer:s=>{server=s},connection:{client:{readContract:async()=>{if(++reads===16)started();await held;return 0n;}}}});
+  const hash='0x'+'ab'.repeat(32);
+  const polling=Array.from({length:16},(_,i)=>fetch(url+'/status/'+hash,{headers:{'x-shadow-client-ip':`198.51.100.${i+1}`}}));
+  const bodies=[];
+  try {
+    await ready;
+    for(let i=0;i<8;i++){
+      const arrived=once(server,'request');
+      const req=request(url+'/accept',{method:'POST',headers:{'x-shadow-client-ip':`192.0.2.${i+1}`}});
+      req.on('error',()=>{});req.write('{');bodies.push(req);await arrived;
+    }
+    const recoveries=await Promise.all(Array.from({length:16},(_,i)=>fetch(url+'/serve',{method:'POST',headers:{'x-shadow-client-ip':`203.0.113.${i+1}`},body:JSON.stringify({digest:hash})})));
+    assert.ok(recoveries.every(response=>response.status===404),'all recovery requests reach receipt lookup');
+    await Promise.all(recoveries.map(response=>response.text()));
+  } finally {for(const req of bodies)req.destroy();release();await Promise.allSettled(polling);}
+});
