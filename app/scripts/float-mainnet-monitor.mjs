@@ -16,6 +16,7 @@ import {
 } from "./float-mainnet-cli.mjs";
 import { readIndexFile } from "./float-mainnet-indexer.mjs";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
+import { readExecutionTransaction } from "./float-mainnet-monitor-execution-transaction.mjs";
 
 // Read-only pilot monitor and reconciliation for the ShadowFloatMainnet
 // candidate. Every read is pinned to one block. check exits 1 on a critical
@@ -77,7 +78,8 @@ async function discover(connection, indexPath, pinned) {
   const logs = scanned ? await findLogs(connection, undefined, undefined, from, pinned.number) : [];
   for (const log of logs) {
     const { eventName, args } = decodeEventLog({ abi: floatEventAbi, data: log.data, topics: log.topics });
-    events.push({ event: eventName, args, blockNumber: log.blockNumber, transactionHash: log.transactionHash });
+    events.push({ event: eventName, args, blockNumber: log.blockNumber, blockHash: log.blockHash,
+      transactionHash: log.transactionHash, transactionIndex: log.transactionIndex });
   }
 
   const lineIds = [...new Set(events.filter((entry) => entry.event === "LineOpened").map((entry) => entry.args.lineId))];
@@ -312,11 +314,9 @@ async function check(values, { snapshot = false } = {}) {
     const executions = [];
     const transactions = new Map();
     for (const event of found.executions.filter((entry) => entry.blockNumber >= fromBlock)) {
-      if (!transactions.has(event.transactionHash)) transactions.set(event.transactionHash, await connection.client.getTransaction({ hash: event.transactionHash }));
-      const tx = transactions.get(event.transactionHash);
-      if (tx.blockNumber !== event.blockNumber || !tx.blockHash) throw new Error("execution transaction is not mined in its event block");
-      const block = await connection.client.getBlock({ blockNumber: event.blockNumber });
-      if (tx.blockHash !== block.hash) throw new Error("execution transaction is not canonical");
+      const key = `${event.blockHash}:${event.transactionHash}:${event.transactionIndex}`;
+      if (!transactions.has(key)) transactions.set(key, await readExecutionTransaction(connection.client, event));
+      const tx = transactions.get(key);
       let executor = null;
       // A routed smart-account call needs a route-specific decoder. It cannot
       // establish the signed executor from the outer sender alone.
