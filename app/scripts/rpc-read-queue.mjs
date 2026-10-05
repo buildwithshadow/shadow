@@ -73,7 +73,8 @@ export function isTransientRpcReadError(error, method) {
         if (message) backendMessage = message;
         current = current.cause;
       }
-      return /^internal error[.]?$/i.test(backendMessage.trim());
+      return /^internal error[.]?$/i.test(backendMessage.trim())
+        || transientRpcPattern.test(backendMessage);
     }
   }
   return transientRpcPattern.test(detail);

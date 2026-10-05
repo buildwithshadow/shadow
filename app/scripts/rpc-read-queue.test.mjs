@@ -111,3 +111,15 @@ test("internal-error retry never covers calls, sends, invalid requests or pruned
   assert.equal(attempts,1,method+': '+message);
  }
 });
+
+for (const message of ["rate limit exceeded", "too many requests", "temporarily unavailable"]) {
+ test(`internal RPC class preserves transient detail retries: ${message}`, async () => {
+  const queue = createRpcReadQueue({maxAttempts: 2, spacingMs: 0, baseDelayMs: 0, sleep: async () => {}});
+  let attempts = 0;
+  assert.deepEqual(await queue('eth_getLogs', async () => {
+   if (++attempts === 1) throw Object.assign(new Error(message), {name: 'InternalRpcError', code: -32603});
+   return [];
+  }), []);
+  assert.equal(attempts, 2);
+ });
+}
