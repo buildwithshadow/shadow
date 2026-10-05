@@ -31,15 +31,17 @@ type Provider = NonNullable<Window["ethereum"]> & {
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
 };
 
-function Field({ label, name, value, onChange, hint, decimal = false, required = true, disabled = false }: {
-  label: string; name: string; value: string; onChange: (value: string) => void; hint?: string; decimal?: boolean; required?: boolean; disabled?: boolean;
+function Field({ label, name, value, onChange, hint, error: fieldError, decimal = false, required = true, disabled = false }: {
+  label: string; name: string; value: string; onChange: (value: string) => void; hint?: string; error?: string; decimal?: boolean; required?: boolean; disabled?: boolean;
 }) {
   return <div className="fundingField">
     <label htmlFor={`funding-${name}`}>{label}</label>
     <input id={`funding-${name}`} name={name} value={value} onChange={(event) => onChange(event.target.value)}
       inputMode={decimal ? "decimal" : "text"} autoComplete="off" spellCheck={false} required={required} disabled={disabled}
-      aria-describedby={hint ? `funding-${name}-hint` : undefined} />
+      aria-invalid={fieldError ? true : undefined}
+      aria-describedby={[hint && `funding-${name}-hint`, fieldError && `funding-${name}-error`].filter(Boolean).join(" ") || undefined} />
     {hint && <small id={`funding-${name}-hint`}>{hint}</small>}
+    {fieldError && <small id={`funding-${name}-error`} role="alert">{fieldError}</small>}
   </div>;
 }
 
@@ -74,6 +76,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
   const [snapshotError, setSnapshotError] = useState("");
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
+  const [lineInputError, setLineInputError] = useState("");
   const [line, setLine] = useState<CandidateLine | null>(null);
   const [pending, setPending] = useState<CandidatePending | null>(null);
   const [journalError, setJournalError] = useState("");
@@ -246,7 +249,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
   async function lookup(event?: FormEvent, id = lineId) {
     event?.preventDefault();
-    invalidate(); setError(""); setLine(null); setBusy("Reading the funding line…");
+    invalidate(); setError(""); setLine(null); setLineInputError("");
+    if (!/^0x[0-9a-fA-F]{64}$/.test(id) || /^0x0{64}$/.test(id)) {
+      setLineInputError("Enter the full funding line ID from your opening receipt: 0x followed by 64 hexadecimal characters.");
+      return;
+    }
+    setBusy("Reading the funding line…");
     const currentRevision = revision.current;
     try {
       const value = await readCandidateLine(client, id);
@@ -401,7 +409,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </header>
 
     <p className="fundingScope">{mainnet ? "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
-    {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase.</p>}
+    {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase. Repayment needs separate test USDC from the repaying wallet—the line’s reserve cannot repay its own debt.</p>}
     {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
       <span id="funding-role-title">Which are you?</span>
       <button type="button" aria-pressed={role === "sponsor"} onClick={() => setRole(role === "sponsor" ? null : "sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
@@ -478,7 +486,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </form> : <section className="fundingPanel" aria-labelledby="funding-manage-title">
       <div className="fundingPanelHead"><div><h2 id="funding-manage-title">Find your funding line</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
       <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
-        <Field name="line" label="Funding line ID" value={lineId} onChange={(value) => { invalidate(); setLine(null); setLineId(value); }} disabled={Boolean(busy)} hint="The 0x identifier from your line-opening receipt." />
+        <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={(value) => { invalidate(); setLine(null); setLineInputError(""); setLineId(value); }} disabled={Boolean(busy)} hint="The 0x identifier from your line-opening receipt." />
         <button type="submit" disabled={Boolean(busy)}>Load line</button>
       </form>
       {line && <div className="fundingLine">
