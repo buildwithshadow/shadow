@@ -38,6 +38,7 @@ for (const [name, change] of [
   ["missing transaction", b => b.transactions = []],
   ["hash-only block", b => b.transactions = [tx.hash]],
   ["duplicate transaction", b => b.transactions.push(b.transactions[0])],
+  ["inconsistent block-body ordering", b => b.transactions.unshift({ ...tx, hash: hash(4), transactionIndex: 1 })],
   ["wrong mined transaction block", b => b.transactions[0].blockHash = hash(3)],
   ["wrong transaction index", b => b.transactions[0].transactionIndex = 1],
   ["missing sender", b => delete b.transactions[0].from],
