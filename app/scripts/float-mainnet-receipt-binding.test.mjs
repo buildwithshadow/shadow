@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { createServer } from 'node:http';
 import { pathToFileURL } from 'node:url';
 import { test } from 'node:test';
+import { spawn } from 'node:child_process';
+import { createInterface } from 'node:readline';
 import { createPublicClient, createWalletClient, defineChain, http, erc20Abi, keccak256, stringToHex, getAddress } from 'viem';
 
 const ROOT = new URL('../../', import.meta.url).pathname.replace(/\/$/, '');
@@ -117,6 +119,60 @@ test('receipt identity must remain bound when payment-log access fails', { timeo
   assert.equal(recoveredAfterRestart.status, 200);
   assert.equal((await recoveredAfterRestart.json()).result, result.toString('base64'));
   assert.equal(work, 0);
+
+  // The real production entrypoint starts without the retired signing key.
+  // Its store must remain byte-for-byte unchanged, including legacy recovery.
+  const { readdirSync } = await import('node:fs');
+  const storedBytes = () => Object.fromEntries(readdirSync(store).sort().map(n => [n, readFileSync(join(store,n),'utf8')]));
+  const beforeRecovery = storedBytes();
+  const child = spawn(process.execPath, ['examples/float-mainnet-provider-server/server.mjs','--recovery-only','--provider',paidProvider.address], {
+    cwd: ROOT, env: { PATH: process.env.PATH, ARC_RPC_URL: rpc, FLOAT_MAINNET_EXPECTED_CHAIN_ID:'5042002', FLOAT_MAINNET_ADDRESS:candidate, PROVIDER_ENDPOINT:'https://local-review.example/report', PROVIDER_PRICE:'50000', PROVIDER_STORE_DIR:store, PORT:'0', HOST:'127.0.0.1', PROVIDER_SERVICE:'must-not-load' }, stdio:['ignore','pipe','pipe'],
+  });
+  t.after(() => child.kill());
+  const cliUrl = await new Promise((resolve,reject) => {
+    const timer = setTimeout(()=>reject(new Error('Recovery CLI did not start')),15000);
+    const lines = createInterface({input:child.stdout});
+    child.once('exit',code=>{clearTimeout(timer);reject(new Error(`Recovery CLI exited ${code}`));});
+    lines.on('line',line=>{try {const v=JSON.parse(line);if(v.listening){clearTimeout(timer);assert.equal(v.mode,'recovery-only');resolve(v.listening);}} catch(e){clearTimeout(timer);reject(e);}});
+  });
+  const recoveredCli = await post(cliUrl,{digest});
+  assert.equal(recoveredCli.status,200,await recoveredCli.clone().text());
+  const originalDelivery=JSON.parse(beforeRecovery[`${digest}.delivery.json`]);
+  assert.deepEqual(await recoveredCli.json(),{result:result.toString('base64'),delivery:originalDelivery});
+  assert.equal((await fetch(`${cliUrl}/accept`,{method:'POST',body:'{}'})).status,503);
+  assert.deepEqual(storedBytes(),beforeRecovery,'recovery-only process does not rewrite the restored store');
+  const deliveryFile=join(store,`${digest}.delivery.json`);
+  unlinkSync(deliveryFile);
+  assert.equal((await post(cliUrl,{digest})).status,409,'unsigned work cannot become a new delivery');
+  writeFileSync(deliveryFile,beforeRecovery[`${digest}.delivery.json`]);
+  const corrupted={...originalDelivery,signature:'0x'+'01'.repeat(65)};
+  writeFileSync(deliveryFile,JSON.stringify(corrupted));
+  assert.notEqual((await post(cliUrl,{digest})).status,200,'corrupt signature cannot recover output');
+  writeFileSync(deliveryFile,beforeRecovery[`${digest}.delivery.json`]);
+  const resultFile=join(store,`${digest}.result.json`);
+  writeFileSync(resultFile,JSON.stringify({...JSON.parse(beforeRecovery[`${digest}.result.json`]),result:Buffer.from('tampered').toString('base64')}));
+  assert.notEqual((await post(cliUrl,{digest})).status,200,'tampered bytes cannot recover');
+  writeFileSync(resultFile,beforeRecovery[`${digest}.result.json`]);
+  assert.equal((await post(cliUrl,{digest})).status,200);
+  const paymentFile=join(store,`${digest}.payment.json`);
+  unlinkSync(paymentFile);
+  assert.notEqual((await post(cliUrl,{digest})).status,200,'log outage without original transaction stays blocked');
+  assert.equal((await post(cliUrl,{digest,paymentTransactionHash:paidTx})).status,200);
+  assert.equal((await import('node:fs')).existsSync(paymentFile),false,'read-only recovery does not upgrade legacy storage');
+  writeFileSync(paymentFile,beforeRecovery[`${digest}.payment.json`]);
+  const acceptanceFile=join(store,`${digest}.acceptance.json`);
+  writeFileSync(acceptanceFile,JSON.stringify({...realAcceptance,signature:'0x'+'01'.repeat(65)}));
+  assert.notEqual((await post(cliUrl,{digest})).status,200,'corrupt acceptance is rejected');
+  writeFileSync(acceptanceFile,beforeRecovery[`${digest}.acceptance.json`]);
+  assert.deepEqual(storedBytes(),beforeRecovery);
+  assert.equal(work,0);
+  const recoveryOptions={connection:withReceipts,account:{address:paidProvider.address},endpointHash,price:50000n,storeDir:store,recoveryOnly:true};
+  assert.throws(()=>createProviderServer({...recoveryOptions,account:paidProvider}),/never a signer/);
+  const smartUrl=await listen(createProviderServer({...recoveryOptions,connection:{...withReceipts,client:{...withReceipts.client,getCode:async()=> '0x1234'}}}));
+  assert.equal((await post(smartUrl,{digest})).status,409,'smart provider recovery remains excluded');
+  const unpaidUrl=await listen(createProviderServer({...recoveryOptions,connection:{...withReceipts,client:{...withReceipts.client,readContract:async p=>p.functionName==='receiptStatus'?0:client.readContract(p)}}}));
+  assert.equal((await post(unpaidUrl,{digest})).status,402,'saved delivery alone does not prove payment');
+  child.kill();
 
   assert.equal(await client.readContract({address:usdc,abi:erc20Abi,functionName:'balanceOf',args:[otherProvider.address]}),0n);
   assert.equal(await client.readContract({address:usdc,abi:erc20Abi,functionName:'balanceOf',args:[paidProvider.address]}),50000n);

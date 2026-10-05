@@ -166,3 +166,38 @@ Set `PROVIDER_SERVICE=shadow-arc-wallet` to prepare a public balance report for 
 The report includes six-decimal ERC20 and eighteen-decimal native USDC representations of the same balance; never add them. It is a balance snapshot, not a total-portfolio or solvency assessment. The provider server freezes the prepared bytes before acceptance and serves those bytes after payment, including recovery. A new report is a new purchase. Results concern public addresses and remain publicly retrievable by paid digest.
 
 The service module can be exercised read-only without credentials. That does not prove a paid purchase, a deployed mainnet candidate, or a customer. Running it on mainnet requires its own verified deployment manifest, approved provider signing account, isolated persistent store and TLS endpoint. The existing hosted purchase adapter and public onboarding remain testnet-only.
+
+### Recovering paid results after retiring an EOA signing key
+
+Stop the active provider process before opening its store in recovery mode. Restore
+its complete persistent store, including the original acceptance, result, signed
+delivery and payment transaction identity. Run the same server with the existing
+manifest, endpoint, price and store configuration, but **without**
+`FLOAT_PROVIDER_PRIVATE_KEY` in its environment:
+
+```sh
+node examples/float-mainnet-provider-server/server.mjs \
+  --manifest "$M" --recovery-only --provider "$RETIRED_PROVIDER_ADDRESS"
+```
+
+The address is public; no replacement signing key is needed. Startup rejects a
+supplied signing key and does not load a service adapter. `/accept` returns 503,
+including for previously accepted requests. `/serve` returns only an existing
+signed delivery and its exact result, after checking both EOA receipt signatures,
+record identities, result hash and the original canonical provider payment.
+`/status` remains available. Recovery does not write the store, create a signature,
+run service work or send a transaction. The store must already exist and can be
+mounted read-only. HTTP origin, quota and concurrency controls still apply.
+
+When an older store lacks its payment transaction record and log queries are
+unavailable, supply the original `paymentTransactionHash` on each `/serve` request.
+The transaction is verified, but recovery mode does not persist that hint.
+
+Missing or corrupt receipts/results fail closed. Prepared or unsigned results
+cannot be finished without the old signer; restore the original signed delivery
+or reconcile the obligation with the participants. This mode initially supports
+ordinary EOA providers only, not smart-contract provider signer rotation. It does
+not revoke a stolen key or invalidate an already signed acceptance: separately
+disable the retired provider's policy on every applicable funding line (or use
+the protocol's pause controls) before accepting new work under a replacement
+provider. Clients must continue verifying recovered receipts normally.

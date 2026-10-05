@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import { createRequire } from "node:module";
@@ -87,10 +87,14 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000 }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, recoveryOnly = false }) {
   if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
   for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
-  mkdirSync(storeDir, { recursive: true });
+  if (typeof recoveryOnly !== "boolean") throw new Error("recoveryOnly must be boolean");
+  if (recoveryOnly) {
+    if (account.signTypedData || account.type === "local") throw new Error("Recovery mode requires only a public provider address, never a signer");
+    if (!statSync(storeDir).isDirectory()) throw new Error("Recovery requires an existing store directory");
+  } else mkdirSync(storeDir, { recursive: true });
   const provider = parseAddress("account.address", account.address, Error);
   const fileOf = (digest, slot) => join(storeDir, `${digest}.${slot}.json`);
   const accepting = new Map();
@@ -331,6 +335,21 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (!acceptance) return [404, { error: `no accepted request for digest ${digest}` }];
     const delivered = storedReceipt(digest, DELIVERY_KIND);
     const earlier = readStored(fileOf(digest, "result"));
+    if (recoveryOnly) {
+      if (!delivered) throw new HttpError("Recovery mode cannot create a delivery; restore the original signed delivery and result", 409);
+      const code = await connection.client.getCode({ address: provider });
+      if (code && code !== "0x") throw new HttpError("Recovery mode supports ordinary EOA providers only", 409);
+      for (const [receipt, kind] of [[acceptance, ACCEPTANCE_KIND], [delivered, DELIVERY_KIND]]) {
+        const checked = validateReceiptFile(receipt, connection, kind);
+        const signature = await checkSignature(connection, provider, checked.hash, checked.signature);
+        if (!signature.valid) throw new HttpError("Stored provider signature does not verify; restore trusted records", 409);
+      }
+      if (delivered.requestId !== acceptance.requestId || earlier?.digest !== digest || earlier?.requestId !== acceptance.requestId ||
+          typeof earlier?.result !== "string" || Buffer.from(earlier.result, "base64").toString("base64") !== earlier.result ||
+          resultRefHashOf(earlier.resultRef) !== delivered.typedData.message.resultRefHash.toLowerCase()) {
+        throw new HttpError("Stored recovery records disagree; restore trusted records", 409);
+      }
+    }
     const marker = readStored(fileOf(digest, "started"));
     if (marker && (marker.digest !== digest || marker.requestId !== acceptance.requestId)) {
       throw new HttpError(`the provider's stored service marker for digest ${digest} disagrees with its acceptance; the provider has to repair it`, 500);
@@ -360,7 +379,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     await assertPaidProviderBinding(connection, payment, acceptance);
     // Upgrade legacy delivered stores too: persist only the independently
     // verified original transaction, before any successful return.
-    storeOnce(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
+    if (!recoveryOnly) storeOnce(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
     // Returning our stored bytes creates no new receipt/signature. A rotated
     // smart-provider key must not strand that result; payment binding is still
     // freshly established from the original canonical transaction.
@@ -402,7 +421,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
       context.digest = parseBytes32("digest", pathname.slice("/status/".length), HttpError);
       return status(context.digest);
     }
-    if (request.method === "POST" && pathname === "/accept") return accept(await jsonBody(request), context);
+    if (request.method === "POST" && pathname === "/accept") {
+      if (recoveryOnly) return [503, { error: "Provider is in recovery-only mode; no new acceptances or purchases are offered" }];
+      return accept(await jsonBody(request), context);
+    }
     if (request.method === "POST" && pathname === "/serve") {
       const input = await jsonBody(request);
       const digest = parseBytes32("digest", input.digest, HttpError);
@@ -494,8 +516,12 @@ export function createProviderServer({ connection, account, endpointHash, price,
 }
 
 async function main() {
-  const { values } = parseArgs({ options: { manifest: { type: "string" } }, strict: true, allowPositionals: false });
+  const { values } = parseArgs({ options: { manifest: { type: "string" }, "recovery-only": { type: "boolean", default: false }, provider: { type: "string" } }, strict: true, allowPositionals: false });
   const env = process.env;
+  const recoveryOnly = values["recovery-only"];
+  if (recoveryOnly && env[KEY]) throw new Error("Remove FLOAT_PROVIDER_PRIVATE_KEY from the recovery process environment");
+  if (!recoveryOnly && values.provider) throw new Error("--provider is only for --recovery-only");
+  const providerAddress = recoveryOnly ? parseAddress("--provider", values.provider, Error) : null;
   const endpoint = env.PROVIDER_ENDPOINT;
   if (!endpoint) throw new Error("PROVIDER_ENDPOINT is required: the exact endpoint string the sponsor approved for this provider");
   const endpointHash = endpointHashFrom({ endpoint });
@@ -507,7 +533,7 @@ async function main() {
   const host = env.HOST?.trim() || "127.0.0.1";
 
   const connection = await connectCandidate(readDeployment(env, { manifest: values.manifest }));
-  const { account } = walletFromEnv(connection, KEY);
+  const account = recoveryOnly ? { address: providerAddress } : walletFromEnv(connection, KEY).account;
   // The key now lives only in `account`: the service, loaded below, and any
   // process it starts do not inherit it.
   delete env[KEY];
@@ -517,11 +543,13 @@ async function main() {
       `${account.address} has code, so its receipts are checked with ERC-1271; call createProviderServer with a custom account { address, signTypedData } that signs with the account's signer`,
     );
   }
-  if (env.PROVIDER_SERVICE && !["example", "shadow-reasoning", "shadow-v2-cycle", "shadow-arc-wallet"].includes(env.PROVIDER_SERVICE)) {
+  if (!recoveryOnly && env.PROVIDER_SERVICE && !["example", "shadow-reasoning", "shadow-v2-cycle", "shadow-arc-wallet"].includes(env.PROVIDER_SERVICE)) {
     throw new Error("PROVIDER_SERVICE must be example, shadow-reasoning, shadow-v2-cycle or shadow-arc-wallet");
   }
   let service;
-  if (env.PROVIDER_SERVICE === "shadow-arc-wallet") {
+  if (recoveryOnly) {
+    service = () => { throw new Error("Recovery mode cannot perform service work"); };
+  } else if (env.PROVIDER_SERVICE === "shadow-arc-wallet") {
     const { createShadowArcWalletService } = await import("./shadow-arc-wallet-service.mjs");
     service = createShadowArcWalletService({ chainId: Number(connection.chainId) });
   } else if (env.PROVIDER_SERVICE === "shadow-v2-cycle") {
@@ -531,7 +559,7 @@ async function main() {
     const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
     ({ default: service } = await import(serviceModule));
   }
-  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
+  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, recoveryOnly, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
     server.once("error", reject);
@@ -543,6 +571,7 @@ async function main() {
   console.log(
     JSON.stringify({
       listening: `http://${host}:${server.address().port}`,
+      mode: recoveryOnly ? "recovery-only" : "active",
       provider: account.address,
       float: connection.address,
       chainId: connection.chainId.toString(),
