@@ -51,7 +51,7 @@ export interface CandidatePending {
   version: 1; chainId: number; candidate: Address; account: Address; kind: CandidateAction
   to: Address; data: Hex; value: '0'; amount: string; lineId: Hash | null; agent: Address | null
   expectedEpoch: string | null; fromBlock: string; nonce: number; createdAt: string
-  status: 'wallet' | 'pending' | 'unknown'; txHash: Hash | null
+  status: 'wallet' | 'pending' | 'unknown'; txHash: Hash | null; actualNonce?: number
 }
 export interface CandidateStorage { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void }
 export interface CandidateJournal { key: string; load(): CandidatePending | null; save(pending: CandidatePending): void; clear(): void }
@@ -260,6 +260,7 @@ function checkPending(value: unknown, expectedAccount?: Address): CandidatePendi
   const p = value as CandidatePending
   const actions: string[] = ['register', 'approve', 'open', 'repay', 'close', 'claim-defaulted']
   if (!p || p.version !== 1 || p.chainId !== CANDIDATE_FUNDING.chainId || !same(p.candidate ?? '', CANDIDATE_FUNDING.address) || !isAddress(p.account) || (expectedAccount && !same(expectedAccount, p.account)) || !actions.includes(p.kind) || !isAddress(p.to) || !/^0x(?:[0-9a-fA-F]{2})+$/.test(p.data) || p.data.length > 4096 || p.value !== '0' || !/^\d+$/.test(p.amount) || !/^\d+$/.test(p.fromBlock) || !Number.isSafeInteger(p.nonce) || p.nonce < 0 || !['wallet', 'pending', 'unknown'].includes(p.status) || (p.txHash !== null && !/^0x[0-9a-fA-F]{64}$/.test(p.txHash))) throw new Error('The saved transaction record is invalid. Keep it for investigation; no new transaction was sent.')
+  if (p.actualNonce !== undefined && (!p.txHash || !Number.isSafeInteger(p.actualNonce) || p.actualNonce < 0)) throw new Error('The saved actual transaction nonce is invalid.')
   // Decode the saved call, so reconciliation cannot accidentally certify an
   // unrelated or wrong-contract record as a completed product action.
   checkedCall(p)
@@ -408,9 +409,9 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
     pending = { ...pending, status: 'pending', txHash }
     session.journal.save(pending)
     stage(session, pending)
-    const outcome = await reconcileCandidatePending(client, pending)
+    const outcome = await reconcileCandidatePending(client, pending, undefined, session.journal)
     if (outcome.status !== 'unknown') session.journal.clear()
-    else { pending = { ...pending, status: 'unknown' }; session.journal.save(pending); stage(session, pending) }
+    else { pending = { ...(session.journal.load() ?? pending), status: 'unknown' }; session.journal.save(pending); stage(session, pending) }
     return outcome
   } finally { memoryLocks.delete(session.journal.key) }
 }
@@ -436,7 +437,7 @@ function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly a
   return false
 }
 
-async function reconcileCandidatePending(client: CandidateReadClient, rawPending: CandidatePending, providedHash?: string): Promise<CandidateResolution> {
+async function reconcileCandidatePending(client: CandidateReadClient, rawPending: CandidatePending, providedHash?: string, journal?: CandidateJournal): Promise<CandidateResolution> {
   const pending = checkPending(rawPending)
   const txHash = providedHash ? hash(providedHash, 'Transaction hash') : pending.txHash
   const unknown = (message: string): CandidateResolution => ({ status: 'unknown', txHash, message })
@@ -444,20 +445,22 @@ async function reconcileCandidatePending(client: CandidateReadClient, rawPending
   try {
     await verifyCandidate(client)
     const transaction = await client.getTransaction({ hash: txHash })
-    const receipt = await client.getTransactionReceipt({ hash: txHash })
     const exactCall = (tx: typeof transaction) => same(tx.from, pending.account) && tx.to !== null &&
       same(tx.to, pending.to) && same(tx.input, pending.data) && tx.value === 0n &&
       (tx.chainId == null || Number(tx.chainId) === CANDIDATE_FUNDING.chainId)
-    let expectedNonce = pending.nonce
-    if (pending.txHash) {
+    let expectedNonce = pending.actualNonce ?? pending.nonce
+    if (pending.txHash && (pending.actualNonce === undefined || same(txHash, pending.txHash))) {
       // A wallet may override the proposed nonce. Only its returned hash can
       // establish that original transaction's actual nonce; an unrelated
       // transaction at the proposed nonce cannot prove replacement.
       const original = same(txHash, pending.txHash) ? transaction : await client.getTransaction({ hash: pending.txHash })
       if (!same(original.hash, pending.txHash) || !exactCall(original) || !Number.isSafeInteger(Number(original.nonce)) || Number(original.nonce) < 0) return unknown('The original wallet transaction could not be bound to this action. Keep the record and check its original hash.')
       expectedNonce = Number(original.nonce)
+      if (pending.actualNonce !== undefined && pending.actualNonce !== expectedNonce) return unknown('The original transaction nonce contradicts the saved record. Keep the record for investigation.')
+      if (journal && pending.actualNonce === undefined) journal.save({ ...pending, actualNonce: expectedNonce })
     }
     if (!same(transaction.from, pending.account) || Number(transaction.nonce) !== expectedNonce || (transaction.chainId != null && Number(transaction.chainId) !== CANDIDATE_FUNDING.chainId)) return unknown('This transaction does not match the original wallet transaction. The action is still unresolved.')
+    const receipt = await client.getTransactionReceipt({ hash: txHash })
     if (!receipt.blockHash || receipt.blockNumber < BigInt(pending.fromBlock) || !same(receipt.transactionHash, txHash) || !same(transaction.hash, txHash)) return unknown('The transaction receipt does not match the saved action’s chain history.')
     // A receipt on an orphaned block must not unlock a replacement payment.
     const canonical = await client.getBlock({ blockNumber: receipt.blockNumber })

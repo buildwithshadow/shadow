@@ -507,3 +507,14 @@ test('hashless sends cannot be cancelled by proving only the proposed nonce was 
  assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash)).status,'unknown');
  assert.ok(f.journal.load());
 });
+
+test('a verified adjusted nonce survives dropped-original cancellation recovery',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{const original=f.mined(prepared,{nonce:8});original.transaction.blockHash=null;f.state.receipts.delete(txHash);return txHash;};
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,8);
+ f.state.transactions.delete(txHash);
+ f.mined(prepared,{hash:otherHash,nonce:8,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'replaced');
+ assert.equal(f.state.sends,1);
+});
