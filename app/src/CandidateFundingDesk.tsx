@@ -106,6 +106,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setResolution(null);
     setNotice("");
   }
+  function updateLineId(value: string) {
+    invalidate();
+    setLine(null);
+    setLineInputError("");
+    setLineId(value);
+  }
   function updateForm(key: keyof CandidateOpenInput, value: string) {
     invalidate();
     if (key === "provider" || key === "endpoint") setProviderAgreed(false);
@@ -249,6 +255,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
   async function lookup(event?: FormEvent, id = lineId) {
     event?.preventDefault();
+    id = id.trim();
     invalidate(); setError(""); setLine(null); setLineInputError("");
     if (!/^0x[0-9a-fA-F]{64}$/.test(id) || /^0x0{64}$/.test(id)) {
       setLineInputError("Enter the full funding line ID from your opening receipt: 0x followed by 64 hexadecimal characters.");
@@ -486,7 +493,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </form> : <section className="fundingPanel" aria-labelledby="funding-manage-title">
       <div className="fundingPanelHead"><div><h2 id="funding-manage-title">Find your funding line</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
       <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
-        <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={(value) => { invalidate(); setLine(null); setLineInputError(""); setLineId(value); }} disabled={Boolean(busy)} hint="The 0x identifier from your line-opening receipt." />
+        <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={updateLineId} disabled={Boolean(busy)} hint="The 0x identifier from your line-opening receipt." />
         <button type="submit" disabled={Boolean(busy)}>Load line</button>
       </form>
       {line && <div className="fundingLine">
@@ -525,7 +532,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </section>}
 
     {service && <div className="fundingSlot" hidden={role === "sponsor"}><PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={value => { invalidate(); setLine(null); setLineId(value); }} /></div>}
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={updateLineId} /></div>}
     <footer className="fundingFoot">{service && !mainnet && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · {network}</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
 
