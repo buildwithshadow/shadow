@@ -61,6 +61,11 @@ function once(map, key, work) {
 }
 
 async function jsonBody(request) {
+  // An absolute deadline, not an inactivity timeout: dribbled bytes cannot
+  // keep a body reader alive indefinitely. No service slot is held here.
+  const timer = setTimeout(() => request.destroy(new HttpError('Request body deadline exceeded', 408)), 2000);
+  timer.unref();
+  try {
   let size = 0;
   const chunks = [];
   for await (const chunk of request) {
@@ -76,6 +81,10 @@ async function jsonBody(request) {
   }
   if (!body || typeof body !== "object" || Array.isArray(body)) throw new HttpError("the request body is not a JSON object");
   return body;
+  } catch (error) {
+    if (request.aborted && !(error instanceof HttpError)) throw new HttpError('Request body interrupted', 400);
+    throw error;
+  } finally { clearTimeout(timer); }
 }
 
 // account is anything with an address and a viem-style signTypedData (an EOA
@@ -415,7 +424,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     ];
   }
 
-  async function route(request, context) {
+  async function route(request, context, inputBody) {
     const { pathname } = new URL(request.url, "http://provider.invalid");
     if (request.method === "GET" && pathname.startsWith("/status/")) {
       context.digest = parseBytes32("digest", pathname.slice("/status/".length), HttpError);
@@ -423,10 +432,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     if (request.method === "POST" && pathname === "/accept") {
       if (recoveryOnly) return [503, { error: "Provider is in recovery-only mode; no new acceptances or purchases are offered" }];
-      return accept(await jsonBody(request), context);
+      return accept(inputBody, context);
     }
     if (request.method === "POST" && pathname === "/serve") {
-      const input = await jsonBody(request);
+      const input = inputBody;
       const digest = parseBytes32("digest", input.digest, HttpError);
       const paymentTransactionHash = input.paymentTransactionHash === undefined ? undefined : parseBytes32("paymentTransactionHash", input.paymentTransactionHash, HttpError);
       context.digest = digest;
@@ -437,6 +446,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
 
   const routeQuotas = { accept: new Map(), status: new Map(), serve: new Map() }, callerActive = new Map();
   let normalActive = 0, recoveryActive = 0;
+  const readingBodies = { accept: 0, serve: 0 };
   const recoverySlots = Math.max(1, Math.floor(maxConcurrent / 2));
   if (maxConcurrent < 2) throw new Error('Provider needs at least two slots to reserve recovery capacity');
   function callerOf(request) {
@@ -448,7 +458,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     return remote.toLowerCase();
   }
-  const server = createServer({ maxHeaderSize: 8192, requestTimeout: 15000, headersTimeout: 10000, keepAliveTimeout: 5000 }, async (request, response) => {
+  const server = createServer({ maxHeaderSize: 8192, requestTimeout: 15000, connectionsCheckingInterval: 1000, headersTimeout: 10000, keepAliveTimeout: 5000 }, async (request, response) => {
     response.setHeader('cache-control', 'no-store');
     response.setHeader('x-content-type-options', 'nosniff');
     if (publicOrigin) {
@@ -477,24 +487,44 @@ export function createProviderServer({ connection, account, endpointHash, price,
     let quota = quotas.get(quotaKey);
     if (!quota || now - quota.start >= 60000) {
       if (quotas.size >= 2048) for (const [key, entry] of quotas) if (now - entry.start >= 60000) quotas.delete(key);
-      if (!quotas.has(quotaKey) && quotas.size >= 2048) { response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy"}'); return; }
+      // Keep rate-limit memory bounded without a global new-caller lockout.
+      if (!quotas.has(quotaKey) && quotas.size >= 2048) quotas.delete(quotas.keys().next().value);
       quota = { start: now, count: 0 }; quotas.set(quotaKey, quota);
     }
     // Status polling shares normal admission, never paid-result delivery slots.
     const recovery = routeKind === 'serve', activeKey = `${caller}:${routeKind}`;
     const concurrent = callerActive.get(activeKey) || 0;
-    const full = recovery ? recoveryActive >= recoverySlots : normalActive >= maxConcurrent - recoverySlots;
-    if (++quota.count > maxRequestsPerMinute || full || (publicOrigin && concurrent >= 1)) {
+    if (++quota.count > maxRequestsPerMinute || (publicOrigin && concurrent >= 1)) {
+      response.setHeader('connection', 'close');
+      response.once('finish', () => request.destroy());
       response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy. Retry the original request later."}'); return;
     }
     callerActive.set(activeKey, concurrent + 1);
-    if (recovery) recoveryActive++; else normalActive++;
+    let serviceAdmitted = false;
     try {
     const context = { digest: null };
     let status;
     let body;
     try {
-      [status, body] = await route(request, context);
+      if (recoveryOnly && routeKind === 'accept') {
+        response.writeHead(503, { 'content-type': 'application/json' });
+        response.end(stableStringify({error: 'Provider is in recovery-only mode; no new acceptances or purchases are offered'}));
+        return;
+      }
+      let inputBody;
+      if (request.method === 'POST') {
+        // Independent bounded ingress lanes; slow purchase bodies cannot
+        // consume the body budget reserved for result recovery.
+        if (readingBodies[routeKind] >= 8) throw new HttpError('Request body capacity busy; retry later', 429);
+        readingBodies[routeKind]++;
+        try { inputBody = await jsonBody(request); }
+        finally { readingBodies[routeKind]--; }
+      }
+      const full = recovery ? recoveryActive >= recoverySlots : normalActive >= maxConcurrent - recoverySlots;
+      if (full) throw new HttpError('Provider busy. Retry the original request later.', 429);
+      if (recovery) recoveryActive++; else normalActive++;
+      serviceAdmitted = true;
+      [status, body] = await route(request, context, inputBody);
     } catch (error) {
       status = error instanceof HttpError ? error.status : 500;
       const failed = `the provider failed on ${context.digest === null ? "this request" : `digest ${context.digest}`} and logged the error; the request can be retried`;
@@ -503,15 +533,23 @@ export function createProviderServer({ connection, account, endpointHash, price,
         console.error(JSON.stringify({ request: `${request.method} ${request.url}`, digest: context.digest, status, error: scrubUrls(inspect(error)) }));
       }
     }
+    if (status === 429) {
+      response.setHeader('retry-after', '60');
+      // A rejected upload must not retain an uncounted TCP connection while
+      // its sender dribbles a body. Flush the refusal, then close it.
+      response.setHeader('connection', 'close');
+      response.once('finish', () => request.destroy());
+    }
     response.writeHead(status, { "content-type": "application/json" });
     response.end(stableStringify(body));
     } finally {
-      if (recovery) recoveryActive--; else normalActive--;
+      if (serviceAdmitted) { if (recovery) recoveryActive--; else normalActive--; }
       const remaining = (callerActive.get(activeKey) || 1) - 1;
       if (remaining) callerActive.set(activeKey, remaining); else callerActive.delete(activeKey);
     }
   });
-  server.maxConnections = 32;
+  // Service slots plus both eight-connection body-ingress pools.
+  server.maxConnections = Math.max(32, maxConcurrent + 16);
   return server;
 }
 
