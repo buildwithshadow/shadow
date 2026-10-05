@@ -107,6 +107,31 @@ test("approved pauses and historical operator events are healthy, never implicit
   assert.equal(evaluateSnapshot(baseline, snapshot, NOW).hold, false);
 });
 
+test("a refused spend from another executor does not latch a payment-executor hold", async () => {
+  const f = stateFixture();
+  try {
+    f.snapshot.executionAudit.executions.push({ event: "SpendBlocked", sender: addr(4), executor: addr(4), lineId: hash(2), digest: hash(71), blockNumber: "90", transactionHash: hash(72) });
+    const result = await runMonitorOnce(f.context, { collect: async () => f.snapshot, now: () => NOW });
+    assert.equal(result.hold, false);
+    assert.equal(result.ok, true);
+    assert.equal(heartbeatStatus(f.context, NOW).hold, false);
+    const paid = structuredClone(f.snapshot);
+    paid.executionAudit.executions[0].event = "ProviderPaid";
+    assert.ok(codes(evaluateSnapshot(f.baseline, paid, NOW)).includes("EXECUTOR_DRIFT"));
+  } finally { f.cleanup(); }
+});
+
+test("advancing the execution window cannot hide transient unapproved roles", () => {
+  for (const role of ["sponsor", "operator"]) {
+    const { baseline, snapshot } = fixture();
+    baseline.executor.fromBlock = "95";
+    snapshot.executionAudit.fromBlock = "95";
+    const entry = { [role]: addr(10), [role === "sponsor" ? "allowed" : "enabled"]: false, set: [{ allowed: true, blockNumber: "90" }, { allowed: false, blockNumber: "91" }] };
+    (role === "sponsor" ? snapshot.sponsors : snapshot.contract.operators).push(entry);
+    assert.ok(codes(evaluateSnapshot(baseline, snapshot, NOW)).includes(role === "sponsor" ? "SPONSOR_DRIFT" : "OPERATOR_DRIFT"));
+  }
+});
+
 const mutations = [
   ["unknown sponsor without a line", "SPONSOR_DRIFT", (s) => s.sponsors.push({ sponsor: addr(10), allowed: true, set: [] })],
   ["unknown operator", "OPERATOR_DRIFT", (s) => s.contract.operators.push({ operator: addr(10), enabled: true, set: [] })],
