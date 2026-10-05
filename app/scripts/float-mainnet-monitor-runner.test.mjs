@@ -263,3 +263,22 @@ test("head regression and same-height reorg latch a hold, baseline change needs 
     assert.equal(acknowledgeHold(context, changed.incidentId, NOW).hold, false);
   } finally { f.cleanup(); }
 });
+
+test("agent-self execution is opt-in for the exact approved line and sender", () => {
+ const {baseline,snapshot}=fixture();
+ const paid={event:'ProviderPaid',lineId:baseline.lines[0].lineId,sender:baseline.lines[0].agent,executor:baseline.lines[0].agent};
+ snapshot.executionAudit.executions=[paid];
+ assert.ok(codes(evaluateSnapshot(baseline,snapshot,NOW)).includes('EXECUTOR_DRIFT'));
+ baseline.lines[0].executorPolicy='agent-self';
+ assert.equal(evaluateSnapshot(baseline,snapshot,NOW).ok,true);
+ for(const mutate of [e=>e.sender=addr(99),e=>e.executor=addr(99),e=>e.executor=addr(0),e=>e.executor=null,e=>e.lineId=hash(99),e=>e.event='UnknownEvent']){
+  const bad=structuredClone(snapshot);mutate(bad.executionAudit.executions[0]);
+  assert.ok(codes(evaluateSnapshot(baseline,bad,NOW)).includes('EXECUTOR_DRIFT'));
+ }
+ const dedicated=structuredClone(snapshot);dedicated.executionAudit.executions[0].sender=addr(6);dedicated.executionAudit.executions[0].executor=addr(6);
+ assert.ok(codes(evaluateSnapshot(baseline,dedicated,NOW)).includes('EXECUTOR_DRIFT'));
+ baseline.lines[0].executorPolicy='dedicated';
+ assert.equal(evaluateSnapshot(baseline,dedicated,NOW).ok,true);
+ baseline.lines[0].executorPolicy='anything';
+ assert.throws(()=>validateBaseline(baseline),/executor policy/);
+});
