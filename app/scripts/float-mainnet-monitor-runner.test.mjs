@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { acknowledgeHold, collectSnapshot, heartbeatStatus, loadContext, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
+import { acknowledgeHold, collectSnapshot, heartbeatStatus, loadContext, runMonitorLoop, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
 import { digestJson, evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-policy.mjs";
 
 const addr = (n) => `0x${n.toString(16).padStart(40, "0")}`;
@@ -26,6 +26,78 @@ function stateFixture() {
   return { context, baseline, snapshot, directory, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
 }
 const codes = (result) => result.alerts.map((entry) => entry.code);
+
+test("minute cadence includes collection time and keeps retained observations fresh across slow scans", async () => {
+  const f = stateFixture(); const stop = new AbortController();
+  let elapsed = 0; const starts = []; const waits = []; const ages = [];
+  Object.assign(f.context.baseline.policy, { intervalMs: 60000, runTimeoutMs: 120000, maxHeartbeatAgeMs: 240000 });
+  try {
+    await runMonitorLoop(f.context, {
+      signal: stop.signal, monotonicNow: () => elapsed, now: () => NOW + elapsed,
+      wait: async (ms) => { waits.push(ms); elapsed += ms; },
+      collect: async () => {
+        starts.push(elapsed);
+        const snapshot = structuredClone(f.snapshot);
+        snapshot.observedAt.timestamp = String((NOW + elapsed) / 1000);
+        elapsed += 40000;
+        // Until publication the notifier must still rely on the last scan.
+        if (starts.length > 1) {
+          const retained = JSON.parse(readFileSync(join(f.context.stateDir, "snapshot.json")));
+          ages.push((NOW + elapsed) / 1000 - Number(retained.observedAt.timestamp));
+          assert.equal(evaluateSnapshot(f.context.baseline, retained, NOW + elapsed).ok, true);
+        }
+        return snapshot;
+      },
+      onResult: (result) => { assert.equal(result.ok, true); if (starts.length === 4) stop.abort(); },
+    });
+    assert.deepEqual(starts, [0, 60000, 120000, 180000]);
+    assert.deepEqual(waits, [20000, 20000, 20000]);
+    assert.deepEqual(ages, [100, 100, 100]);
+    // The freshness threshold itself is unchanged.
+    assert.ok(codes(heartbeatStatus(f.context, NOW + 301000)).includes("STALE_BLOCK"));
+  } finally { f.cleanup(); }
+});
+
+test("overrunning scans stay serial and do not accumulate catch-up runs", async () => {
+  const f = stateFixture(); const stop = new AbortController();
+  let elapsed = 0; let count = 0; let active = 0; const starts = []; const waits = [];
+  try {
+    await runMonitorLoop(f.context, {
+      signal: stop.signal, monotonicNow: () => elapsed, now: () => NOW + elapsed,
+      wait: async (ms) => { waits.push(ms); elapsed += ms; },
+      collect: async () => {
+        assert.equal(++active, 1); starts.push(elapsed);
+        elapsed += count++ === 0 ? 2500 : 100;
+        await Promise.resolve(); active--; return f.snapshot;
+      },
+      onResult: () => { if (count === 3) stop.abort(); },
+    });
+    assert.deepEqual(starts, [0, 2500, 3500]);
+    assert.deepEqual(waits, [900]);
+  } finally { f.cleanup(); }
+});
+
+test("aborting a loop wait does not start another scan or clear a failure hold", async () => {
+  const f = stateFixture(); const stop = new AbortController(); let scans = 0;
+  try {
+    const result = await runMonitorLoop(f.context, {
+      signal: stop.signal, monotonicNow: () => 0, now: () => NOW,
+      collect: async () => { scans++; throw new Error("RPC unavailable"); },
+      wait: async (_ms, signal) => {
+        assert.equal(signal, stop.signal); stop.abort();
+        throw Object.assign(new Error("cancelled"), { name: "AbortError" });
+      },
+    });
+    assert.equal(scans, 1); assert.equal(result.hold, true);
+    assert.ok(codes(result).includes("RPC_CHECK_FAILED"));
+    assert.equal(JSON.parse(readFileSync(join(f.context.stateDir, "hold.json"))).incidentId, result.incidentId);
+    assert.equal(await runMonitorLoop(f.context, { signal: stop.signal, collect: () => assert.fail("already stopped") }), undefined);
+    await assert.rejects(runMonitorLoop(f.context, {
+      monotonicNow: () => 0, now: () => NOW, collect: async () => f.snapshot,
+      wait: async () => { throw new Error("unexpected timer failure"); },
+    }), /unexpected timer failure/);
+  } finally { f.cleanup(); }
+});
 
 test("approved pauses and historical operator events are healthy, never implicit spend permission", () => {
   const { baseline, snapshot } = fixture();
