@@ -25,7 +25,7 @@ test('hash uses the protocol packed byte layout including magic and hook length'
 });
 for(const phase of ['deposit','attestation','mint','open'])test(`${phase}: lost response survives restart and never sends again`,async t=>{
  const journal=await storage(t);let sends=0;const request={identity:'fixed',salt:'original'};
- const args={journal,operation:'funding-1',phase,request,send:async()=>{sends++;throw Error('lost response');},reconcile:async()=>null};
+ const args={journal,sponsor,operation:'funding-1',phase,request,send:async()=>{sends++;throw Error('lost response');},reconcile:async()=>null};
  await assert.rejects(runGatewayStep(args),/lost response/);
  const unknown=await runGatewayStep(args);assert.equal(unknown.status,'unknown');assert.equal(sends,1);
  const done=await runGatewayStep({...args,reconcile:async()=>({exactOriginalReceipt:'verified'})});assert.equal(done.status,'confirmed');
@@ -34,15 +34,31 @@ for(const phase of ['deposit','attestation','mint','open'])test(`${phase}: lost 
 });
 test('saved response is recoverable after confirmation reader fails',async t=>{
  const journal=await storage(t);let sends=0;
- const a={journal,operation:'one',phase:'mint',request:{hash:'one'},send:async()=>{sends++;return {hash:'one'};},reconcile:async()=>{throw Error('RPC offline');}};
+ const a={journal,sponsor,operation:'one',phase:'mint',request:{hash:'one'},send:async()=>{sends++;return {hash:'one'};},reconcile:async()=>{throw Error('RPC offline');}};
  await assert.rejects(runGatewayStep(a),/RPC offline/);
  const r=await runGatewayStep({...a,reconcile:async prior=>{assert.deepEqual(prior.response,{hash:'one'});return {receipt:'one'};}});
  assert.equal(r.status,'confirmed');assert.equal(sends,1);
 });
 test('concurrent operators cannot both send',async t=>{
  const journal=await storage(t);let release;const blocked=new Promise(r=>release=r);let started;const start=new Promise(r=>started=r);let sends=0;
- const a={journal,operation:'one',phase:'deposit',request:{},send:async()=>{sends++;started();await blocked;return {};},reconcile:async()=>({})};
+ const a={journal,sponsor,operation:'one',phase:'deposit',request:{},send:async()=>{sends++;started();await blocked;return {};},reconcile:async()=>({})};
  const first=runGatewayStep(a);await start;await assert.rejects(runGatewayStep(a),/locked/);release();await first;assert.equal(sends,1);
+});
+test('wallet identity binds one journal root without blocking unrelated sponsors',async t=>{
+ const p=await mkdtemp(join(await realpath(tmpdir()),'shadow-gateway-wallets-'));
+ t.after(()=>rm(p,{recursive:true,force:true}));
+ const identityDirectory=join(p,'identities');
+ const first=await createCircleAgentJournal(join(p,'one'),{identityDirectory});
+ const second=await createCircleAgentJournal(join(p,'two'),{identityDirectory});
+ let sends=0;
+ const args={sponsor,journal:first,operation:'one',phase:'deposit',request:{},send:async()=>{sends++;return {};},reconcile:async()=>({})};
+ await runGatewayStep(args);
+ await assert.rejects(runGatewayStep({...args,journal:second,sponsor:sponsor.toUpperCase().replace('0X','0x')}),/journal|root|bound/i);
+ assert.equal(sends,1);
+ await runGatewayStep({...args,journal:second,sponsor:'0x2222222222222222222222222222222222222222'});
+ assert.equal(sends,2);
+ await assert.rejects(runGatewayStep({...args,sponsor:undefined}));
+ assert.equal(sends,2);
 });
 test('RPC disagreement, unfinalized and wrong network cannot prove completion',async()=>{
  const hash='0x'+'aa'.repeat(32);const r={blockNumber:12n,blockHash:hash,status:'success',logs:[]};
