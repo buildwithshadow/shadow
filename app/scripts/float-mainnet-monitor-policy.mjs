@@ -90,10 +90,12 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
     const sponsors = s.sponsors.filter((entry) => entry.allowed === true).map((entry) => lower(entry.sponsor)).sort();
     check(equal(operators, b.operators), "OPERATOR_DRIFT", "enabled operator membership differs");
     check(equal(sponsors, b.sponsors), "SPONSOR_DRIFT", "allowed sponsor membership differs (including sponsors without lines)");
+    // Role history is independent of the bounded payment-execution window.
+    // Advancing that window must never erase a transient privilege grant.
     for (const [records, field, approved, code] of [[s.contract.operators, "operator", b.operators, "OPERATOR_DRIFT"], [s.sponsors, "sponsor", b.sponsors, "SPONSOR_DRIFT"]]) {
       for (const entry of records) {
         requireThat(address(entry[field]) && typeof entry[field === "operator" ? "enabled" : "allowed"] === "boolean" && Array.isArray(entry.set), "invalid role observations");
-        if (!approved.includes(lower(entry[field])) && entry.set.some((event) => event.allowed === true && BigInt(event.blockNumber) >= BigInt(b.executor.fromBlock))) alert(code, "unapproved role was enabled during the observation window, even if removed later");
+        if (!approved.includes(lower(entry[field])) && entry.set.some((event) => event.allowed === true && BigInt(event.blockNumber) >= BigInt(b.identity.deployBlock))) alert(code, "unapproved role was enabled during the observation window, even if removed later");
       }
     }
     check(equal(s.lines.map((line) => line.lineId).sort(), b.lines.map((line) => line.lineId)), "LINE_DRIFT", "observed line set/count differs from approved baseline");
@@ -118,7 +120,14 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
     const audit = s.executionAudit;
     requireThat(audit && Array.isArray(audit.executions), "missing execution audit");
     check(audit.fromBlock === b.executor.fromBlock && audit.toBlock === observed.blockNumber, "EXECUTOR_AUDIT_INCOMPLETE", "executor audit does not cover the approved window");
-    for (const event of audit.executions) check(lower(event.sender) === b.executor.address && lower(event.executor) === b.executor.address, "EXECUTOR_DRIFT", "execution did not prove the approved sender and nonzero signed executor");
+    for (const event of audit.executions) {
+      // SpendBlocked is the contract enforcing policy: no provider transfer or
+      // debt was created. Preserve it in the snapshot, but do not let an agent
+      // turn a refused request into an irreversible global executor incident.
+      // Paid and unknown event types retain the strict executor check.
+      if (event.event === "SpendBlocked" && typeof event.executor === "string" && isAddress(event.executor)) continue;
+      check(lower(event.sender) === b.executor.address && lower(event.executor) === b.executor.address, "EXECUTOR_DRIFT", "execution did not prove the approved sender and nonzero signed executor");
+    }
     for (const entry of s.alerts) {
       // Planned pauses and approved historical operators are already checked
       // against exact current state; all other warning codes fail closed.

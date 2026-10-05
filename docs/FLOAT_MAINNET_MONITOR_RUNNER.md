@@ -10,7 +10,7 @@ This tool does not install a scheduler, send notifications, sign transactions, s
 
 Sponsor discovery includes `SponsorAllowed` events for addresses that never opened a line. Historical operators and providers are also discovered. Accounting checks the token balance against obligations, line sums against both aggregate totals, and each line's state against its reserve identity. The runner recalculates the accounting rather than trusting an `ok` flag.
 
-`ProviderPaid` and `SpendBlocked` transactions in the approved executor window are inspected. Both the direct transaction sender and the signed nonzero executor must match the baseline. Routed smart-account calldata has no presumed executor: unsupported routes result in a hold. This observes transactions that already happened; it does not enforce an exclusive global executor or prevent an agent from signing an unbound intent. The submitting executor must enforce its own pre-send policy.
+`ProviderPaid` and `SpendBlocked` transactions in the approved executor window are retained in the snapshot. For payments, both the direct transaction sender and the signed nonzero executor must match the baseline. A `SpendBlocked` event records successful refusal with no payment or debt; a different executor on that refused attempt does not itself latch a global hold. Other accounting, role and policy checks still apply. Routed smart-account calldata has no presumed executor: unsupported routes result in a hold. This observes transactions that already happened; it does not enforce an exclusive global executor or prevent an agent from signing an unbound intent. The submitting executor must enforce its own pre-send policy.
 
 A complete RPC scan is not independent proof that the provider has returned every historical event. Use an independent provider for release and incident reconciliation. This runner observes one configured RPC per run; it does not claim two-provider consensus or automatic pause execution.
 
@@ -27,7 +27,7 @@ Keep the baseline and runner state outside the public repository. The runner nev
 | `effectiveLimits` | Positive atomic-unit decimal strings for `protocolReserve`, `lineReserve`, `lineSpend`, `perSpend`, `dailySpend`. No pending cap increase is accepted. |
 | `pauses` | Explicit `openingsPaused` and `spendsPaused` booleans for the approved phase. A planned pause is healthy; healthy monitoring does not itself permit spending. |
 | `lines` | Exact discovered line set, including closed history. Every entry has the fields below. An empty array approves no discovered lines. |
-| `executor` | Nonzero `address`, and decimal-string `fromBlock` at or after deployment. This is a fixed approved audit window, not a moving lookback. It also bounds historical unauthorized sponsor/operator enable-event checks. |
+| `executor` | Nonzero `address`, and decimal-string `fromBlock` at or after deployment. This is a fixed approved audit window, not a moving lookback. Historical unauthorized sponsor/operator enable-event checks always start at deployment, independently of this window. Advancing the payment window cannot hide transient privilege grants. |
 | `policy` | Timing and index requirements below. |
 
 Each `lines` entry contains exactly:
@@ -120,3 +120,5 @@ The notifier reuses `heartbeatStatus` to validate the complete snapshot, account
 Successful delivery is recorded atomically and deduplicated by destination, baseline, manifest, failure codes and latched incident ID. New incidents or failure codes notify immediately, even if the timer missed an intervening recovery; unchanged failures repeat after six hours. Failed delivery leaves the state unacknowledged for retry. A notification lock prevents overlapping sends; after a crash, inspect the recorded process before removing only `notification.lock`.
 
 Run the notifier through a separately configured scheduler at a cadence suitable for the selected heartbeat bounds. No scheduler is installed by this command. A notifier on the same machine cannot report a total host or network outage; use an independent availability check for that failure class. Telegram delivery and monitor health remain separate observations.
+
+Upgrade consideration: this policy examines all role-enable history from deployment. An older baseline that used a later execution start to omit a historical role incident may now hold again. Review that history explicitly; do not delete monitor state or automatically acknowledge an existing incident during rollout.
