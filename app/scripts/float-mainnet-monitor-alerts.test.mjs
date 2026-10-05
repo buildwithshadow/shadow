@@ -554,8 +554,9 @@ for (const signal of ['SIGTERM', 'SIGKILL']) {
    assert.equal(concurrent.code, 0, concurrent.output);
    assert.match(concurrent.output, /notification-in-progress/);
    assert.equal(JSON.parse(readFileSync(marker)).pid, deliveryPid);
-   process.kill(deliveryPid, signal); deliveryPid = undefined;
-   assert.equal((await first.done).code, 1);
+   assert.equal(deliveryPid, first.child.pid, 'the launched service PID owns delivery and the kernel lock');
+   first.child.kill(signal); deliveryPid = undefined;
+   assert.equal((await first.done).signal, signal);
    const next = await run(false).done;
    assert.equal(next.code, 0, next.output);
    assert.match(next.output, /"sent":true/);

@@ -14,7 +14,8 @@ def main():
     try:
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        return 75
+        print('{"sent":false,"reason":"notification-in-progress"}')
+        return 0
     # Never unlink this inode: waiters and future runs must lock the same file.
     os.set_inheritable(fd, True)
     os.execv(executable, [executable, *args, "--notification-lock-fd", str(fd)])

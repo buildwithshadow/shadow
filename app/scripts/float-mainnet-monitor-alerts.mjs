@@ -3,7 +3,6 @@ import { createHash, randomUUID } from 'node:crypto';
 import { fstatSync, lstatSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
-import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { heartbeatStatus, loadContext } from './float-mainnet-monitor-runner.mjs';
 import { digestJson, evaluateSnapshot } from './float-mainnet-monitor-policy.mjs';
@@ -197,14 +196,13 @@ async function main() {
   if (existsSync(resolve(dir, 'notification.lock'))) throw new Error('LEGACY_NOTIFICATION_LOCK');
   const lock = resolve(dir, 'notification.flock');
   if (values['notification-lock-fd'] === undefined) {
-    const child = spawnSync('python3', [fileURLToPath(new URL('./notification-lock.py', import.meta.url)),
-      lock, process.execPath, ...process.execArgv, ...process.argv.slice(1)], { stdio: 'inherit' });
-    if (child.status === 75) {
-      console.log(JSON.stringify({sent: false, reason: 'notification-in-progress'}));
-      return;
-    }
-    if (child.error || child.signal || child.status !== 0) throw new Error('NOTIFICATION_PROCESS_FAILED');
-    return;
+    if (typeof process.execve !== 'function') throw new Error('NODE_EXECVE_REQUIRED');
+    // Replace this process, rather than starting a child that could outlive
+    // its service-manager PID. Python then execs Node with the held FD.
+    process.execve('/usr/bin/env', ['env', 'python3',
+      fileURLToPath(new URL('./notification-lock.py', import.meta.url)),
+      lock, process.execPath, ...process.execArgv, ...process.argv.slice(1)], process.env);
+    throw new Error('NOTIFICATION_EXEC_FAILED');
   }
   const fd = Number(values['notification-lock-fd']);
   if (!Number.isSafeInteger(fd) || fd < 3) throw new Error('INVALID_NOTIFICATION_LOCK');

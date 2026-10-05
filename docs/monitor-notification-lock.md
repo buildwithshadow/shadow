@@ -1,6 +1,6 @@
 # Mainnet notification process lock
 
-The notifier requires Python 3 with the standard `fcntl` module (Linux or macOS). It acquires a nonblocking kernel lock before delivery and keeps the descriptor open in the Node process. SIGTERM, SIGKILL, a crash, and host restart release the kernel lock. The `notification.flock` file remains in place; do not delete or rotate it while notifier processes may exist.
+The notifier requires Node.js with `process.execve` (22.15+ on Linux/macOS) and Python 3 with the standard `fcntl` module (Linux or macOS). It acquires a nonblocking kernel lock before delivery and keeps the descriptor open in the Node process. The helper replaces the original CLI process, so the service manager tracks the same PID that owns delivery and the lock. SIGTERM, SIGKILL, a crash, and host restart release the kernel lock. The `notification.flock` file remains in place; do not delete or rotate it while notifier processes may exist.
 
 Concurrent invocations exit without sending while another notifier owns the lock. Successful delivery state is saved only after Telegram confirms acceptance. A crash after Telegram accepts a message but before the local acknowledgment may still cause a duplicate retry; Telegram does not offer an idempotency guarantee here.
 
