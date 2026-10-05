@@ -86,13 +86,13 @@ function fixture() {
   } as unknown as CandidateWalletClient
   const session = { publicClient: client, walletClient: wallet, account: sponsor, journal }
   function mined(prepared: CandidatePrepared, overrides: any = {}) {
-    const transaction = { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: state.walletNonce, chainId: CANDIDATE_FUNDING.chainId, blockHash, blockNumber: state.block.number, ...overrides }
+    const transaction = { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: state.walletNonce, chainId: CANDIDATE_FUNDING.chainId, blockHash, blockNumber: state.block.number + 1n, ...overrides }
     const kind = prepared.kind
     const logs = kind === 'approve' ? [eventLog('Approval', { owner: sponsor, spender: CANDIDATE_FUNDING.address, value: prepared.amount }, true)]
       : kind === 'open' ? [eventLog('LineOpened', { lineId: prepared.lineId, sponsor, agent: prepared.agent, epoch: prepared.expectedEpoch, reserve: prepared.amount, termsVersion: 1n })]
       : kind === 'repay' ? [eventLog('Repaid', { lineId: prepared.lineId, payer: sponsor, amount: prepared.amount, principalRemaining: 0n })]
       : [eventLog(kind === 'close' ? 'LineClosed' : 'SponsorClaimed', { lineId: prepared.lineId, sponsor, amount: prepared.amount })]
-    const receipt = { status: 'success', transactionHash: transaction.hash, blockNumber: state.block.number, blockHash, logs }
+    const receipt = { status: 'success', transactionHash: transaction.hash, blockNumber: transaction.blockNumber, blockHash, logs }
     state.transactions.set(transaction.hash, transaction)
     state.receipts.set(transaction.hash, receipt)
     return { transaction, receipt }
@@ -469,7 +469,7 @@ test('an exact successful idempotent registration resolves without a repeated ad
     account: sponsor, kind: 'register', to: prepared.to, data: prepared.data, value: '0', amount: '0', lineId: null, agent: null,
     expectedEpoch: null, fromBlock: f.state.block.number.toString(), nonce: f.state.nonce, createdAt: new Date().toISOString(), status: 'pending', txHash }
   f.state.transactions.set(txHash, { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: pending.nonce, chainId: pending.chainId, blockHash })
-  f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber: f.state.block.number, blockHash, logs: [] })
+  f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber: f.state.block.number + 1n, blockHash, logs: [] })
   f.state.sponsorAllowed = true
   assert.equal((await kit.reconcileCandidatePending(f.client, pending)).status, 'confirmed')
   f.state.sponsorAllowed = false
@@ -530,7 +530,8 @@ test('an older identical wallet hash cannot poison recovery of the current actio
  assert.equal(f.journal.load()!.actualNonce,undefined);
  f.mined(prepared,{hash:otherHash,nonce:8});
  assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'confirmed');
- assert.equal(f.journal.load()!.actualNonce,undefined);
+ assert.equal(f.journal.load()!.actualNonce,8);
+ assert.equal(f.journal.load()!.txHash,otherHash);
  assert.equal(f.state.sends,1);
 });
 
@@ -543,4 +544,27 @@ test('an unrelated transaction cannot clear a record with an older identical ori
  f.mined(prepared,{hash:otherHash,nonce:6,to:sponsor,input:'0x'});
  assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
  assert.equal(f.journal.load()!.actualNonce,undefined);
+});
+
+test('an identical transaction in the sampled boundary block is historical',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:6,blockNumber:100n});return txHash;};
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+ assert.equal(f.state.sends,1);
+});
+
+test('a pasted current pending hash preserves its nonce after an old wallet hash',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:6,blockNumber:99n});return txHash;};
+ await executeCandidateCall(f.session,prepared);
+ f.mined(prepared,{hash:otherHash,nonce:8,blockHash:null,blockNumber:null});
+ f.state.receipts.delete(otherHash);
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,8);assert.equal(f.journal.load()!.txHash,otherHash);
+ f.state.transactions.delete(otherHash);
+ const cancellation='0x'+'cc'.repeat(32) as typeof txHash;
+ f.mined(prepared,{hash:cancellation,nonce:8,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,cancellation,f.journal)).status,'replaced');
+ assert.equal(f.state.sends,1);
 });
