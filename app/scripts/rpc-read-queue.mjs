@@ -51,8 +51,33 @@ export function createRpcReadQueue({
   };
 }
 
-export function isTransientRpcReadError(error) {
-  return transientRpcPattern.test(flattenError(error));
+export function isTransientRpcReadError(error, method) {
+  const detail = flattenError(error);
+  // Internal backend errors have been observed to clear on repeated log reads.
+  // Scope this allowance to eth_getLogs; never extend it to calls or sends,
+  // and do not hide an explicit history/parameter/chain failure.
+  if (method === "eth_getLogs") {
+    if (/pruned|missing trie|histor(?:y|ical).*unavailable|invalid (?:argument|param)|execution reverted|unexpected chain|method not found|unsupported method/i.test(detail)) return false;
+    // A generic class/code also wraps deterministic history failures. Only
+    // the exact backend message we observed is eligible for this new retry.
+    if (/internal error|InternalRpcError|-32603/i.test(detail)) {
+      let current = error;
+      let backendMessage = "";
+      const seen = new Set();
+      for (let depth = 0; current && depth < 8 && !seen.has(current); depth += 1) {
+        seen.add(current);
+        if (typeof current === "string") { backendMessage = current; break; }
+        if (typeof current !== "object") break;
+        const message = [current.details, current.shortMessage, current.message]
+          .find((value) => typeof value === "string" && value.trim());
+        if (message) backendMessage = message;
+        current = current.cause;
+      }
+      return /^internal error[.]?$/i.test(backendMessage.trim())
+        || transientRpcPattern.test(backendMessage);
+    }
+  }
+  return transientRpcPattern.test(detail);
 }
 
 async function retryRpcRead({
@@ -69,7 +94,7 @@ async function retryRpcRead({
     try {
       return await operation();
     } catch (error) {
-      if (attempt === maxAttempts || !isTransientRpcReadError(error)) throw error;
+      if (attempt === maxAttempts || !isTransientRpcReadError(error, label)) throw error;
 
       const exponentialDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
       const jitter = Math.floor(exponentialDelay * 0.2 * random());

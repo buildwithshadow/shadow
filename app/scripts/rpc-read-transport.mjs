@@ -85,9 +85,9 @@ export function createRpcReadTransport(url, { queueOptions = {}, fallbackUrls = 
               }
               return await bases[index].request(request, { retryCount: 0 });
             } catch (error) {
-              // Switch only on temporary transport/quota failures. Reverts and
+              // Switch only on temporary transport/quota or internal log-read failures. Reverts and
               // wrong-chain responses must not be hidden by another provider.
-              if (isTransientRpcReadError(error)) active = (index + 1) % bases.length;
+              if (isTransientRpcReadError(error, request.method)) active = (index + 1) % bases.length;
               throw error;
             }
           });

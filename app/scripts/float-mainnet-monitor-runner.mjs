@@ -235,10 +235,24 @@ export async function runMonitorLoop(context, {
   let result;
   while (!signal?.aborted) {
     const started = monotonicNow();
-    result = await runMonitorOnce(context, scanOptions);
+    let cycleFailed = false;
+    try { result = await runMonitorOnce(context, scanOptions); }
+    catch (error) {
+      // If the failed cycle left a usable healthy heartbeat, propagate so the
+      // purchase-host supervisor stops its coupled server. Retry only when
+      // the persisted state already makes the spend guard fail closed.
+      if (heartbeatStatus(context, scanOptions.now ? scanOptions.now() : Date.now()).ok === true) throw error;
+      cycleFailed = true;
+      // Do not write around the state lock or remove another process's lock.
+      // Existing holds remain authoritative; stale-heartbeat detection remains
+      // in force if local persistence never recovers. Log a sanitized failure.
+      result = { ok: false, hold: true, status: "hold", alerts: [alert("RUNNER_CYCLE_FAILED",
+        "monitor cycle could not complete; retrying after the configured interval")] };
+    }
     await onResult(result);
     if (signal?.aborted) break;
-    const remaining = Math.max(0, context.baseline.policy.intervalMs - (monotonicNow() - started));
+    const remaining = cycleFailed ? context.baseline.policy.intervalMs
+      : Math.max(0, context.baseline.policy.intervalMs - (monotonicNow() - started));
     if (remaining > 0) {
       try { await wait(remaining, signal); }
       catch (error) { if (!signal?.aborted || error?.name !== "AbortError") throw error; }
