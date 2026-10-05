@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { keccak256, toHex, hashTypedData } from "viem";
+import { keccak256, toHex, hashTypedData, createWalletClient, custom, defineChain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
 const agent = privateKeyToAccount(`0x${"11".repeat(32)}`),
@@ -266,4 +266,36 @@ test('guarded mainnet refuses smart providers, wrong repayment binding and netwo
   for(const patch of [{chainId:5042002},{principal:'5001'},{principal:'0'}]){
     assert.throws(()=>createGuardedMainnetPurchase({config:{...config,chainId:5042,principal:'5000',...patch}}));
   }
+});
+
+for (const mainnet of [false, true]) test(`wrapped wallet rejection permits explicit retry on ${mainnet ? 'mainnet' : 'testnet'}`, async () => {
+  const h = setup({mainnet});
+  const chainId = mainnet ? 5042 : 5042002;
+  let requests = 0;
+  const chain = defineChain({id: chainId, name: 'Local wallet fixture', nativeCurrency: {name:'USDC',symbol:'USDC',decimals:18}, rpcUrls:{default:{http:['http://127.0.0.1:1']}}});
+  const wallet = createWalletClient({account:agent.address,chain,transport:custom({request:async ({method})=>{
+    if (method === 'eth_chainId') return toHex(chainId);
+    if (method === 'eth_sendTransaction') { requests++; throw Object.assign(new Error('User rejected'), {code:4001}); }
+    throw new Error(`Unexpected fixture method: ${method}`);
+  }})});
+  h.wallet.sendTransaction = request => wallet.sendTransaction({...request,chain});
+  const flow=h.create();
+  await flow.prepare(lineId,'rejection-retry');
+  await assert.rejects(flow.submit());
+  assert.equal(requests,1);
+  assert.equal(flow.load().stage,'accepted');
+  const digest=flow.load().intent.digest;
+  await assert.rejects(flow.submit());
+  assert.equal(requests,2,'only a second explicit submit requests another approval');
+  assert.equal(flow.load().stage,'accepted');
+  assert.equal(flow.load().intent.digest,digest);
+});
+
+test('unknown cyclic wallet errors retain the purchase reconciliation barrier', async()=>{
+  const h=setup(); const error=new Error('Unknown wallet failure'); error.cause=error;
+  h.wallet.sendTransaction=async()=>{throw error};
+  const flow=h.create(); await flow.prepare(lineId,'cyclic-wallet-error');
+  await assert.rejects(flow.submit());
+  assert.equal(flow.load().stage,'submitted');
+  await assert.rejects(flow.submit(),/reconciliation/);
 });
