@@ -169,7 +169,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   // its service and its chain client are wrapped to count signatures, service
   // runs and chain calls: failNextSign and failNextCall make the next one fail,
   // and hold, when set, is a promise the signer and the service wait for.
-  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService, maxStoredPurchases = 1000 } = {}) {
+  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25 } = {}) {
     const stats = { signed: 0, work: [], prepared: [], calls: [], failNextSign: false, failNextCall: null, failSignatureRpc: null, hold: null };
     const signer = {
       address: key.address,
@@ -215,7 +215,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         };
       },
     });
-    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service, maxStoredPurchases });
+    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine });
     await listen(server, port);
     return { server, stats, port };
   }
@@ -1124,6 +1124,81 @@ describe("request client against the reference provider server", { skip: e2eSkip
       await stop(server);
       assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);
     }
+  });
+
+  test("far-future signatures are refused without durable admission or provider work", async () => {
+    const a = await signedIntent("unbounded-expiry", PRINCIPAL, ["--signature-ttl", "86400"]);
+    const dir = path("unbounded-expiry-store");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: dir });
+    try {
+      const reply = await post(OTHER_PORT, "/accept", { intent: readJson(a.file), requestId: "unbounded" });
+      assert.equal(reply.status, 422);
+      assert.match(reply.json.error, /admission horizon/);
+      assert.equal(bounded.stats.signed, 0);
+      assert.deepEqual(readdirSync(dir), []);
+    } finally { await stop(bounded.server); }
+  });
+
+  test("per-line and per-agent admission quotas include concurrent reservations", async () => {
+    for (const quota of ["maxStoredPerAgent", "maxStoredPerLine"]) {
+      const a = await signedIntent(`${quota}-a`), b = await signedIntent(`${quota}-b`);
+      const bounded = await startProviderServer(OTHER_PORT, { storeDir: path(quota), [quota]: 1 });
+      try {
+        bounded.stats.hold = arrivals(bounded.server, 2);
+        const replies = await Promise.all([a,b].map((intent, i) => post(OTHER_PORT, "/accept", { intent: readJson(intent.file), requestId: `${quota}-${i}` })));
+        assert.deepEqual(replies.map(reply => reply.status).sort(), [200, 503]);
+        assert.equal(bounded.stats.signed, 1);
+      } finally { await stop(bounded.server); }
+    }
+  });
+
+  test("finalized nonce cancellation frees unpaid capacity before signature expiry", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    const a = await signedIntent("cancelled-capacity");
+    const dir = path("cancelled-capacity-store");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: dir, maxStoredPurchases: 1 });
+    try {
+      const body = { intent: readJson(a.file), requestId: "cancelled-job" };
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
+      const { lineId, nonce, signatureExpiry } = body.intent.typedData.message;
+      const tx = await walletOf(agent).writeContract({ address: float, abi: floatAbi, functionName: "cancelNonce", args: [lineId, BigInt(nonce)] });
+      assert.equal((await client.waitForTransactionReceipt({ hash: tx })).status, "success");
+      await client.request({ method: "anvil_mine", params: ["0x80"] });
+      assert.ok((await client.getBlock({ blockTag: "finalized" })).timestamp < BigInt(signatureExpiry));
+      const b = await signedIntent("after-cancelled-capacity");
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(b.file), requestId: "after-cancelled" })).status, 200);
+      assert.equal(readJson(join(dir, `${a.digest}.released.json`)).reason, "nonce-cancelled-unpaid");
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200, "historical acceptance remains recoverable");
+    } finally { await stop(bounded.server); await client.request({ method: "evm_revert", params: [snapshot] }); }
+  });
+
+  test("a finalized competing spend frees the unused digest but retains the paid digest", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    // Isolate this purchase from earlier cases' daily spending usage.
+    const now = (await client.getBlock()).timestamp;
+    await client.request({ method: "evm_setNextBlockTimestamp", params: [Number(now + 86400n)] });
+    await client.request({ method: "anvil_mine", params: ["0x1"] });
+    const a = await signedIntent("same-nonce-unpaid");
+    const dir = path("used-nonce-store");
+    const bounded = await startProviderServer(OTHER_PORT, { storeDir: dir, maxStoredPurchases: 2 });
+    try {
+      // The request id is outside the intent digest; vary maximumTotalDebt to
+      // make two signed authorizations of the same nonce genuinely distinct.
+      const different = await signedIntent("same-nonce-distinct", PRINCIPAL, ["--nonce", readJson(a.file).typedData.message.nonce, "--max-total-debt", (PRINCIPAL + 1n).toString()]);
+      assert.notEqual(a.digest, different.digest);
+      for (const [intent, requestId] of [[a, "unpaid"], [different, "paid"]]) {
+        assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(intent.file), requestId })).status, 200);
+      }
+      assert.equal((await ok("submit", ["submit", "--intent", different.file, "--execute"], EXECUTOR)).status, "paid");
+      await client.request({ method: "anvil_mine", params: ["0x80"] });
+      // Repay so a fresh intent can be built, without delivering the paid result.
+      await ok("repay", ["--allow-current-line-debt", "--line-id", readJson(a.file).typedData.message.lineId, "--full", "--execute"], AGENT);
+      const next = await signedIntent("after-used-nonce");
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(next.file), requestId: "next" })).status, 200);
+      assert.equal(readJson(join(dir, `${a.digest}.released.json`)).reason, "nonce-used-unpaid");
+      assert.equal(existsSync(join(dir, `${different.digest}.released.json`)), false);
+      assert.equal((await post(OTHER_PORT, "/serve", { digest: different.digest })).status, 200);
+    } finally { await stop(bounded.server); await client.request({ method: "evm_revert", params: [snapshot] }); }
   });
 
   test("storage admission reserves the last slot across concurrent distinct purchases", async () => {

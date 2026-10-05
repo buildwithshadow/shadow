@@ -96,9 +96,9 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, recoveryOnly = false }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false }) {
   if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
-  for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
+  for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine, maxSignatureTtl]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
   if (typeof recoveryOnly !== "boolean") throw new Error("recoveryOnly must be boolean");
   if (recoveryOnly) {
     if (account.signTypedData || account.type === "local") throw new Error("Recovery mode requires only a public provider address, never a signer");
@@ -108,7 +108,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
   const fileOf = (digest, slot) => join(storeDir, `${digest}.${slot}.json`);
   const accepting = new Map();
   const serving = new Map();
-  const admitting = new Set();
+  const admitting = new Map();
 
   let reclaiming = null;
   let reclaimCursor = 0;
@@ -135,26 +135,44 @@ export function createProviderServer({ connection, account, endpointHash, price,
       reclaimCursor = (reclaimCursor + batch.length) % pending.length;
       for (const digest of batch) {
         const metadata = readStored(fileOf(digest, "admission"));
-        if (metadata?.digest !== digest || !/^[0-9]+$/.test(metadata.signatureExpiry) || block.timestamp <= BigInt(metadata.signatureExpiry)) continue;
+        if (metadata?.digest !== digest || !/^[0-9]+$/.test(metadata.signatureExpiry)) continue;
         const status = Number(await read(connection, "receiptStatus", [digest], block.number));
-        if (status !== 0 && status !== 1) continue;
-        storeOnce(fileOf(digest, "released"), { digest, reason: status === 0 ? "expired-unpaid" : "blocked", blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() });
+        if (status !== 0 && status !== 1) continue; // Never release paid, undelivered results.
+        let reason = status === 1 ? "blocked" : null;
+        if (block.timestamp > BigInt(metadata.signatureExpiry)) reason ??= "expired-unpaid";
+        if (/^[0-9]+$/.test(metadata.dueAt) && block.timestamp > BigInt(metadata.dueAt)) reason ??= "past-due-unpaid";
+        if (!reason && /^0x[0-9a-fA-F]{64}$/.test(metadata.lineId) && /^[0-9]+$/.test(metadata.nonce)) {
+          const args = [metadata.lineId, BigInt(metadata.nonce)];
+          const [used, cancelled] = await Promise.all([
+            read(connection, "nonceUsed", args, block.number),
+            read(connection, "nonceCancelled", args, block.number),
+          ]);
+          if (used || cancelled) reason = used ? "nonce-used-unpaid" : "nonce-cancelled-unpaid";
+        }
+        if (reason) storeOnce(fileOf(digest, "released"), { digest, reason, blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() });
       }
     })().finally(() => { reclaiming = null; });
     return reclaiming;
   }
 
-  async function reserveAdmission(digest) {
-    let stored = outstanding();
-    if (stored.has(digest)) return () => {}; // An interrupted retry already occupies its slot.
-    if (new Set([...stored, ...admitting]).size >= maxStoredPurchases) await reclaimExpired();
-    // No await between this final capacity check and reservation. One process
-    // owns each store, including when concurrent callers await the same sweep.
-    stored = outstanding();
-    if (new Set([...stored, ...admitting]).size >= maxStoredPurchases) {
+  function capacityReached(struct) {
+    const pending = new Map([...outstanding()].map(digest => [digest, readStored(fileOf(digest, "admission"))]));
+    for (const [digest, metadata] of admitting) pending.set(digest, metadata);
+    const records = [...pending.values()];
+    return pending.size >= maxStoredPurchases ||
+      records.filter(item => item?.agent?.toLowerCase() === struct.agent.toLowerCase()).length >= maxStoredPerAgent ||
+      records.filter(item => item?.lineId?.toLowerCase() === struct.lineId.toLowerCase()).length >= maxStoredPerLine;
+  }
+
+  async function reserveAdmission(digest, struct) {
+    if (outstanding().has(digest)) return () => {}; // An interrupted retry already occupies its slot.
+    if (capacityReached(struct)) await reclaimExpired();
+    // No await between the final check and reservation. In-flight requests
+    // count toward both identity quotas as well as the global ceiling.
+    if (capacityReached(struct)) {
       throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
     }
-    admitting.add(digest);
+    admitting.set(digest, struct);
     return () => admitting.delete(digest);
   }
 
@@ -221,7 +239,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
     }
-    const releaseAdmission = await reserveAdmission(digest);
+    const releaseAdmission = await reserveAdmission(digest, struct);
     try {
     // acceptIntent's checks that need no chain read, made first, so that an
     // intent refused on its face costs no RPC call.
@@ -233,10 +251,14 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (struct.principal < price) problems.push(`the intent's principal ${struct.principal} is below the price ${price}`);
     if (signature === null) problems.push("the intent file carries no signature; the agent signs it before sending it to the provider");
     if (problems.length) throw new HttpError(problems.join("; "), 422);
+    const latest = await connection.client.getBlock({ blockTag: "latest" });
+    if (struct.signatureExpiry > latest.timestamp + BigInt(maxSignatureTtl)) {
+      throw new HttpError(`the intent signature exceeds the provider's ${maxSignatureTtl}-second admission horizon`, 422);
+    }
     // acceptIntent refuses with a plain Error listing its problems, before it
     // signs anything. An RPC failure is one of viem's Error subclasses, and a
     // failure once signing has begun is the provider's own: neither is a refusal.
-    const rememberAdmission = () => storeOnce(fileOf(digest, "admission"), { digest, signatureExpiry: struct.signatureExpiry.toString() });
+    const rememberAdmission = () => storeOnce(fileOf(digest, "admission"), { digest, agent: struct.agent, lineId: struct.lineId, nonce: struct.nonce.toString(), dueAt: struct.dueAt.toString(), signatureExpiry: struct.signatureExpiry.toString() });
     let signing = false;
     const signer = {
       address: account.address,
