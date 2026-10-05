@@ -1,5 +1,5 @@
 import { mkdir, lstat, realpath, open, readdir } from 'node:fs/promises';
-import { resolve, dirname, join } from 'node:path';
+import { resolve, join, sep } from 'node:path';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
@@ -67,7 +67,11 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
   }
   // Persist identity outside the replaceable root. A second adapter must not
   // silently initialize an empty directory at the same configured pathname.
-  const parent = await requirePrivateState(identityDirectory);
+  const identityPath = resolve(identityDirectory);
+  if (identityPath === dir || identityPath.startsWith(dir + sep)) {
+    throw new Error('Circle identity and checkpoint storage must be outside the journal root.');
+  }
+  const parent = await requirePrivateState(identityPath);
   const anchor = join(parent, `${createHash('sha256').update(dir).digest('hex')}.identity`);
   const tokenPath = join(dir, '.root-token');
   let tokenBytes = await privateBytes(tokenPath);

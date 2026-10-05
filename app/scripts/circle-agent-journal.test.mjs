@@ -138,3 +138,15 @@ test('death after checkpoint persistence but before the journal write cannot reo
   await assert.rejects(()=>journal.get('wallet:active'),/rollback/);
  } finally {journal?.close();await rm(parent,{recursive:true,force:true});}
 });
+
+
+test('identity checkpoints cannot share the journal rollback boundary', async () => {
+ const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-overlap-'));
+ try {
+  for(const nested of ['', 'checkpoints', 'nested/checkpoints']) {
+   const dir=join(parent,'journal');
+   await assert.rejects(()=>createCircleAgentJournal(dir,{identityDirectory:join(dir,nested)}),/outside the journal root/);
+   assert.deepEqual(await readdir(dir),[], 'invalid configuration must not initialize identity state inside the root');
+  }
+ } finally {await rm(parent,{recursive:true,force:true});}
+});
