@@ -1,8 +1,10 @@
 // Read-only operational alerts. No signing, pause, spend or hold acknowledgement.
 import { createHash, randomUUID } from 'node:crypto';
-import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { fstatSync, lstatSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { heartbeatStatus, loadContext } from './float-mainnet-monitor-runner.mjs';
 import { digestJson, evaluateSnapshot } from './float-mainnet-monitor-policy.mjs';
 import { isEntrypoint } from './float-mainnet-preflight.mjs';
@@ -182,7 +184,7 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
 
 async function main() {
   const { values } = parseArgs({ options: { baseline: { type: 'string' }, manifest: { type: 'string' },
-    'observer-dir': { type: 'string' }, 'state-dir': { type: 'string' }, config: { type: 'string' } } });
+    'observer-dir': { type: 'string' }, 'state-dir': { type: 'string' }, config: { type: 'string' }, 'notification-lock-fd': { type: 'string' } } });
   for (const key of ['baseline', 'manifest', 'observer-dir', 'state-dir', 'config']) if (!values[key]) throw new Error('CONFIG_REQUIRED');
   const observerDir = resolve(values['observer-dir']);
   const dir = resolve(values['state-dir']);
@@ -190,9 +192,26 @@ async function main() {
   const context = loadMainnetContext({ baselinePath: values.baseline, manifestPath: values.manifest, stateDir: observerDir });
   const config = JSON.parse(readFileSync(resolve(values.config), 'utf8'));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
-  const lock = resolve(dir, 'notification.lock');
-  writeFileSync(lock, JSON.stringify({ pid: process.pid }), { flag: 'wx', mode: 0o600 });
-  try {
+  // Legacy locks require operator inspection during migration. Never silently
+  // steal one from an older notifier still delivering a message.
+  if (existsSync(resolve(dir, 'notification.lock'))) throw new Error('LEGACY_NOTIFICATION_LOCK');
+  const lock = resolve(dir, 'notification.flock');
+  if (values['notification-lock-fd'] === undefined) {
+    const child = spawnSync('python3', [fileURLToPath(new URL('./notification-lock.py', import.meta.url)),
+      lock, process.execPath, ...process.execArgv, ...process.argv.slice(1)], { stdio: 'inherit' });
+    if (child.status === 75) {
+      console.log(JSON.stringify({sent: false, reason: 'notification-in-progress'}));
+      return;
+    }
+    if (child.error || child.signal || child.status !== 0) throw new Error('NOTIFICATION_PROCESS_FAILED');
+    return;
+  }
+  const fd = Number(values['notification-lock-fd']);
+  if (!Number.isSafeInteger(fd) || fd < 3) throw new Error('INVALID_NOTIFICATION_LOCK');
+  const opened = fstatSync(fd), named = lstatSync(lock);
+  if (!opened.isFile() || !named.isFile() || opened.dev !== named.dev || opened.ino !== named.ino ||
+      opened.uid !== process.getuid() || (opened.mode & 0o077)) throw new Error('INVALID_NOTIFICATION_LOCK');
+  {
     const result = await notifyMainnet({ context, previous: optionalJson(resolve(dir, 'notification.json')),
       destinationId: String(config.chatId), send: text => sendTelegram(config, text), save: value => {
         const temporary = resolve(dir, `notification.${randomUUID()}.tmp`);
@@ -202,7 +221,7 @@ async function main() {
         } finally { rmSync(temporary, { force: true }); }
       } });
     console.log(JSON.stringify(result));
-  } finally { rmSync(lock); }
+  } // The inherited descriptor remains locked until this process exits.
 }
 
 if (isEntrypoint(import.meta)) main().catch(() => {

@@ -1,8 +1,11 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import { spawn } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
+import { setTimeout as delay } from 'node:timers/promises';
 import { acknowledgeHold, runMonitorOnce } from './float-mainnet-monitor-runner.mjs';
 import { loadMainnetContext, notificationState, notifyMainnet } from './float-mainnet-monitor-alerts.mjs';
 
@@ -511,3 +514,61 @@ test('completed-generation marker cleanup accepts valid leftovers and preserves 
  }finally{f.cleanup();}
  }
 });
+
+for (const signal of ['SIGTERM', 'SIGKILL']) {
+ test(`notifier survives ${signal} without a stale lock or concurrent delivery`, {timeout: 15000}, async () => {
+  const f = fixture();
+  const dir = join(f.options.stateDir, '..');
+  const marker = join(dir, 'fetch-pid.json');
+  const stub = join(dir, 'fetch-stub.mjs');
+  const config = join(dir, 'test-config.json');
+  const state = join(dir, 'notifications');
+  const processes = [];
+  let deliveryPid;
+  writeFileSync(config, JSON.stringify({token: '123:fake', chatId: '456'}));
+  writeFileSync(stub, `import {writeFileSync} from 'node:fs';
+    globalThis.fetch = async () => {
+      writeFileSync(${JSON.stringify(marker)}, JSON.stringify({pid:process.pid}));
+      if(process.env.SHADOW_TEST_HANG === '1') {
+        setInterval(()=>{}, 1000); return await new Promise(()=>{});
+      }
+      return {ok:true,json:async()=>({ok:true,result:{chat:{id:456}}})};
+    };`);
+  const run = hang => {
+   const child = spawn(process.execPath, ['--import', stub,
+    fileURLToPath(new URL('./float-mainnet-monitor-alerts.mjs', import.meta.url)),
+    '--baseline', f.options.baselinePath, '--manifest', f.options.manifestPath,
+    '--observer-dir', f.options.stateDir, '--state-dir', state, '--config', config],
+    {env:{...process.env, SHADOW_TEST_HANG:hang?'1':'0'}, stdio:['ignore','pipe','pipe']});
+   processes.push(child);
+   let output = ''; child.stdout.on('data', x=>output+=x); child.stderr.on('data', x=>output+=x);
+   const done = new Promise(resolve=>child.on('close', (code, signal)=>resolve({code,signal,output})));
+   return {child, done};
+  };
+  try {
+   const first = run(true);
+   for(let i=0; i<200 && !existsSync(marker); i++) await delay(20);
+   assert.ok(existsSync(marker), 'first delivery reached transport');
+   deliveryPid = JSON.parse(readFileSync(marker)).pid;
+   const concurrent = await run(false).done;
+   assert.equal(concurrent.code, 0, concurrent.output);
+   assert.match(concurrent.output, /notification-in-progress/);
+   assert.equal(JSON.parse(readFileSync(marker)).pid, deliveryPid);
+   process.kill(deliveryPid, signal); deliveryPid = undefined;
+   assert.equal((await first.done).code, 1);
+   const next = await run(false).done;
+   assert.equal(next.code, 0, next.output);
+   assert.match(next.output, /"sent":true/);
+   assert.ok(existsSync(join(state, 'notification.json')));
+   // The inode persists, while its kernel lock has been released.
+   assert.ok(existsSync(join(state, 'notification.flock')));
+   const quiet = await run(false).done;
+   assert.equal(quiet.code, 0, quiet.output);
+   assert.match(quiet.output, /unchanged/);
+  } finally {
+   if (deliveryPid) {try {process.kill(deliveryPid, 'SIGKILL');} catch {}}
+   for(const child of processes) if(child.exitCode===null) child.kill('SIGKILL');
+   f.cleanup();
+  }
+ });
+}
