@@ -9,3 +9,15 @@ Funding/repayment/reclaim use browser wallet confirmations. Repayment encodes th
 Journal and wallet locks are partitioned by network and account; a saved action on any deployment of the same chain must be reconciled before another action. Recovery checks the original nonce, sender, calldata, canonical receipt and action event. If explorer lookup is unavailable, keep the hold and use the original transaction hash from the wallet. A missing hash is not permission to resend. Clearing browser site data loses these local protections, and locks do not coordinate another device or application.
 
 Local Anvil fixtures cover separate wallets, draw-bound repayment with lost confirmation, purchase confirmation loss and delivery loss, one provider payout, one debt and final reclaimed reserve. These fixtures are engineering evidence, not independent adoption or funded participant clearance. A real participant wallet walkthrough, supported credential recovery and independent security findings remain release requirements. Both deployed mainnet instances must stay paused until those requirements are resolved.
+
+## Execution and stop policy
+
+The browser route uses agent self-execution. A reviewed monitor baseline must explicitly set `executorPolicy: "agent-self"` on each approved participant line. For a ProviderPaid event on that exact line, both the canonical transaction sender and decoded signed executor must equal the line's approved agent. Unknown lines, mismatched senders, zero or undecodable executors are not approved by this mode. Omitted policy (or `"dedicated"`) preserves the existing dedicated-executor behavior. Current baselines are not changed automatically.
+
+A local monitor hold gates the dedicated execution tools; it does **not** prevent a browser agent from submitting directly to the contract. The onchain `spendsPaused` flag is the browser route's enforcement mechanism. An operator must handle critical incidents by pausing the contract, and the owner must separately authorize resumption. No automatic pause signer or browser-to-private-monitor bridge is provided by this change. Never describe observation alerts as prevention of onchain execution.
+
+Before funded participant activation, review and approve this execution model, the incident-to-pause operating procedure and its response-time risk; demonstrate the pause/refusal and recovery path; and keep the current deployed pauses in place until that review is complete. Configuring a line's execution policy is not pilot clearance.
+
+## Lifecycle notices
+
+`MATURITY_SOON`, `LINE_EXPIRY_SOON` and `POLICY_EXPIRY_SOON` remain visible in the saved snapshot and heartbeat notices when tied to an approved line (and provider for policy expiry). They do not create a global incident. The dedicated spend guard refuses an intent on the affected line while allowing unrelated healthy lines. Critical defaults, unknown warnings, invalid line/provider bindings, and drift still hold the monitor globally. Direct browser transactions remain subject to the onchain limits and pause, not this local guard.

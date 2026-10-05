@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { keccak256 } from "viem";
 import { floatAbi } from "./float-mainnet-config.mjs";
-import { digestJson } from "./float-mainnet-monitor-policy.mjs";
+import { digestJson, isLineLifecycleNotice } from "./float-mainnet-monitor-policy.mjs";
 import { heartbeatStatus, loadContext } from "./float-mainnet-monitor-runner.mjs";
 
 class MonitorGuardError extends Error {}
@@ -34,6 +34,8 @@ export async function assertHealthySpendMonitor({ baselinePath, manifestPath, st
     requireThat(provider?.active === true && same(provider.endpointHash, struct.endpointHash), "active provider/endpoint is not approved for this line");
     const snapshot = JSON.parse(readFileSync(resolve(context.stateDir, "snapshot.json"), "utf8"));
     requireThat(digestJson(snapshot) === initial.snapshotHash, "snapshot changed while inspecting monitor health");
+    requireThat(!snapshot.alerts.some(entry => entry.lineId === line.lineId && isLineLifecycleNotice(entry, b.lines)),
+      "intent line has a lifecycle warning; resolve its maturity or expiry before spending");
     const observedLine = snapshot.lines.find((entry) => same(entry.lineId, struct.lineId));
     requireThat(observedLine?.state === "OPEN", "monitor did not observe the intent line OPEN");
     const observed = initial.observedAt;

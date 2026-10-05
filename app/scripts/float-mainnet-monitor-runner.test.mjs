@@ -264,6 +264,40 @@ test("head regression and same-height reorg latch a hold, baseline change needs 
   } finally { f.cleanup(); }
 });
 
+test("agent-self execution is opt-in for the exact approved line and sender", () => {
+ const {baseline,snapshot}=fixture();
+ const paid={event:'ProviderPaid',lineId:baseline.lines[0].lineId,sender:baseline.lines[0].agent,executor:baseline.lines[0].agent};
+ snapshot.executionAudit.executions=[paid];
+ assert.ok(codes(evaluateSnapshot(baseline,snapshot,NOW)).includes('EXECUTOR_DRIFT'));
+ baseline.lines[0].executorPolicy='agent-self';
+ assert.equal(evaluateSnapshot(baseline,snapshot,NOW).ok,true);
+ for(const mutate of [e=>e.sender=addr(99),e=>e.executor=addr(99),e=>e.executor=addr(0),e=>e.executor=null,e=>e.lineId=hash(99),e=>e.event='UnknownEvent']){
+  const bad=structuredClone(snapshot);mutate(bad.executionAudit.executions[0]);
+  assert.ok(codes(evaluateSnapshot(baseline,bad,NOW)).includes('EXECUTOR_DRIFT'));
+ }
+ const dedicated=structuredClone(snapshot);dedicated.executionAudit.executions[0].sender=addr(6);dedicated.executionAudit.executions[0].executor=addr(6);
+ assert.ok(codes(evaluateSnapshot(baseline,dedicated,NOW)).includes('EXECUTOR_DRIFT'));
+ baseline.lines[0].executorPolicy='dedicated';
+ assert.equal(evaluateSnapshot(baseline,dedicated,NOW).ok,true);
+ baseline.lines[0].executorPolicy='anything';
+ assert.throws(()=>validateBaseline(baseline),/executor policy/);
+});
+
+test("critical, unknown and unbound lifecycle alerts remain global holds", () => {
+ const {baseline,snapshot}=fixture();
+ for(const entry of [
+  {code:'MATURITY_SOON',severity:'critical',lineId:baseline.lines[0].lineId},
+  {code:'DEFAULT_ELIGIBLE',severity:'critical',lineId:baseline.lines[0].lineId},
+  {code:'MATURITY_SOON',severity:'warning',lineId:hash(99)},
+  {code:'POLICY_EXPIRY_SOON',severity:'warning',lineId:baseline.lines[0].lineId,provider:addr(99)},
+  {code:'UNKNOWN',severity:'warning',lineId:baseline.lines[0].lineId},
+ ]) {
+  const copy=structuredClone(snapshot);copy.alerts.push(entry);
+  const result=evaluateSnapshot(baseline,copy,NOW);
+  assert.equal(result.hold,true);assert.ok(codes(result).includes(entry.code));
+ }
+});
+
 test("monitor loop resumes after one contended cycle without deleting another process lock", async () => {
  const f = stateFixture(), stop = new AbortController();
  const lock = join(f.context.stateDir, 'runner.lock');

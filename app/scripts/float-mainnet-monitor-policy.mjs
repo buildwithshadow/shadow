@@ -46,7 +46,8 @@ export function validateBaseline(raw) {
   requireThat(Array.isArray(b.lines), "baseline lines required");
   const ids = new Set();
   for (const line of b.lines) {
-    keys(line, ["lineId", "sponsor", "agent", "epoch", "reserveCap", "lineSpendCap", "dailySpendCap", "maximumRepaymentWindow", "termsVersion", "expiry", "allowedStates", "providers"], "line");
+    keys(line, ["lineId", "sponsor", "agent", "epoch", "reserveCap", "lineSpendCap", "dailySpendCap", "maximumRepaymentWindow", "termsVersion", "expiry", "allowedStates", "providers", ...(Object.hasOwn(line, "executorPolicy") ? ["executorPolicy"] : [])], "line");
+    requireThat(line.executorPolicy === undefined || ["dedicated", "agent-self"].includes(line.executorPolicy), "invalid line executor policy");
     requireThat(hash(line.lineId) && !ids.has(line.lineId), "unique line IDs required"); ids.add(line.lineId);
     requireThat(address(line.sponsor) && address(line.agent) && ["epoch", "reserveCap", "lineSpendCap", "dailySpendCap", "maximumRepaymentWindow", "termsVersion", "expiry"].every((key) => uint(line[key])), "invalid line policy");
     requireThat(Array.isArray(line.allowedStates) && line.allowedStates.length > 0 && line.allowedStates.every((state) => ["OPEN", "DRAWN", "CLOSED", "DEFAULTED"].includes(state)) && new Set(line.allowedStates).size === line.allowedStates.length, "explicit allowed line states required");
@@ -66,9 +67,16 @@ export function validateBaseline(raw) {
   return b;
 }
 
+export function isLineLifecycleNotice(entry, lines) {
+  if (entry?.severity !== "warning" || !["MATURITY_SOON", "LINE_EXPIRY_SOON", "POLICY_EXPIRY_SOON"].includes(entry.code)) return false;
+  const line = lines.find(line => line.lineId === entry.lineId);
+  return Boolean(line && (entry.code !== "POLICY_EXPIRY_SOON" ||
+    line.providers.some(provider => lower(provider.provider) === lower(entry.provider))));
+}
+
 export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
   const b = validateBaseline(rawBaseline);
-  const alerts = [];
+  const alerts = [], notices = [];
   const alert = (code, detail, severity = "critical") => alerts.push({ code, severity, detail });
   const check = (ok, code, detail) => { if (!ok) alert(code, detail); };
   try {
@@ -126,9 +134,20 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
       // turn a refused request into an irreversible global executor incident.
       // Paid and unknown event types retain the strict executor check.
       if (event.event === "SpendBlocked" && typeof event.executor === "string" && isAddress(event.executor)) continue;
-      check(lower(event.sender) === b.executor.address && lower(event.executor) === b.executor.address, "EXECUTOR_DRIFT", "execution did not prove the approved sender and nonzero signed executor");
+      const line = b.lines.find(entry => entry.lineId === event.lineId);
+      const expectedExecutor = event.event === "ProviderPaid" && line?.executorPolicy === "agent-self"
+        ? line.agent : b.executor.address;
+      check(lower(event.sender) === expectedExecutor && lower(event.executor) === expectedExecutor,
+        "EXECUTOR_DRIFT", "execution did not prove the sender and nonzero signed executor approved for this line");
     }
     for (const entry of s.alerts) {
+      // Known lifecycle warnings remain visible but are enforced per line by
+      // the spend guard. Unknown, unbound or critical entries still latch.
+      if (isLineLifecycleNotice(entry, b.lines)) {
+        notices.push({ code: entry.code, severity: "warning", lineId: entry.lineId,
+          ...(entry.provider ? {provider: lower(entry.provider)} : {}) });
+        continue;
+      }
       // Planned pauses and approved historical operators are already checked
       // against exact current state; all other warning codes fail closed.
       if (["SPENDS_PAUSED", "OPENINGS_PAUSED", "OPERATOR_CHANGED"].includes(entry.code)) continue;
@@ -137,5 +156,5 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
   } catch {
     alert("SNAPSHOT_INVALID", "snapshot was incomplete or malformed; no healthy state inferred");
   }
-  return { ok: alerts.length === 0, hold: alerts.length !== 0, alerts, baselineHash: digestJson(b) };
+  return { ok: alerts.length === 0, hold: alerts.length !== 0, alerts, ...(notices.length ? {notices} : {}), baselineHash: digestJson(b) };
 }
