@@ -76,7 +76,8 @@ test('blocked status RPC reads cannot consume exclusive result-delivery capacity
   const polling = [1,2].map(i => fetch(url+'/status/'+hash, { headers: { 'x-shadow-client-ip': `198.51.100.${i}` } }));
   try {
     await arrived;
-    assert.equal((await fetch(url+'/status/'+hash, { headers: { 'x-shadow-client-ip': '198.51.100.3' } })).status, 429);
+    const busy=await fetch(url+'/status/'+hash, { headers: { 'x-shadow-client-ip': '198.51.100.3' } });
+    assert.equal(busy.status,429);assert.equal(busy.headers.get('retry-after'),'60');await busy.text();
     const served = await fetch(url+'/serve', { method: 'POST', headers: { 'content-type': 'application/json', 'x-shadow-client-ip': '198.51.100.1' }, body: JSON.stringify({digest:hash}) });
     assert.equal(served.status, 404, 'serve reaches the receipt lookup while both normal slots are held');
   } finally { release(); await Promise.all(polling); }
@@ -143,6 +144,18 @@ test('normal work plus slow ingress preserves every configured recovery connecti
       const req=request(url+'/accept',{method:'POST',headers:{'x-shadow-client-ip':`192.0.2.${i+1}`}});
       req.on('error',()=>{});req.write('{');bodies.push(req);await arrived;
     }
+    // These uploads are rejected before a body reader is available. They
+    // must close promptly rather than filling the TCP recovery allowance.
+    const rejected = [];
+    for(let i=0;i<24;i++) {
+      const req=request(url+'/accept',{method:'POST',headers:{'x-shadow-client-ip':`192.0.2.${i+20}`,'content-length':'4096'}});
+      const closed=new Promise(resolve=>req.once('close',resolve));
+      const response=new Promise((resolve,reject)=>{req.once('response',res=>{res.resume();resolve(res)});req.once('error',reject)});
+      req.write('{');bodies.push(req);rejected.push(closed);
+      const res=await response;
+      assert.equal(res.statusCode,429);assert.equal(res.headers['retry-after'],'60');assert.equal(res.headers.connection,'close');
+    }
+    await Promise.race([Promise.all(rejected),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('Rejected uploads retained TCP slots')),1000);timer.unref();})]);
     const recoveries=await Promise.all(Array.from({length:16},(_,i)=>fetch(url+'/serve',{method:'POST',headers:{'x-shadow-client-ip':`203.0.113.${i+1}`},body:JSON.stringify({digest:hash})})));
     assert.ok(recoveries.every(response=>response.status===404),'all recovery requests reach receipt lookup');
     await Promise.all(recoveries.map(response=>response.text()));

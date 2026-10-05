@@ -495,6 +495,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const recovery = routeKind === 'serve', activeKey = `${caller}:${routeKind}`;
     const concurrent = callerActive.get(activeKey) || 0;
     if (++quota.count > maxRequestsPerMinute || (publicOrigin && concurrent >= 1)) {
+      response.setHeader('connection', 'close');
+      response.once('finish', () => request.destroy());
       response.writeHead(429, { 'retry-after': '60' }); response.end('{"error":"Provider busy. Retry the original request later."}'); return;
     }
     callerActive.set(activeKey, concurrent + 1);
@@ -530,6 +532,13 @@ export function createProviderServer({ connection, account, endpointHash, price,
       if (status >= 500) {
         console.error(JSON.stringify({ request: `${request.method} ${request.url}`, digest: context.digest, status, error: scrubUrls(inspect(error)) }));
       }
+    }
+    if (status === 429) {
+      response.setHeader('retry-after', '60');
+      // A rejected upload must not retain an uncounted TCP connection while
+      // its sender dribbles a body. Flush the refusal, then close it.
+      response.setHeader('connection', 'close');
+      response.once('finish', () => request.destroy());
     }
     response.writeHead(status, { "content-type": "application/json" });
     response.end(stableStringify(body));
