@@ -88,3 +88,26 @@ test("recognizes common transient transport failures", () => {
   assert.equal(isTransientRpcReadError(new Error("fetch failed: ETIMEDOUT")), true);
   assert.equal(isTransientRpcReadError(new Error("execution reverted")), false);
 });
+
+
+test("internal log-read failures retry within the existing budget", async () => {
+ const queue=createRpcReadQueue({maxAttempts:3,spacingMs:0,baseDelayMs:0,sleep:async()=>{}});
+ let attempts=0;
+ assert.deepEqual(await queue('eth_getLogs',async()=>{
+  if(++attempts<3)throw Object.assign(new Error('RPC failed'),{cause:{code:-32603,message:'internal error'}});
+  return [];
+ }),[]);
+ assert.equal(attempts,3);
+ attempts=0;
+ await assert.rejects(queue('eth_getLogs',async()=>{attempts++;throw new Error('internal error');}),/internal error/);
+ assert.equal(attempts,3);
+});
+
+test("internal-error retry never covers calls, sends, invalid requests or pruned history", async () => {
+ const queue=createRpcReadQueue({maxAttempts:3,spacingMs:0,baseDelayMs:0,sleep:async()=>{}});
+ for(const [method,message] of [['eth_call','internal error'],['eth_sendRawTransaction','internal error'],['eth_getLogs','internal error: pruned history unavailable'],['eth_getLogs','internal error: invalid argument'],['eth_getLogs','internal error: execution reverted'],['eth_getLogs','internal error: unexpected chain ID']]) {
+  let attempts=0;
+  await assert.rejects(queue(method,async()=>{attempts++;throw new Error(message);}));
+  assert.equal(attempts,1,method+': '+message);
+ }
+});

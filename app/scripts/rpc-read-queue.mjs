@@ -51,8 +51,16 @@ export function createRpcReadQueue({
   };
 }
 
-export function isTransientRpcReadError(error) {
-  return transientRpcPattern.test(flattenError(error));
+export function isTransientRpcReadError(error, method) {
+  const detail = flattenError(error);
+  // Internal backend errors have been observed to clear on repeated log reads.
+  // Scope this allowance to eth_getLogs; never extend it to calls or sends,
+  // and do not hide an explicit history/parameter/chain failure.
+  if (method === "eth_getLogs") {
+    if (/pruned|missing trie|histor(?:y|ical).*unavailable|invalid (?:argument|param)|execution reverted|unexpected chain|method not found|unsupported method/i.test(detail)) return false;
+    if (/internal error|InternalRpcError|-32603/i.test(detail)) return true;
+  }
+  return transientRpcPattern.test(detail);
 }
 
 async function retryRpcRead({
@@ -69,7 +77,7 @@ async function retryRpcRead({
     try {
       return await operation();
     } catch (error) {
-      if (attempt === maxAttempts || !isTransientRpcReadError(error)) throw error;
+      if (attempt === maxAttempts || !isTransientRpcReadError(error, label)) throw error;
 
       const exponentialDelay = Math.min(maxDelayMs, baseDelayMs * 2 ** (attempt - 1));
       const jitter = Math.floor(exponentialDelay * 0.2 * random());
