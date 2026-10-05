@@ -568,3 +568,16 @@ test('a pasted current pending hash preserves its nonce after an old wallet hash
  assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,cancellation,f.journal)).status,'replaced');
  assert.equal(f.state.sends,1);
 });
+
+test('an inconsistent pending transaction response cannot poison the recovered hash or nonce',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:6,blockNumber:99n});return txHash;};
+ await executeCandidateCall(f.session,prepared);
+ const current=f.mined(prepared,{hash:otherHash,nonce:8,blockHash:null,blockNumber:null});
+ current.transaction.hash='0x'+'cc'.repeat(32);f.state.receipts.delete(otherHash);
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);assert.equal(f.journal.load()!.txHash,txHash);
+ current.transaction.hash=otherHash;
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,8);assert.equal(f.journal.load()!.txHash,otherHash);
+});

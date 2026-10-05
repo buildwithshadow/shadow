@@ -445,6 +445,7 @@ async function reconcileCandidatePending(client: CandidateReadClient, rawPending
   try {
     await verifyCandidate(client)
     const transaction = await client.getTransaction({ hash: txHash })
+    if (!same(transaction.hash, txHash)) return unknown('The chain returned a different transaction hash. Keep this record and check again.')
     const exactCall = (tx: typeof transaction) => same(tx.from, pending.account) && tx.to !== null &&
       same(tx.to, pending.to) && same(tx.input, pending.data) && tx.value === 0n &&
       (tx.chainId == null || Number(tx.chainId) === CANDIDATE_FUNDING.chainId)
