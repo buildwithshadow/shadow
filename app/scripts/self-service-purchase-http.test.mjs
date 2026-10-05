@@ -44,7 +44,7 @@ test('a trusted loopback proxy assigns separate caller budgets and requires a va
   assert.equal((await send('198.51.100.2')).status,400);
 });
 
-test('an occupied purchase lane cannot consume reserved recovery slots', async t => {
+test('an incomplete purchase body cannot consume service or recovery slots', async t => {
   let server;
   const url = await fixture(t, { maxConcurrent: 2, trustLoopbackProxy: true, onServer: value => { server = value } });
   const arrived = once(server, 'request');
@@ -53,7 +53,7 @@ test('an occupied purchase lane cannot consume reserved recovery slots', async t
   await arrived;
   try {
     const send = route => fetch(url + route, { method: 'POST', body: 'invalid', headers: { 'x-shadow-client-ip': '198.51.100.2' } });
-    assert.equal((await send('/accept')).status, 429);
+    assert.equal((await send('/accept')).status, 400);
     assert.equal((await send('/serve')).status, 400, 'recovery still reaches request validation');
   } finally { stalled.destroy(); }
 });
@@ -82,15 +82,38 @@ test('blocked status RPC reads cannot consume exclusive result-delivery capacity
   } finally { release(); await Promise.all(polling); }
 });
 
-test('a full status-caller quota table cannot reject a new recovery caller', async t => {
+for (const route of ['status','serve']) test(`a full ${route} caller table still admits new callers`, async t => {
   const url = await fixture(t, { trustLoopbackProxy: true });
   for (let i = 0; i < 2048; i++) {
     const ip = `198.51.${Math.floor(i / 254)}.${i % 254 + 1}`;
-    const r = await fetch(url+'/status/invalid', { headers: { 'x-shadow-client-ip': ip } });
+    const r = await fetch(url+(route==='status'?'/status/invalid':'/serve'), {method:route==='status'?'GET':'POST',body:route==='status'?undefined:'invalid',headers:{'x-shadow-client-ip':ip}});
     assert.equal(r.status, 400);
     await r.text();
   }
   const headers = { 'x-shadow-client-ip': '203.0.113.1' };
-  assert.equal((await fetch(url+'/status/invalid', {headers})).status, 429);
+  assert.equal((await fetch(url+'/status/invalid', {headers})).status, 400);
   assert.equal((await fetch(url+'/serve', {method:'POST',headers,body:'invalid'})).status, 400);
+});
+
+
+test('slow bodies in both lanes cannot block complete requests and are closed on an absolute deadline', async t => {
+  let server;
+  const url=await fixture(t,{trustLoopbackProxy:true,onServer:s=>{server=s}});
+  const slow=[];
+  try {
+    for (const [i,route] of ['/accept','/accept','/serve','/serve'].entries()) {
+      const arrived=once(server,'request');
+      const req=request(url+route,{method:'POST',headers:{'x-shadow-client-ip':`198.51.100.${i+1}`,'content-length':'4096'}});
+      req.on('error',()=>{}); req.write('{');
+      const closed=new Promise(resolve=>req.once('close',resolve)); const timer=setInterval(()=>{if(!req.destroyed)req.write(' ');},100);
+      slow.push({req,closed,timer}); await arrived;
+    }
+    for(const route of ['/accept','/serve']) {
+      const r=await fetch(url+route,{method:'POST',headers:{'x-shadow-client-ip':'203.0.113.1'},body:'invalid'});
+      assert.equal(r.status,400,'complete body reaches validation instead of occupied processing slots');
+    }
+    assert.equal((await fetch(url+'/status/invalid',{headers:{'x-shadow-client-ip':'203.0.113.1'}})).status,400);
+    await Promise.race([Promise.all(slow.map(x=>x.closed)),new Promise((_,reject)=>{const timer=setTimeout(()=>reject(new Error('Body deadline did not close slow connections')),3500);timer.unref();})]);
+    assert.ok(slow.every(x=>x.req.destroyed));
+  } finally {for(const x of slow){clearInterval(x.timer);x.req.destroy();}}
 });
