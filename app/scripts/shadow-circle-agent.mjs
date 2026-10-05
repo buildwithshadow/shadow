@@ -3,10 +3,11 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { existsSync, readFileSync, openSync, writeFileSync, fsyncSync, closeSync, renameSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createPublicClient, encodeFunctionData, erc20Abi, getAddress, keccak256, stringToHex } from 'viem';
 import { createCircleAgentExecutor } from './circle-agent-execution.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
+import { createCircleRunnerState } from './circle-agent-runner-state.mjs';
 import { setupCircleAgentWallet } from './circle-agent-setup.mjs';
 import { createCircleCliTransport } from './circle-agent-cli-transport.mjs';
 import { createRpcReadTransport } from './rpc-read-transport.mjs';
@@ -43,7 +44,7 @@ export async function recoverAgentPurchase({executor,state,engine,client,save}) 
   let next;
   if(operations.purchase?.status==='blocked' && delivery?.status==='blocked') {
     await engine.archive();
-    delete state.requests.purchase;save();
+    delete state.requests.purchase;await save();
     next='The exact purchase was refused on chain without payment and archived. Review the funding limits before preparing another purchase.';
   }
   if((operations.purchase?.status==='not-submitted' || !state.requests.purchase) && delivery?.status==='unconfirmed') {
@@ -53,7 +54,7 @@ export async function recoverAgentPurchase({executor,state,engine,client,save}) 
     const block=await client.getBlock({blockTag:'finalized'});
     if(block.timestamp>BigInt(delivery.record.intent.typedData.message.signatureExpiry)) {
       await engine.archive();
-      delete state.requests.purchase;save();
+      delete state.requests.purchase;await save();
       next='The unsent authorization expired and was verified unpaid. Run purchase --confirm to prepare a new request.';
     } else next='No execution was submitted. Keep this record and run recover after the signed authorization expires; no payment was retried.';
   }
@@ -85,45 +86,47 @@ export async function runAgent(options) {
   if(command==='inspect'||(['purchase','repay'].includes(command)&&!options.confirm))return {...summary,next:command==='inspect'?'Inspect the limits, then run purchase with --confirm when ready.':'Nothing signed or sent. Add --confirm to authorize this bounded testnet action.'};
   return journal.withLock(`agent-runner:${agent.toLowerCase()}:${line.toLowerCase()}`, async()=>{
     const file=join(options.state,`purchase-${agent.toLowerCase()}-${line.toLowerCase()}.json`);
-    const state=existsSync(file)?JSON.parse(readFileSync(file,'utf8')):{version:1,agent,line,storage:{},requests:{}};
-    must(state.version===1&&state.agent===agent&&state.line===line,'Purchase journal identity mismatch.');
-    const save=()=>{const tmp=file+'.tmp';const fd=openSync(tmp,'w',0o600);try{writeFileSync(fd,serial(state)+'\n');fsyncSync(fd);}finally{closeSync(fd);}renameSync(tmp,file);const dir=openSync(options.state,'r');try{fsyncSync(dir);}finally{closeSync(dir);}};
-    const storage={getItem:k=>state.storage[k]??null,setItem:(k,v)=>{state.storage[k]=v;save();},removeItem:k=>{delete state.storage[k];save();}};
-    const transport=await createCircleCliTransport({entrypoint:join(options.runtime,'node_modules/@circle-fin/cli/dist/index.js'),agent,journal});
-    const executor=createCircleAgentExecutor({client,circle:transport,journal,config:{chainId:5042002,agent,contract:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,provider:SERVICE.provider,endpointHash:keccak256(stringToHex(SERVICE.endpoint)),maxAmount:'50000',maxNetworkFee:'100000000000000000'}});
-    async function execute(name,to,data) {
-      const request={operationId:name==='purchase'?`purchase:${keccak256(data)}`:`${line}:${name}`,to,data,value:0n};
-      state.requests[name]={key:executor.operationKey(request)};save();
-      const result=await executor.execute(request);
-      must(result.status==='confirmed','Operation is unresolved. Run recover; do not start another payment.');
-      return result.txHash;
-    }
-    const wallet={chain:candidateFundingChain,getChainId:async()=>5042002,getAddresses:async()=>[agent],request:async({method,params})=>{
-      must(method==='eth_signTypedData_v4'&&getAddress(params[0])===agent,'Unsupported wallet request.');
-      return transport.signPurchase(params[1],{contract:CONTRACT,provider:SERVICE.provider,endpointHash:keccak256(stringToHex(SERVICE.endpoint))});
-    },sendTransaction:async request=>{must(getAddress(request.account)===agent&&getAddress(request.to)===CONTRACT&&BigInt(request.value)===0n,'Unexpected purchase transaction.');return execute('purchase',request.to,request.data);}};
-    const engine=createSelfServicePurchase({client,wallet,storage,withLock:async(_key,work)=>work(),config:{chainId:5042002,account:agent,contract:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,...SERVICE}});
-    if(command==='recover') {
-      const recovery=await recoverAgentPurchase({executor,state,engine,client,save});
-      return {...await freshSummary(),...recovery};
-    }
-    await transport.session();
-    if(command==='purchase') {
-      if(!engine.load())await engine.prepare(line,`report:${randomUUID().replaceAll('-','')}:${SERVICE.sourcePayment}`);
-      const existing=engine.load();
-      if(['submitted','delivered'].includes(existing.stage))return {...summary,next:'A purchase is already recorded. Run recover; this command will not submit it again.'};
-      await engine.submit();
-      const delivered=await engine.recover();
-      return {...await freshSummary(),paymentStatus:delivered.status,transaction:delivered.record.txHash,report:delivered.bytes?new TextDecoder().decode(delivered.bytes):undefined};
-    }
-    const repaymentLine=await kit.readCandidateLine(client,line);
-    if(repaymentLine.principalOutstanding===0n)return {...summarize(repaymentLine),next:'No debt to repay. Nothing sent.'};
-    must(repaymentLine.principalOutstanding===50000n,'This runner repays exactly 0.05 test USDC only.');
-    const allowance=await client.readContract({address:CANDIDATE_FUNDING.usdc,abi:erc20Abi,functionName:'allowance',args:[agent,CONTRACT]});
-    if(allowance<50000n)await execute('approve-repay',CANDIDATE_FUNDING.usdc,encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[CONTRACT,50000n]}));
-    const transaction=await execute('repay',CONTRACT,encodeFunctionData({abi,functionName:'repay',args:[line,50000n]}));
-    const after=await kit.readCandidateLine(client,line);
-    return {...summarize(after),transaction,next:'Sponsor can review close and reclaim on Shadow.'};
+    must(!existsSync(file),'Legacy runner purchase state needs explicit reconciliation before migration. Preserve the file; do not delete it or start another payment.');
+    const {state,storage,save,flush}=await createCircleRunnerState({journal,agent,line,contract:CONTRACT});
+    try {
+      const transport=await createCircleCliTransport({entrypoint:join(options.runtime,'node_modules/@circle-fin/cli/dist/index.js'),agent,journal});
+      const executor=createCircleAgentExecutor({client,circle:transport,journal,config:{chainId:5042002,agent,contract:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,provider:SERVICE.provider,endpointHash:keccak256(stringToHex(SERVICE.endpoint)),maxAmount:'50000',maxNetworkFee:'100000000000000000'}});
+      async function execute(name,to,data) {
+        const request={operationId:name==='purchase'?`purchase:${keccak256(data)}`:`${line}:${name}`,to,data,value:0n};
+        state.requests[name]={key:executor.operationKey(request)};await save();
+        const result=await executor.execute(request);
+        must(result.status==='confirmed','Operation is unresolved. Run recover; do not start another payment.');
+        return result.txHash;
+      }
+      const wallet={chain:candidateFundingChain,getChainId:async()=>5042002,getAddresses:async()=>[agent],request:async({method,params})=>{
+        await flush();
+        must(method==='eth_signTypedData_v4'&&getAddress(params[0])===agent,'Unsupported wallet request.');
+        return transport.signPurchase(params[1],{contract:CONTRACT,provider:SERVICE.provider,endpointHash:keccak256(stringToHex(SERVICE.endpoint))});
+      },sendTransaction:async request=>{await flush();must(getAddress(request.account)===agent&&getAddress(request.to)===CONTRACT&&BigInt(request.value)===0n,'Unexpected purchase transaction.');return execute('purchase',request.to,request.data);}};
+      const engine=createSelfServicePurchase({client,wallet,storage,fetchImpl:async(...args)=>{await flush();return fetch(...args);},withLock:async(_key,work)=>work(),config:{chainId:5042002,account:agent,contract:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,...SERVICE}});
+      if(command==='recover') {
+        const recovery=await recoverAgentPurchase({executor,state,engine,client,save});
+        return {...await freshSummary(),...recovery};
+      }
+      await transport.session();
+      if(command==='purchase') {
+        if(!engine.load())await engine.prepare(line,`report:${randomUUID().replaceAll('-','')}:${SERVICE.sourcePayment}`);
+        await flush();
+        const existing=engine.load();
+        if(['submitted','delivered'].includes(existing.stage))return {...summary,next:'A purchase is already recorded. Run recover; this command will not submit it again.'};
+        await engine.submit();
+        const delivered=await engine.recover();
+        return {...await freshSummary(),paymentStatus:delivered.status,transaction:delivered.record.txHash,report:delivered.bytes?new TextDecoder().decode(delivered.bytes):undefined};
+      }
+      const repaymentLine=await kit.readCandidateLine(client,line);
+      if(repaymentLine.principalOutstanding===0n)return {...summarize(repaymentLine),next:'No debt to repay. Nothing sent.'};
+      must(repaymentLine.principalOutstanding===50000n,'This runner repays exactly 0.05 test USDC only.');
+      const allowance=await client.readContract({address:CANDIDATE_FUNDING.usdc,abi:erc20Abi,functionName:'allowance',args:[agent,CONTRACT]});
+      if(allowance<50000n)await execute('approve-repay',CANDIDATE_FUNDING.usdc,encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[CONTRACT,50000n]}));
+      const transaction=await execute('repay',CONTRACT,encodeFunctionData({abi,functionName:'repay',args:[line,50000n]}));
+      const after=await kit.readCandidateLine(client,line);
+      return {...summarize(after),transaction,next:'Sponsor can review close and reclaim on Shadow.'};
+    } finally { await flush(); }
   });
 }
 if(process.argv[1]&&import.meta.url===pathToFileURL(resolve(process.argv[1])).href) {
