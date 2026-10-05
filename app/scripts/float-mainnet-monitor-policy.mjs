@@ -125,7 +125,7 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
       // debt was created. Preserve it in the snapshot, but do not let an agent
       // turn a refused request into an irreversible global executor incident.
       // Paid and unknown event types retain the strict executor check.
-      if (event.event === "SpendBlocked") continue;
+      if (event.event === "SpendBlocked" && typeof event.executor === "string" && isAddress(event.executor)) continue;
       check(lower(event.sender) === b.executor.address && lower(event.executor) === b.executor.address, "EXECUTOR_DRIFT", "execution did not prove the approved sender and nonzero signed executor");
     }
     for (const entry of s.alerts) {

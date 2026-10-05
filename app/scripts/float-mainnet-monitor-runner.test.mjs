@@ -115,6 +115,11 @@ test("a refused spend from another executor does not latch a payment-executor ho
     assert.equal(result.hold, false);
     assert.equal(result.ok, true);
     assert.equal(heartbeatStatus(f.context, NOW).hold, false);
+    for (const executor of [null, undefined, "invalid"]) {
+      const routed = structuredClone(f.snapshot);
+      routed.executionAudit.executions[0].executor = executor;
+      assert.ok(codes(evaluateSnapshot(f.baseline, routed, NOW)).includes("EXECUTOR_DRIFT"));
+    }
     const paid = structuredClone(f.snapshot);
     paid.executionAudit.executions[0].event = "ProviderPaid";
     assert.ok(codes(evaluateSnapshot(f.baseline, paid, NOW)).includes("EXECUTOR_DRIFT"));
