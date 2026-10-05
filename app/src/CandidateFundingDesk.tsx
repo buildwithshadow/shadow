@@ -450,10 +450,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       <p>Finish any open wallet prompt. Then check its status. Keep this browser’s site data until it is resolved.</p>
       {pending.txHash && <a href={`${explorer}/tx/${pending.txHash}`} target="_blank" rel="noreferrer">Open the saved transaction</a>}
       <Field name="recovery-hash" label="Transaction hash from your wallet (optional)" value={recoveryHash} onChange={setRecoveryHash} required={false} disabled={Boolean(busy)}
-        hint="If your wallet already sent it, leave this empty and the page looks it up on the Arc explorer. Otherwise paste the original transaction or its confirmed replacement. An unrelated payment cannot clear this check." />
+        hint="Leave this empty to check the saved wallet transaction or look it up. You can also paste its original hash. A replacement is accepted only when it is tied to the original transaction; an unrelated payment cannot clear this check." />
       <button type="button" onClick={recover} disabled={Boolean(busy)}>Check confirmation</button>
       <details><summary>No transaction hash in your wallet?</summary>
-        <p>The request may not have been sent, but a missing hash cannot prove that. In your wallet, cancel or replace the request using this account and nonce, then enter the confirmed replacement hash above. That prevents the original nonce from executing later. Ask the Shadow operator for help if your wallet does not offer replacement controls.</p>
+        <p>A missing hash does not prove the request was cancelled. Your wallet may have changed the proposed nonce. Check its activity for the original request and copy that transaction’s hash here. If the wallet cannot identify it, keep this record and ask for help before sending again.</p>
         <dl className="fundingDetails"><div><dt>Account</dt><dd><code>{pending.account}</code></dd></div><div><dt>Saved transaction nonce</dt><dd>{pending.nonce}</dd></div></dl>
       </details>
     </section>}

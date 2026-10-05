@@ -280,6 +280,7 @@ test('equal-amount repayment from a different nonce cannot resolve the saved pay
 test('a mined different same-nonce transaction proves replacement, while orphaned receipts do not', async () => {
   const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
   await executeCandidateCall(f.session, prepared)
+  const original = f.mined(prepared); f.state.receipts.delete(txHash); original.transaction.blockHash = null
   const { receipt } = f.mined(prepared, { hash: otherHash, to: sponsor, input: '0x' })
   assert.equal((await reconcileCandidatePending(f.client, f.journal.load()!, otherHash)).status, 'replaced')
   receipt.blockHash = otherHash
@@ -481,3 +482,28 @@ test('pasted funding line and wallet whitespace is normalized before contract re
   assert.equal((await readCandidateLine(f.client, `  ${lineId}\n`)).lineId, lineId)
   assert.equal((await prepareCandidateOpen(f.client, ` ${sponsor} `, { ...input, agent: ` ${input.agent} ` })).account, sponsor)
 })
+
+test('the wallet-returned exact transaction can confirm at a reassigned nonce', async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:8});return txHash;};
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'confirmed');
+ assert.equal(f.journal.load(),null);assert.equal(f.state.sends,1);
+});
+
+test('an unrelated consumed proposed nonce cannot release a reassigned pending wallet transaction', async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ await executeCandidateCall(f.session,prepared);
+ const original=f.mined(prepared,{nonce:8});f.state.receipts.delete(txHash);
+ original.transaction.blockHash=null;
+ f.mined(prepared,{hash:otherHash,nonce:7,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash)).status,'unknown');
+ assert.ok(f.journal.load());assert.equal(f.state.sends,1);
+});
+
+test('hashless sends cannot be cancelled by proving only the proposed nonce was used', async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{throw new Error('lost response');};await executeCandidateCall(f.session,prepared);
+ f.mined(prepared,{hash:otherHash,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash)).status,'unknown');
+ assert.ok(f.journal.load());
+});
