@@ -9,6 +9,19 @@ import {
 import abi from "../scripts/float-mainnet-abi.json" with { type: "json" };
 import { readBoundedJson } from "./boundedResponse.mjs";
 
+// Wallet libraries can wrap an EIP-1193 rejection in several cause objects.
+// Only an explicit rejection releases the uncertain-submission barrier.
+function walletRejected(error) {
+  const visited = new Set();
+  let current = error;
+  while (current && !visited.has(current)) {
+    if (current.code === 4001) return true;
+    visited.add(current);
+    current = current.cause;
+  }
+  return false;
+}
+
 // Wallet-executed testnet purchases. No enrollment bearer token or server signer.
 const TYPES = {
   SpendIntent: abi
@@ -446,7 +459,7 @@ function createPurchase({
         });
         save(record);
       } catch (error) {
-        if (error?.code === 4001) {
+        if (walletRejected(error)) {
           record.stage = "accepted";
           save(record);
         }
