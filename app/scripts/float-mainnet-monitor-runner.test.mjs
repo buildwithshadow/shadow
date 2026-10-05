@@ -305,3 +305,17 @@ test("monitor loop backs off after local persistence failure and preserves the h
   assert.equal(results[1].checks.snapshotHealthy,true);
  } finally {f.cleanup();}
 });
+
+test("a failed cycle with a still-healthy persisted heartbeat stops the supervised host", async () => {
+ const f=stateFixture();
+ try {
+  await runMonitorOnce(f.context,{now:()=>NOW,collect:async()=>f.snapshot});
+  assert.equal(heartbeatStatus(f.context,NOW).ok,true);
+  writeFileSync(join(f.context.stateDir,'runner.lock'),'another process');
+  await assert.rejects(runMonitorLoop(f.context,{
+   now:()=>NOW,collect:async()=>assert.fail('must not collect without the lock'),
+   wait:async()=>assert.fail('must stop rather than retry with spend authorization'),
+  }),/runner lock exists/);
+  assert.equal(readFileSync(join(f.context.stateDir,'runner.lock'),'utf8'),'another process');
+ } finally {f.cleanup();}
+});

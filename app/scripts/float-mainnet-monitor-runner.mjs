@@ -237,7 +237,11 @@ export async function runMonitorLoop(context, {
     const started = monotonicNow();
     let cycleFailed = false;
     try { result = await runMonitorOnce(context, scanOptions); }
-    catch {
+    catch (error) {
+      // If the failed cycle left a usable healthy heartbeat, propagate so the
+      // purchase-host supervisor stops its coupled server. Retry only when
+      // the persisted state already makes the spend guard fail closed.
+      if (heartbeatStatus(context, scanOptions.now ? scanOptions.now() : Date.now()).ok === true) throw error;
       cycleFailed = true;
       // Do not write around the state lock or remove another process's lock.
       // Existing holds remain authoritative; stale-heartbeat detection remains
