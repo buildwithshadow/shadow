@@ -1,11 +1,12 @@
-import { mkdir, lstat, realpath, open } from 'node:fs/promises';
+import { mkdir, lstat, realpath, open, readdir } from 'node:fs/promises';
 import { resolve, dirname, join } from 'node:path';
-import { randomUUID, createHash } from 'node:crypto';
+import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { homedir } from 'node:os';
 import { requirePrivateState } from './circle-agent-private-state.mjs';
 import { constants } from 'node:fs';
+import { privateBytes } from './circle-agent-journal-checkpoint.mjs';
 
 // A dedicated worker keeps a kernel cwd reference to the verified directory.
 // Every file operation is relative to that cwd. No later parent-path lookup can
@@ -15,10 +16,12 @@ const WORKER = `
 import {open,stat,rename,unlink} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {createInterface} from 'node:readline';
-const [dev,ino]=process.argv.slice(1);
+import {checkpointRecord,privateBytes} from ${JSON.stringify(new URL('./circle-agent-journal-checkpoint.mjs', import.meta.url).href)};
+const [dev,ino,checkpointDirectory,rootToken]=process.argv.slice(1);
 async function check(){
   const d=await stat('.');
   if(!d.isDirectory()||String(d.dev)!==dev||String(d.ino)!==ino||(d.mode&0o077)!==0||(process.getuid&&d.uid!==process.getuid()))throw Error('Circle journal directory identity or private permissions changed.');
+  if((await privateBytes('./.root-token'))?.toString()!==rootToken)throw Error('Circle journal root token changed.');
 }
 await check();
 const folder=await open('.',constants.O_RDONLY|constants.O_DIRECTORY);
@@ -27,26 +30,26 @@ for await(const line of createInterface({input:process.stdin})){
   try{
     r=JSON.parse(line);if(!/^[a-f0-9]{64}\\.json(?:\\.lock)?$/.test(r.name))throw Error('Invalid journal filename.');
     await check();const path='./'+r.name;let value=null;
-    if(r.op==='get'){
-      let file;
-      try{
-        file=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW|constants.O_NONBLOCK);const m=await file.stat();
-        if(!m.isFile()||(m.mode&0o077)!==0||(process.getuid&&m.uid!==process.getuid())||m.size>2000000)throw Error('Circle journal record permissions or size are unsafe.');
-        value=JSON.parse(await file.readFile('utf8'));
-      }catch(e){if(e.code!=='ENOENT')throw e;}finally{if(file)await file.close();}
-    }else if(r.op==='put'){
-      const temp=path+'.'+r.id+'.tmp';const f=await open(temp,'wx',0o600);
-      try{await f.writeFile(JSON.stringify(r.value)+'\\n');await f.sync();}finally{await f.close();}
-      await rename(temp,path);await folder.sync();
-    }else if(r.op==='lock'){
-      const f=await open(path,'wx',0o600);
-      try{await f.writeFile(JSON.stringify(r.value));await f.sync();}finally{await f.close();}
-      await folder.sync();
-    }else if(r.op==='unlock'){
-      const f=await open(path,constants.O_RDONLY|constants.O_NOFOLLOW);
-      try{const saved=JSON.parse(await f.readFile('utf8'));if(saved.token!==r.value.token)throw Error('Circle lock identity changed.');}finally{await f.close();}
-      await unlink(path);await folder.sync();
-    }else throw Error('Unsupported journal operation.');
+    value=await checkpointRecord(checkpointDirectory,r.name,async(before,commit)=>{
+      if(r.op==='get')return before===null?null:JSON.parse(before.toString());
+      if(r.op==='put'){
+        const bytes=Buffer.from(JSON.stringify(r.value)+'\\n');
+        await commit(bytes);
+        const temp=path+'.'+r.id+'.tmp';const f=await open(temp,'wx',0o600);
+        try{await f.writeFile(bytes);await f.sync();}finally{await f.close();}
+        await rename(temp,path);await folder.sync();
+      }else if(r.op==='lock'){
+        if(before!==null)throw Object.assign(Error('Journal lock exists.'),{code:'EEXIST'});
+        const bytes=Buffer.from(JSON.stringify(r.value));await commit(bytes);
+        const f=await open(path,'wx',0o600);
+        try{await f.writeFile(bytes);await f.sync();}finally{await f.close();}
+        await folder.sync();
+      }else if(r.op==='unlock'){
+        if(before===null||JSON.parse(before.toString()).token!==r.value.token)throw Error('Circle lock identity changed.');
+        await commit(null);await unlink(path);await folder.sync();
+      }else throw Error('Unsupported journal operation.');
+      return null;
+    });
     process.stdout.write(JSON.stringify({id:r.id,value})+'\\n');
   }catch(e){process.stdout.write(JSON.stringify({id:r?.id,error:e.message,code:e.code})+'\\n');}
 }
@@ -66,7 +69,26 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
   // silently initialize an empty directory at the same configured pathname.
   const parent = await requirePrivateState(identityDirectory);
   const anchor = join(parent, `${createHash('sha256').update(dir).digest('hex')}.identity`);
-  const identity = { path: dir, dev: String(info.dev), ino: String(info.ino) };
+  const tokenPath = join(dir, '.root-token');
+  let tokenBytes = await privateBytes(tokenPath);
+  if (tokenBytes === null) {
+    if (await privateBytes(anchor) !== null || (await readdir(dir)).length !== 0) {
+      throw new Error('Circle journal root was replaced or needs explicit legacy reconciliation; do not initialize missing identity state.');
+    }
+    const token = randomBytes(32).toString('hex');
+    const file = await open(tokenPath, 'wx', 0o600);
+    try { await file.writeFile(token); await file.sync(); } finally { await file.close(); }
+    const folder = await open(dir, constants.O_RDONLY | constants.O_DIRECTORY);
+    try { await folder.sync(); } finally { await folder.close(); }
+    tokenBytes = Buffer.from(token);
+  }
+  const token = tokenBytes.toString();
+  if (!/^[a-f0-9]{64}$/.test(token)) throw new Error('Circle journal root token is invalid.');
+  // A copied root must never silently become an independent writable journal.
+  if (await privateBytes(anchor) === null && (await readdir(dir)).some(name => name !== '.root-token')) {
+    throw new Error('Restored Circle journal requires explicit reconciliation before registration.');
+  }
+  const identity = { path: dir, dev: String(info.dev), ino: String(info.ino), token };
   let marker;
   try {
     marker = await open(anchor, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
@@ -84,7 +106,8 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
       if (JSON.stringify(previous) !== JSON.stringify(identity)) throw new Error('Circle journal root was replaced. Restore the original root or explicitly reconcile its full records and locks; do not reset its identity marker.');
     } finally { await saved.close(); }
   } finally { if (marker) await marker.close(); }
-  const worker = spawn(process.execPath, ['--input-type=module', '-e', WORKER, String(info.dev), String(info.ino)], {
+  const checkpointDirectory = await requirePrivateState(`${anchor}.records`);
+  const worker = spawn(process.execPath, ['--input-type=module', '-e', WORKER, String(info.dev), String(info.ino), checkpointDirectory, token], {
     cwd: dir, stdio: ['pipe', 'pipe', 'ignore'],
   });
   const requests = new Map();

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { realpath, mkdtemp, rm, chmod, symlink, readdir, writeFile, cp, mkdir, rename } from 'node:fs/promises';
+import { realpath, mkdtemp, rm, chmod, symlink, readdir, readFile, writeFile, cp, mkdir, rename } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
@@ -13,8 +13,9 @@ test('an abrupt operator process death preserves its uncertain request and stale
     const child=spawnSync(process.execPath,['--input-type=module','-e',`import {createCircleAgentJournal} from ${JSON.stringify(module)};const j=await createCircleAgentJournal(process.argv[1]);await j.withLock('wallet',async()=>{await j.put('original-request',{status:'unknown',idempotencyKey:'original-key'});process.kill(process.pid,'SIGKILL');});`,dir]);
     assert.equal(child.signal,'SIGKILL');
     await cp(dir,restored,{recursive:true});
-    const a=await createCircleAgentJournal(dir),b=await createCircleAgentJournal(restored);
-    for(const j of [a,b]){
+    const a=await createCircleAgentJournal(dir);
+    await assert.rejects(()=>createCircleAgentJournal(restored),/explicit reconciliation/);
+    for(const j of [a]){
       assert.deepEqual(await j.get('original-request'),{status:'unknown',idempotencyKey:'original-key'});
       await assert.rejects(()=>j.withLock('wallet',async()=>assert.fail('must not resend')),/locked/);
     }
@@ -31,7 +32,7 @@ test('record symlinks and broadly readable restored records cannot be consumed',
   const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-record-')),dir=join(sandbox,'journal');
   try {
     const j=await createCircleAgentJournal(dir);await j.put('entry',{status:'unknown'});
-    const name=(await readdir(dir))[0],path=join(dir,name);
+    const name=(await readdir(dir)).find(name=>/^[a-f0-9]{64}\.json$/.test(name)),path=join(dir,name);
     await chmod(path,0o644);await assert.rejects(()=>j.get('entry'),/permissions or size are unsafe/);
     await rm(path);const other=join(dir,'other');await writeFile(other,'{}',{mode:0o600});await symlink(other,path);
     await assert.rejects(()=>j.get('entry'));
@@ -85,4 +86,55 @@ test('a private journal beneath a shared mount can use separate trusted identity
   await rename(dir,join(shared,'old'));await mkdir(dir,{mode:0o700});
   await assert.rejects(()=>createCircleAgentJournal(dir,{identityDirectory:state}),/root was replaced/);j.close();
  }finally{await rm(sandbox,{recursive:true,force:true});}
+});
+
+
+test('restoring an older record in place cannot erase an uncertain operation', async () => {
+ const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-rollback-')),dir=join(parent,'journal');
+ const options={identityDirectory:join(parent,'identities')};let first,second;
+ try {
+  first=await createCircleAgentJournal(dir,options);
+  await first.put('wallet:active',{status:'idle'});
+  const name=(await readdir(dir)).find(name=>/^[a-f0-9]{64}\.json$/.test(name));
+  const backup=await readFile(join(dir,name));
+  await first.put('wallet:active',{status:'unknown',idempotencyKey:'fixture-key'});
+  first.close();
+  await writeFile(join(dir,name),backup,{mode:0o600});
+  second=await createCircleAgentJournal(dir,options);
+  await assert.rejects(()=>second.get('wallet:active'),/rollback/);
+  await assert.rejects(()=>second.put('wallet:active',{status:'idle'}),/rollback/);
+ } finally {first?.close();second?.close();await rm(parent,{recursive:true,force:true});}
+});
+
+test('deleted records and root identities cannot be silently initialized', async () => {
+ const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-deleted-')),dir=join(parent,'journal');
+ const options={identityDirectory:join(parent,'identities')};let first,second;
+ try {
+  first=await createCircleAgentJournal(dir,options);
+  await first.put('wallet:active',{status:'unknown'});first.close();
+  for(const name of await readdir(dir))if(name!=='.root-token')await rm(join(dir,name));
+  second=await createCircleAgentJournal(dir,options);
+  await assert.rejects(()=>second.get('wallet:active'),/rollback/);second.close();
+  await rm(join(dir,'.root-token'));
+  await assert.rejects(()=>createCircleAgentJournal(dir,options),/root was replaced/);
+ } finally {first?.close();second?.close();await rm(parent,{recursive:true,force:true});}
+});
+
+test('death after checkpoint persistence but before the journal write cannot reopen the barrier', async () => {
+ const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-checkpoint-crash-')),dir=join(parent,'journal');
+ const identities=join(parent,'identities');let journal;
+ try {
+  journal=await createCircleAgentJournal(dir,{identityDirectory:identities});
+  await journal.put('wallet:active',{status:'idle'});
+  const name=(await readdir(dir)).find(name=>/^[a-f0-9]{64}\.json$/.test(name));
+  const records=join(identities,(await readdir(identities)).find(name=>name.endsWith('.records')));
+  const module=new URL('./circle-agent-journal-checkpoint.mjs',import.meta.url).href;
+  const child=spawnSync(process.execPath,['--input-type=module','-e',`import {checkpointRecord} from ${JSON.stringify(module)};await checkpointRecord(process.argv[1],process.argv[2],async(_before,commit)=>{await commit(Buffer.from(JSON.stringify({status:'unknown'})));process.kill(process.pid,'SIGKILL');});`,records,name],{cwd:dir});
+  assert.equal(child.signal,'SIGKILL');
+  await assert.rejects(()=>journal.get('wallet:active'),/checkpoint is locked/);
+  // Fixture-only removal of the proven dead writer's lock still must not
+  // permit use of the old record. Production recovery needs reconciliation.
+  await rm(join(records,`${name}.checkpoint.lock`));
+  await assert.rejects(()=>journal.get('wallet:active'),/rollback/);
+ } finally {journal?.close();await rm(parent,{recursive:true,force:true});}
 });
