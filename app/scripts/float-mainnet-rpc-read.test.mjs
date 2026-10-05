@@ -227,3 +227,57 @@ test("fallback retains bounded attempts when every provider is unavailable", asy
   await assert.rejects(client.request({method:'eth_blockNumber'}),/rate limit/);
   assert.equal(calls,3);
 });
+
+
+test("internal log errors can fail over without changing the requested range", async () => {
+ const requests=[];
+ const client=createPublicClient({transport:createRpcReadTransport('https://primary.example',{
+  fallbackUrls:['https://secondary.example'],expectedChainId:5042002,queueOptions:{...queueOptions,maxAttempts:2},
+  fetchFn:async(url,options)=>{
+   const body=JSON.parse(options.body);requests.push({url:String(url),body});
+   if(body.method==='eth_chainId')return reply(body,'0x4cef52');
+   if(String(url).includes('primary'))return Response.json({jsonrpc:'2.0',id:body.id,error:{code:-32603,message:'internal error'}});
+   return reply(body,[]);
+  },
+ })});
+ const params=[{fromBlock:'0x100',toBlock:'0x200'}];
+ assert.deepEqual(await client.request({method:'eth_getLogs',params}),[]);
+ const logs=requests.filter(x=>x.body.method==='eth_getLogs');
+ assert.equal(logs.length,2);assert.ok(logs[1].url.includes('secondary'));
+ assert.deepEqual(logs.map(x=>x.body.params),[params,params]);
+});
+
+test("pruned history is not replaced with an empty successful fallback", async () => {
+ let secondaryCalls=0,logCalls=0;
+ const client=createPublicClient({transport:createRpcReadTransport('https://primary.example',{
+  fallbackUrls:['https://secondary.example'],expectedChainId:5042002,queueOptions:{...queueOptions,maxAttempts:3},
+  fetchFn:async(url,options)=>{
+   const body=JSON.parse(options.body);
+   if(String(url).includes('secondary')){secondaryCalls++;return reply(body,[]);}
+   if(body.method==='eth_chainId')return reply(body,'0x4cef52');
+   logCalls++;return Response.json({jsonrpc:'2.0',id:body.id,error:{code:4444,message:'internal error: pruned history unavailable'}});
+  },
+ })});
+ await assert.rejects(client.request({method:'eth_getLogs',params:[{}]}),/pruned history/);
+ assert.equal(logCalls,1);assert.equal(secondaryCalls,0);
+});
+
+for (const message of ["header not found", "block not found", "state unavailable", "internal error: unknown historical failure"]) {
+ test(`explicit RPC history failure is not retried: ${message}`, async () => {
+  let logCalls = 0, secondaryCalls = 0;
+  const client = createPublicClient({transport: createRpcReadTransport('https://primary.example', {
+   fallbackUrls: ['https://secondary.example'], expectedChainId: 5042002,
+   queueOptions: {...queueOptions, maxAttempts: 3},
+   fetchFn: async (url, options) => {
+    const body = JSON.parse(options.body);
+    if (String(url).includes('secondary')) { secondaryCalls++; return reply(body, []); }
+    if (body.method === 'eth_chainId') return reply(body, '0x4cef52');
+    logCalls++;
+    return Response.json({jsonrpc: '2.0', id: body.id, error: {code: -32603, message}});
+   },
+  })});
+  await assert.rejects(client.request({method: 'eth_getLogs', params: [{}]}));
+  assert.equal(logCalls, 1);
+  assert.equal(secondaryCalls, 0);
+ });
+}
