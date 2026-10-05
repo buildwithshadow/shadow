@@ -5,6 +5,7 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
+import { performance } from "node:perf_hooks";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
 import { canonicalJson, digestJson, evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-policy.mjs";
 
@@ -223,6 +224,29 @@ export function acknowledgeHold(context, incidentId, nowMs = Date.now()) {
   } finally { release(); }
 }
 
+// The interval is measured between scan starts. Adding it after collection
+// makes retained data stale while the next scan is still running. A slow scan
+// starts its successor immediately, without overlaps or catch-up bursts.
+export async function runMonitorLoop(context, {
+  signal, monotonicNow = () => performance.now(),
+  wait = (ms, signal) => delay(ms, undefined, { signal }),
+  onResult = () => {}, ...scanOptions
+} = {}) {
+  let result;
+  while (!signal?.aborted) {
+    const started = monotonicNow();
+    result = await runMonitorOnce(context, scanOptions);
+    await onResult(result);
+    if (signal?.aborted) break;
+    const remaining = Math.max(0, context.baseline.policy.intervalMs - (monotonicNow() - started));
+    if (remaining > 0) {
+      try { await wait(remaining, signal); }
+      catch (error) { if (!signal?.aborted || error?.name !== "AbortError") throw error; }
+    }
+  }
+  return result;
+}
+
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!["once", "loop", "status", "acknowledge"].includes(command)) throw new Error("command must be once, loop, status or acknowledge");
@@ -233,17 +257,15 @@ async function main() {
   if (command === "acknowledge") return acknowledgeHold(context, values["incident-id"]);
   if (command === "once") return runMonitorOnce(context);
   // Explicit foreground loop only. No daemon, cron, launchd or systemd install.
-  let stop = false;
   const controller = new AbortController();
-  const halt = () => { stop = true; controller.abort(); };
+  const halt = () => controller.abort();
   process.once("SIGINT", halt); process.once("SIGTERM", halt);
-  let result;
-  do {
-    result = await runMonitorOnce(context);
-    process.stdout.write(`${canonicalJson(result)}\n`);
-    if (!stop) await delay(context.baseline.policy.intervalMs, undefined, { signal: controller.signal }).catch(() => {});
-  } while (!stop);
-  return result;
+  try {
+    return await runMonitorLoop(context, {
+      signal: controller.signal,
+      onResult: (result) => process.stdout.write(`${canonicalJson(result)}\n`),
+    });
+  } finally { process.removeListener("SIGINT", halt); process.removeListener("SIGTERM", halt); }
 }
 if (isEntrypoint(import.meta)) main().then((result) => {
   process.stdout.write(`${canonicalJson(result)}\n`); if (!result.ok) process.exitCode = 1;
