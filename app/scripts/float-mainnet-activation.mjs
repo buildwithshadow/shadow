@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { readFileSync } from "node:fs";
 import { createPublicClient, decodeEventLog, erc20Abi, getAddress, isAddress, keccak256, parseAbi, stringToBytes, zeroAddress } from "viem";
-import { floatAbi } from "./float-mainnet-config.mjs";
+import { floatEventAbi } from "./float-mainnet-config.mjs";
 import { findLogs, read, readLimits, readLine, readPolicy, runCli, UsageError } from "./float-mainnet-cli.mjs";
 import { createRpcReadTransport } from "./rpc-read-transport.mjs";
 import { isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
@@ -115,7 +115,7 @@ export async function observeActivation(client, plan, phase, pinned) {
   const events = [];
   for (const log of await findLogs(connection, undefined, undefined, connection.deployBlock, blockNumber)) {
     if (log.removed || log.blockNumber === null) throw new Error("noncanonical event in activation discovery");
-    events.push(decodeEventLog({ abi: floatAbi, data: log.data, topics: log.topics }));
+    events.push(decodeEventLog({ abi: floatEventAbi, data: log.data, topics: log.topics }));
   }
   const members = async (event, arg, getter) => {
     const result = [];

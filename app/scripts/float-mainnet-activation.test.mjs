@@ -3,10 +3,10 @@ import { readFileSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, describe, test } from "node:test";
-import { createPublicClient, createWalletClient, defineChain, encodeFunctionData, getAddress, http, keccak256, zeroAddress } from "viem";
+import { createPublicClient, createWalletClient, defineChain, encodeFunctionData, encodeEventTopics, encodeAbiParameters, getAddress, http, keccak256, zeroAddress } from "viem";
 import { evaluateActivation, observeActivation, validateActivationPlan, fileHash } from "./float-mainnet-activation.mjs";
 import { CHAIN_ID, account, e2eSkip, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
-import { floatAbi } from "./float-mainnet-config.mjs";
+import { floatAbi, floatEventAbi } from "./float-mainnet-config.mjs";
 import { stableStringify } from "./float-mainnet-preflight.mjs";
 
 const PORT = 18662, RPC = `http://127.0.0.1:${PORT}`;
@@ -67,6 +67,22 @@ describe("read-only activation stages using actual local candidate state", { ski
     failed(evaluate(plan, "contained", o), "pauses");
     assert.equal(await client.getBlockNumber({ cacheTime: 0 }), before);
     fixture = o;
+  });
+
+  test("guarded repayment companion logs preserve activation state; unknown logs fail closed", async () => {
+    const pinned = await client.getBlock();
+    const baseline = await observeActivation(client, plan, "deployed", pinned);
+    const companion = {
+      address: candidate, blockNumber: pinned.number, blockHash: pinned.hash,
+      transactionHash: h("9"), transactionIndex: 0, logIndex: 999, removed: false,
+      topics: encodeEventTopics({abi:floatEventAbi,eventName:"DrawRepaid",args:{lineId:h("1"),drawDigest:h("2"),payer:sponsor.address}}),
+      data: encodeAbiParameters([{type:"uint256"},{type:"uint256"}],[5000n,0n]),
+    };
+    const observedClient = {...client,getLogs:async args=>[...await client.getLogs(args),companion]};
+    const observed = await observeActivation(observedClient, plan, "deployed", pinned);
+    assert.deepEqual(observed,baseline,"companion attribution must not add another repayment or change discovery");
+    const unknownClient = {...client,getLogs:async args=>[...await client.getLogs(args),{...companion,topics:[h("f")]}]};
+    await assert.rejects(observeActivation(unknownClient, plan, "deployed", pinned),/not found|signature/i);
   });
 
   test("wrong runtime/token/network, partial discovery, mismatched providers and stale snapshot fail", () => {
