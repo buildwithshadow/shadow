@@ -175,3 +175,19 @@ test('concurrent fresh roots cannot both claim the same wallet namespace',async(
   assert.equal(calls,1);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
  }finally{a?.close();b?.close();await rm(parent,{recursive:true,force:true});}
 });
+
+test('concurrent same-root registration never exposes a partial wallet binding',async()=>{
+ const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-wallet-same-root-'));
+ const options={identityDirectory:join(parent,'identities')};let a,b;
+ try{
+  a=await createCircleAgentJournal(join(parent,'journal'),options);
+  b=await createCircleAgentJournal(join(parent,'journal'),options);
+  for(let i=0;i<20;i++){
+   const key=`same-wallet-${i}`;
+   const results=await Promise.allSettled([a.withLock(key,async()=>{}),b.withLock(key,async()=>{})]);
+   assert.ok(results.some(r=>r.status==='fulfilled'));
+   for(const result of results)if(result.status==='rejected')assert.match(result.reason.message,/locked/);
+   await a.withLock(key,async()=>{});
+  }
+ }finally{a?.close();b?.close();await rm(parent,{recursive:true,force:true});}
+});
