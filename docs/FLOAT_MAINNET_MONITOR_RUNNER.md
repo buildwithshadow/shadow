@@ -40,7 +40,7 @@ Each `lines` entry contains exactly:
 
 `policy` contains exactly these positive safe integer numbers and one boolean:
 
-- `intervalMs`: delay after a completed cycle before starting the next; cycles do not overlap or accumulate a backlog.
+- `intervalMs`: target period between scan starts, measured with a monotonic clock. Collection and result publication consume this period; only its unused time is spent waiting. Cycles never overlap or accumulate a backlog. If a scan exceeds the period, its successor starts after it finishes.
 - `runTimeoutMs`: hard subprocess wall-time bound. Choose a bound supported by measured full-scan duration. A growing history that exceeds it holds; it is never silently truncated.
 - `maxHeartbeatAgeMs`: maximum age of both the start and completion timestamps; must cover at least `runTimeoutMs + intervalMs`.
 - `maxBlockAgeSeconds`: maximum block timestamp age, including time spent scanning. Timestamps over 30 seconds in the future hold.
@@ -62,7 +62,9 @@ node app/scripts/float-mainnet-monitor-runner.mjs once \
   --state-dir /private/shadow-monitor-state
 ```
 
-Use `loop` instead of `once` only when intentionally running the foreground scheduler. Optional `--index /private/index.json` adds checkpoint diagnostics. The loop waits after each completed cycle; it does not claim a fixed start-to-start cadence. `SIGINT`/`SIGTERM` stops the loop; any in-flight child remains bounded by `runTimeoutMs`. An operator may integrate `once` with an existing scheduler separately. No installation occurs through this tool.
+Use `loop` instead of `once` only when intentionally running the foreground scheduler. Optional `--index /private/index.json` adds checkpoint diagnostics. A 40-second scan with `intervalMs: 60000` waits approximately 20 seconds before its successor; a scan longer than 60 seconds starts its successor immediately after completion. Runtime and scheduler delays can extend the target period. `SIGINT`/`SIGTERM` cancels the wait and prevents another cycle; an in-flight child finishes within `runTimeoutMs`. An operator may integrate `once` with an existing scheduler separately. No installation occurs through this tool.
+
+**Upgrade note:** older runners interpreted `intervalMs` as an additional delay after completion. Keeping the same value increases scan frequency (the example above changes from approximately 100 seconds between starts to 60). Check RPC capacity and measured collection duration before upgrading. If an operator chooses a longer interval to preserve the former request volume, review the existing heartbeat and block-age bounds too: the retained observation must stay fresh through the next collection. This release does not relax those bounds, acknowledge holds, or silently rewrite baselines.
 
 Before acting on health, use the same arguments with `status`. Consumers must not simply read a persisted `ok:true`: that bit cannot update itself when a process or machine stops. `status` rereads state, checks the approved hashes, revalidates the snapshot, freshness and hold latch, and exits nonzero unless healthy. The exported `heartbeatStatus(context, nowMs)` provides the same gate to local consumers. `loadContext` loads and validates the baseline and manifest bindings.
 
