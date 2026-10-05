@@ -485,6 +485,46 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     } finally { await testClient.revert({ id: saved }); }
   });
 
+  test("snapshot recovers a pruned hash index from block bodies and refuses missing or reorganized history", async () => {
+    const saved = await testClient.snapshot(); let server; let mode = "pruned-index"; let fullReads = 0;
+    try {
+      await purchase(agentA, AGENT_A, "pruned-index-purchase");
+      const expected = await monitor(["snapshot"]);
+      server = createServer(async (request, response) => {
+        try {
+          let raw = ""; for await (const chunk of request) raw += chunk;
+          const body = JSON.parse(raw); response.setHeader("content-type", "application/json");
+          if (body.method === "eth_getTransactionByHash") {
+            response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, result: null })); return;
+          }
+          const upstream = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: raw });
+          const result = await upstream.json();
+          if (body.method === "eth_getBlockByNumber" && body.params[1] === true) {
+            fullReads++;
+            if (mode === "missing-body") result.result.transactions = [];
+            if (mode === "reorg") result.result.hash = `0x${"f".repeat(64)}`;
+          }
+          response.end(JSON.stringify(result));
+        } catch { response.statusCode = 500; response.end(); }
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const env = { ARC_RPC_URL: `http://127.0.0.1:${server.address().port}` };
+      const recovered = await cli("monitor", ["snapshot"], env);
+      assert.equal(recovered.status, 0);
+      assert.deepEqual(recovered.json, expected);
+      assert.ok(fullReads > 0, "must use full historical block bodies");
+      for (mode of ["missing-body", "reorg"]) {
+        const failed = await cli("monitor", ["snapshot"], env);
+        assert.equal(failed.status, 1); assert.equal(failed.json.ok, false);
+        assert.match(failed.json.error.message, /unavailable|not canonical/);
+        assert.equal(failed.json.executionAudit, undefined);
+      }
+    } finally {
+      if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+      await testClient.revert({ id: saved });
+    }
+  });
+
   test("failed read-only CLI batches stop at the failed read and a fresh retry keeps canonical accounting", async () => {
     const snapshot = await testClient.snapshot();
     let server;
