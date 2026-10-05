@@ -132,3 +132,23 @@ test("provider failure fails closed without leaking credentials", async () => {
     await assert.rejects(assertHealthySpendMonitor(f.args), (error) => { assert.match(error.message, /could not be verified/); assert.doesNotMatch(error.message, /secret|hidden|apiKey/); return true; });
   } finally { f.cleanup(); }
 });
+
+for (const code of ['MATURITY_SOON','LINE_EXPIRY_SOON','POLICY_EXPIRY_SOON']) {
+ test(`lifecycle notice ${code} restricts its own line without latching every line`, async () => {
+  const f=await fixture((baseline,snapshot)=>{
+   const other=structuredClone(baseline.lines[0]);other.lineId=hash(99);baseline.lines.push(other);
+   const observed=structuredClone(snapshot.lines[0]);observed.lineId=other.lineId;snapshot.lines.push(observed);
+   baseline.effectiveLimits.protocolReserve='200';snapshot.contract.effectiveLimits.protocolReserve='200';
+   snapshot.contract.totalSponsorObligations='200';snapshot.contract.totalCommittedCapital='200';snapshot.accounting.balance='200';snapshot.discovery.lines=2;
+   snapshot.alerts.push({code,severity:'warning',lineId:other.lineId,provider:addr(5)});
+  });
+  try {
+   assert.equal(f.heartbeat.hold,false);
+   assert.equal(readdirSync(f.args.stateDir).includes('hold.json'),false);
+   assert.equal(f.heartbeat.notices[0].lineId,hash(99));
+   assert.equal((await assertHealthySpendMonitor(f.args)).lineId,hash(2));
+   f.args.struct.lineId=hash(99);
+   await assert.rejects(assertHealthySpendMonitor(f.args),/lifecycle warning/);
+  } finally {f.cleanup();}
+ });
+}

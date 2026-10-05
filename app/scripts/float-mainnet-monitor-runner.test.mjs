@@ -282,3 +282,18 @@ test("agent-self execution is opt-in for the exact approved line and sender", ()
  baseline.lines[0].executorPolicy='anything';
  assert.throws(()=>validateBaseline(baseline),/executor policy/);
 });
+
+test("critical, unknown and unbound lifecycle alerts remain global holds", () => {
+ const {baseline,snapshot}=fixture();
+ for(const entry of [
+  {code:'MATURITY_SOON',severity:'critical',lineId:baseline.lines[0].lineId},
+  {code:'DEFAULT_ELIGIBLE',severity:'critical',lineId:baseline.lines[0].lineId},
+  {code:'MATURITY_SOON',severity:'warning',lineId:hash(99)},
+  {code:'POLICY_EXPIRY_SOON',severity:'warning',lineId:baseline.lines[0].lineId,provider:addr(99)},
+  {code:'UNKNOWN',severity:'warning',lineId:baseline.lines[0].lineId},
+ ]) {
+  const copy=structuredClone(snapshot);copy.alerts.push(entry);
+  const result=evaluateSnapshot(baseline,copy,NOW);
+  assert.equal(result.hold,true);assert.ok(codes(result).includes(entry.code));
+ }
+});

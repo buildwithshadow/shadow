@@ -17,3 +17,7 @@ The browser route uses agent self-execution. A reviewed monitor baseline must ex
 A local monitor hold gates the dedicated execution tools; it does **not** prevent a browser agent from submitting directly to the contract. The onchain `spendsPaused` flag is the browser route's enforcement mechanism. An operator must handle critical incidents by pausing the contract, and the owner must separately authorize resumption. No automatic pause signer or browser-to-private-monitor bridge is provided by this change. Never describe observation alerts as prevention of onchain execution.
 
 Before funded participant activation, review and approve this execution model, the incident-to-pause operating procedure and its response-time risk; demonstrate the pause/refusal and recovery path; and keep the current deployed pauses in place until that review is complete. Configuring a line's execution policy is not pilot clearance.
+
+## Lifecycle notices
+
+`MATURITY_SOON`, `LINE_EXPIRY_SOON` and `POLICY_EXPIRY_SOON` remain visible in the saved snapshot and heartbeat notices when tied to an approved line (and provider for policy expiry). They do not create a global incident. The dedicated spend guard refuses an intent on the affected line while allowing unrelated healthy lines. Critical defaults, unknown warnings, invalid line/provider bindings, and drift still hold the monitor globally. Direct browser transactions remain subject to the onchain limits and pause, not this local guard.

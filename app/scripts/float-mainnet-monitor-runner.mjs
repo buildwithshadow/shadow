@@ -199,7 +199,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     const incident = optionalJson(file.hold);
     const heartbeat = { ...common, completedAt: new Date(completed).toISOString(), observedAt: snapshot?.observedAt ?? null,
       snapshotHash: snapshot ? digestJson(snapshot) : retainedSnapshotHash, ok: result.ok && !incident, hold: result.hold || !!incident,
-      status: result.ok && !incident ? "healthy" : "hold", checks: { snapshotHealthy: result.ok },
+      status: result.ok && !incident ? "healthy" : "hold", ...(result.notices?.length ? {notices: result.notices} : {}), checks: { snapshotHealthy: result.ok },
       incidentId: incident?.incidentId ?? null, alerts: [...result.alerts, ...(incident && result.ok ? [alert("HOLD_LATCHED", `incident ${incident.incidentId} requires local acknowledgement after recovery`)] : [])] };
     event(context, { runId: heartbeat.runId, completedAt: heartbeat.completedAt, ok: heartbeat.ok, hold: heartbeat.hold, baselineHash: context.baselineHash, observedAt: heartbeat.observedAt, alerts: heartbeat.alerts });
     atomicJson(file.heartbeat, heartbeat);

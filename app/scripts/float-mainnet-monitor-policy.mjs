@@ -67,9 +67,16 @@ export function validateBaseline(raw) {
   return b;
 }
 
+export function isLineLifecycleNotice(entry, lines) {
+  if (entry?.severity !== "warning" || !["MATURITY_SOON", "LINE_EXPIRY_SOON", "POLICY_EXPIRY_SOON"].includes(entry.code)) return false;
+  const line = lines.find(line => line.lineId === entry.lineId);
+  return Boolean(line && (entry.code !== "POLICY_EXPIRY_SOON" ||
+    line.providers.some(provider => lower(provider.provider) === lower(entry.provider))));
+}
+
 export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
   const b = validateBaseline(rawBaseline);
-  const alerts = [];
+  const alerts = [], notices = [];
   const alert = (code, detail, severity = "critical") => alerts.push({ code, severity, detail });
   const check = (ok, code, detail) => { if (!ok) alert(code, detail); };
   try {
@@ -134,6 +141,13 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
         "EXECUTOR_DRIFT", "execution did not prove the sender and nonzero signed executor approved for this line");
     }
     for (const entry of s.alerts) {
+      // Known lifecycle warnings remain visible but are enforced per line by
+      // the spend guard. Unknown, unbound or critical entries still latch.
+      if (isLineLifecycleNotice(entry, b.lines)) {
+        notices.push({ code: entry.code, severity: "warning", lineId: entry.lineId,
+          ...(entry.provider ? {provider: lower(entry.provider)} : {}) });
+        continue;
+      }
       // Planned pauses and approved historical operators are already checked
       // against exact current state; all other warning codes fail closed.
       if (["SPENDS_PAUSED", "OPENINGS_PAUSED", "OPERATOR_CHANGED"].includes(entry.code)) continue;
@@ -142,5 +156,5 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
   } catch {
     alert("SNAPSHOT_INVALID", "snapshot was incomplete or malformed; no healthy state inferred");
   }
-  return { ok: alerts.length === 0, hold: alerts.length !== 0, alerts, baselineHash: digestJson(b) };
+  return { ok: alerts.length === 0, hold: alerts.length !== 0, alerts, ...(notices.length ? {notices} : {}), baselineHash: digestJson(b) };
 }
