@@ -455,9 +455,29 @@ async function reconcileCandidatePending(client: CandidateReadClient, rawPending
       // transaction at the proposed nonce cannot prove replacement.
       const original = same(txHash, pending.txHash) ? transaction : await client.getTransaction({ hash: pending.txHash })
       if (!same(original.hash, pending.txHash) || !exactCall(original) || !Number.isSafeInteger(Number(original.nonce)) || Number(original.nonce) < 0) return unknown('The original wallet transaction could not be bound to this action. Keep the record and check its original hash.')
-      expectedNonce = Number(original.nonce)
-      if (pending.actualNonce !== undefined && pending.actualNonce !== expectedNonce) return unknown('The original transaction nonce contradicts the saved record. Keep the record for investigation.')
-      if (journal && pending.actualNonce === undefined) journal.save({ ...pending, actualNonce: expectedNonce })
+      // Identical approvals can already exist in this wallet's older history.
+      // Never pin an old nonce just because a wallet returned that old hash.
+      let originalIsOlder = false
+      if (original.blockNumber != null || original.blockHash) {
+        const originalReceipt = await client.getTransactionReceipt({ hash: pending.txHash })
+        if (!same(originalReceipt.transactionHash, pending.txHash) || !originalReceipt.blockHash ||
+          (original.blockNumber != null && original.blockNumber !== originalReceipt.blockNumber) ||
+          (original.blockHash && !same(original.blockHash, originalReceipt.blockHash))) return unknown('The original transaction history could not be verified. Keep this record and check again.')
+        const originalBlock = await client.getBlock({ blockNumber: originalReceipt.blockNumber })
+        if (!same(originalBlock.hash, originalReceipt.blockHash)) return unknown('The original transaction is not confirmed in the canonical chain. Check again.')
+        originalIsOlder = originalReceipt.blockNumber < BigInt(pending.fromBlock)
+      }
+      if (originalIsOlder) {
+        // A pasted exact action can still prove completion after the saved
+        // boundary. An unrelated nonce-consuming transaction cannot do so.
+        if (same(txHash, pending.txHash) || !exactCall(transaction) || pending.actualNonce !== undefined) return unknown('The wallet returned a transaction from before this action. Keep the record and check this action’s current transaction hash.')
+        expectedNonce = Number(transaction.nonce)
+        if (!Number.isSafeInteger(expectedNonce) || expectedNonce < 0) return unknown('This transaction nonce is invalid.')
+      } else {
+        expectedNonce = Number(original.nonce)
+        if (pending.actualNonce !== undefined && pending.actualNonce !== expectedNonce) return unknown('The original transaction nonce contradicts the saved record. Keep the record for investigation.')
+        if (journal && pending.actualNonce === undefined) journal.save({ ...pending, actualNonce: expectedNonce })
+      }
     }
     if (!same(transaction.from, pending.account) || Number(transaction.nonce) !== expectedNonce || (transaction.chainId != null && Number(transaction.chainId) !== CANDIDATE_FUNDING.chainId)) return unknown('This transaction does not match the original wallet transaction. The action is still unresolved.')
     const receipt = await client.getTransactionReceipt({ hash: txHash })

@@ -280,7 +280,7 @@ test('equal-amount repayment from a different nonce cannot resolve the saved pay
 test('a mined different same-nonce transaction proves replacement, while orphaned receipts do not', async () => {
   const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
   await executeCandidateCall(f.session, prepared)
-  const original = f.mined(prepared); f.state.receipts.delete(txHash); original.transaction.blockHash = null
+  const original = f.mined(prepared); f.state.receipts.delete(txHash); original.transaction.blockHash = null; original.transaction.blockNumber = null
   const { receipt } = f.mined(prepared, { hash: otherHash, to: sponsor, input: '0x' })
   assert.equal((await reconcileCandidatePending(f.client, f.journal.load()!, otherHash)).status, 'replaced')
   receipt.blockHash = otherHash
@@ -494,7 +494,7 @@ test('an unrelated consumed proposed nonce cannot release a reassigned pending w
  const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
  await executeCandidateCall(f.session,prepared);
  const original=f.mined(prepared,{nonce:8});f.state.receipts.delete(txHash);
- original.transaction.blockHash=null;
+ original.transaction.blockHash=null;original.transaction.blockNumber=null;
  f.mined(prepared,{hash:otherHash,nonce:7,to:sponsor,input:'0x'});
  assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash)).status,'unknown');
  assert.ok(f.journal.load());assert.equal(f.state.sends,1);
@@ -510,11 +510,37 @@ test('hashless sends cannot be cancelled by proving only the proposed nonce was 
 
 test('a verified adjusted nonce survives dropped-original cancellation recovery',async()=>{
  const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
- f.state.onSend=()=>{const original=f.mined(prepared,{nonce:8});original.transaction.blockHash=null;f.state.receipts.delete(txHash);return txHash;};
+ f.state.onSend=()=>{const original=f.mined(prepared,{nonce:8});original.transaction.blockHash=null;original.transaction.blockNumber=null;f.state.receipts.delete(txHash);return txHash;};
  assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
  assert.equal(f.journal.load()!.actualNonce,8);
  f.state.transactions.delete(txHash);
  f.mined(prepared,{hash:otherHash,nonce:8,to:sponsor,input:'0x'});
  assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'replaced');
  assert.equal(f.state.sends,1);
+});
+
+test('an older identical wallet hash cannot poison recovery of the current action',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const old=f.mined(prepared,{nonce:6,blockNumber:99n});
+   old.receipt.blockNumber=99n;
+   return txHash;
+ };
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+ f.mined(prepared,{hash:otherHash,nonce:8});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'confirmed');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+ assert.equal(f.state.sends,1);
+});
+
+test('an unrelated transaction cannot clear a record with an older identical original hash',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const old=f.mined(prepared,{nonce:6,blockNumber:99n});old.receipt.blockNumber=99n;return txHash;
+ };
+ await executeCandidateCall(f.session,prepared);
+ f.mined(prepared,{hash:otherHash,nonce:6,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
 });
