@@ -450,7 +450,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       <p>Finish any open wallet prompt. Then check its status. Keep this browser’s site data until it is resolved.</p>
       {pending.txHash && <a href={`${explorer}/tx/${pending.txHash}`} target="_blank" rel="noreferrer">Open the saved transaction</a>}
       <Field name="recovery-hash" label="Transaction hash from your wallet (optional)" value={recoveryHash} onChange={setRecoveryHash} required={false} disabled={Boolean(busy)}
-        hint="Leave this empty to check the saved wallet transaction or look it up. You can also paste its original hash. A replacement is accepted only when it is tied to the original transaction; an unrelated payment cannot clear this check." />
+        hint="Leave empty to check the saved transaction. If your wallet shows it was replaced, sped up or cancelled, paste the confirmed replacement transaction’s hash instead. Shadow must verify that it replaced the original; an unrelated payment cannot clear this check." />
       <button type="button" onClick={recover} disabled={Boolean(busy)}>Check confirmation</button>
       <details><summary>No transaction hash in your wallet?</summary>
         <p>A missing hash does not prove the request was cancelled. Your wallet may have changed the proposed nonce. Check its activity for the original request and copy that transaction’s hash here. If the wallet cannot identify it, keep this record and ask for help before sending again.</p>
