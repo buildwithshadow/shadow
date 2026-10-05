@@ -58,7 +58,23 @@ export function isTransientRpcReadError(error, method) {
   // and do not hide an explicit history/parameter/chain failure.
   if (method === "eth_getLogs") {
     if (/pruned|missing trie|histor(?:y|ical).*unavailable|invalid (?:argument|param)|execution reverted|unexpected chain|method not found|unsupported method/i.test(detail)) return false;
-    if (/internal error|InternalRpcError|-32603/i.test(detail)) return true;
+    // A generic class/code also wraps deterministic history failures. Only
+    // the exact backend message we observed is eligible for this new retry.
+    if (/internal error|InternalRpcError|-32603/i.test(detail)) {
+      let current = error;
+      let backendMessage = "";
+      const seen = new Set();
+      for (let depth = 0; current && depth < 8 && !seen.has(current); depth += 1) {
+        seen.add(current);
+        if (typeof current === "string") { backendMessage = current; break; }
+        if (typeof current !== "object") break;
+        const message = [current.details, current.shortMessage, current.message]
+          .find((value) => typeof value === "string" && value.trim());
+        if (message) backendMessage = message;
+        current = current.cause;
+      }
+      return /^internal error[.]?$/i.test(backendMessage.trim());
+    }
   }
   return transientRpcPattern.test(detail);
 }
