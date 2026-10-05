@@ -51,7 +51,11 @@ test('runner writes stay in the verified directory after its configured path is 
  const journal=await createCircleAgentJournal(root,{identityDirectory:join(parent,'identities')});
  t.after(async()=>{journal.close();await rm(parent,{recursive:true,force:true});});
  const runner=await createCircleRunnerState({journal,...identity});
+ assert.equal(await journal.hasLegacyRunnerState(agent,line),false);
+ const legacy=`purchase-${agent}-${line}.json`;
+ await writeFile(join(root,legacy),'unresolved legacy purchase',{mode:0o600});
  await rename(root,original);await mkdir(attacker,{mode:0o700});await symlink(attacker,root,'dir');
+ assert.equal(await journal.hasLegacyRunnerState(agent,line),true,'replacement path cannot hide an unresolved legacy purchase');
  runner.storage.setItem('purchase',purchase());await runner.flush();
  const filename=createHash('sha256').update(runner.key).digest('hex')+'.json';
  assert.equal(JSON.parse(await readFile(join(original,filename),'utf8')).storage.purchase,purchase());

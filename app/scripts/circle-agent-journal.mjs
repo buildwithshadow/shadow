@@ -13,7 +13,7 @@ import { privateBytes } from './circle-agent-journal-checkpoint.mjs';
 // redirect a read, atomic rename or lock to another journal. Node's fs API does
 // not expose openat/renameat, so do not emulate them with pathname rechecks.
 const WORKER = `
-import {open,stat,rename,unlink} from 'node:fs/promises';
+import {open,stat,lstat,rename,unlink} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {createInterface} from 'node:readline';
 import {checkpointRecord,privateBytes} from ${JSON.stringify(new URL('./circle-agent-journal-checkpoint.mjs', import.meta.url).href)};
@@ -28,8 +28,14 @@ const folder=await open('.',constants.O_RDONLY|constants.O_DIRECTORY);
 for await(const line of createInterface({input:process.stdin})){
   let r;
   try{
-    r=JSON.parse(line);if(!/^[a-f0-9]{64}\\.json(?:\\.lock)?$/.test(r.name))throw Error('Invalid journal filename.');
+    r=JSON.parse(line);
+    const legacy=r.op==='legacy-runner-check';
+    if(!(legacy?/^purchase-0x[a-f0-9]{40}-0x[a-f0-9]{64}\\.json$/:/^[a-f0-9]{64}\\.json(?:\\.lock)?$/).test(r.name))throw Error('Invalid journal filename.');
     await check();const path='./'+r.name;let value=null;
+    if(legacy){
+      try{await lstat(path);value=true;}catch(e){if(e.code!=='ENOENT')throw e;value=false;}
+      process.stdout.write(JSON.stringify({id:r.id,value})+'\\n');continue;
+    }
     value=await checkpointRecord(checkpointDirectory,r.name,async(before,commit)=>{
       if(r.op==='get')return before===null?null:JSON.parse(before.toString());
       if(r.op==='put'){
@@ -150,6 +156,10 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
     runtimeDirectory: join(parent, 'verified-circle-runtime'),
     get: key => call('get', filename(key)),
     put: (key, value) => call('put', filename(key), value),
+    hasLegacyRunnerState(agent,line) {
+      if(!/^0x[0-9a-fA-F]{40}$/.test(agent)||!/^0x[0-9a-fA-F]{64}$/.test(line))throw new Error('Invalid legacy runner identity.');
+      return call('legacy-runner-check',`purchase-${agent.toLowerCase()}-${line.toLowerCase()}.json`);
+    },
     async withLock(key, action) {
       const name = filename(key) + '.lock', token = randomUUID();
       try { await call('lock', name, { token, pid: process.pid, createdAt: new Date().toISOString() }); }

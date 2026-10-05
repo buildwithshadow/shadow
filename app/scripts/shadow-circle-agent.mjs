@@ -3,7 +3,6 @@ import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { existsSync } from 'node:fs';
 import { createPublicClient, encodeFunctionData, erc20Abi, getAddress, keccak256, stringToHex } from 'viem';
 import { createCircleAgentExecutor } from './circle-agent-execution.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
@@ -85,8 +84,7 @@ export async function runAgent(options) {
   const freshSummary=async()=>summarize(await kit.readCandidateLine(client,line));
   if(command==='inspect'||(['purchase','repay'].includes(command)&&!options.confirm))return {...summary,next:command==='inspect'?'Inspect the limits, then run purchase with --confirm when ready.':'Nothing signed or sent. Add --confirm to authorize this bounded testnet action.'};
   return journal.withLock(`agent-runner:${agent.toLowerCase()}:${line.toLowerCase()}`, async()=>{
-    const file=join(options.state,`purchase-${agent.toLowerCase()}-${line.toLowerCase()}.json`);
-    must(!existsSync(file),'Legacy runner purchase state needs explicit reconciliation before migration. Preserve the file; do not delete it or start another payment.');
+    must(!await journal.hasLegacyRunnerState(agent,line),'Legacy runner purchase state needs explicit reconciliation before migration. Preserve the file; do not delete it or start another payment.');
     const {state,storage,save,flush}=await createCircleRunnerState({journal,agent,line,contract:CONTRACT});
     try {
       const transport=await createCircleCliTransport({entrypoint:join(options.runtime,'node_modules/@circle-fin/cli/dist/index.js'),agent,journal});
