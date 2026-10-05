@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
@@ -262,4 +262,46 @@ test("head regression and same-height reorg latch a hold, baseline change needs 
     assert.equal(changed.hold, true); assert.equal(changed.checks.snapshotHealthy, true);
     assert.equal(acknowledgeHold(context, changed.incidentId, NOW).hold, false);
   } finally { f.cleanup(); }
+});
+
+test("monitor loop resumes after one contended cycle without deleting another process lock", async () => {
+ const f = stateFixture(), stop = new AbortController();
+ const lock = join(f.context.stateDir, 'runner.lock');
+ mkdirSync(f.context.stateDir, {recursive:true}); writeFileSync(lock, 'another owner');
+ let elapsed=0, scans=0; const results=[], waits=[];
+ try {
+  await runMonitorLoop(f.context, {
+   signal:stop.signal, monotonicNow:()=>elapsed, now:()=>NOW+elapsed,
+   collect:async()=>{scans++;return f.snapshot;},
+   onResult:result=>{results.push(result);if(result.ok)stop.abort();},
+   wait:async ms=>{
+    waits.push(ms);elapsed+=ms;
+    assert.equal(readFileSync(lock,'utf8'),'another owner');
+    rmSync(lock);
+   },
+  });
+  assert.equal(scans,1); assert.deepEqual(waits,[1000]);
+  assert.equal(results[0].ok,false);assert.equal(results[0].hold,true);
+  assert.ok(codes(results[0]).includes('RUNNER_CYCLE_FAILED'));
+  assert.equal(results[1].ok,true);
+ } finally {f.cleanup();}
+});
+
+test("monitor loop backs off after local persistence failure and preserves the hold", async () => {
+ const f=stateFixture(),stop=new AbortController(); let elapsed=0,calls=0;const waits=[],results=[];
+ try {
+  const first=await runMonitorOnce(f.context,{now:()=>NOW,collect:async()=>{throw new Error('offline');}});
+  await runMonitorLoop(f.context,{
+   signal:stop.signal,monotonicNow:()=>elapsed,now:()=>NOW+elapsed,
+   collect:async()=>f.snapshot,
+   afterCheckingPublished:async()=>{if(++calls===1){elapsed+=2000;throw new Error('private local error');}},
+   wait:async ms=>{waits.push(ms);elapsed+=ms;},
+   onResult:result=>{results.push(result);if(calls===2)stop.abort();},
+  });
+  assert.deepEqual(waits,[1000]);
+  assert.ok(codes(results[0]).includes('RUNNER_CYCLE_FAILED'));
+  assert.equal(JSON.stringify(results[0]).includes('private local error'),false);
+  assert.equal(results[1].incidentId,first.incidentId);assert.equal(results[1].hold,true);
+  assert.equal(results[1].checks.snapshotHealthy,true);
+ } finally {f.cleanup();}
 });
