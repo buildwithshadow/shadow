@@ -104,13 +104,13 @@ test('activation holds across journal recreation and competing instances cannot 
   try {
     const x=fixture();let release,entered;const gate=new Promise(r=>{release=r;});const started=new Promise(r=>{entered=r;});
     x.circle.activate=async()=>{x.events.push('send');entered();await gate;throw new Error('lost response');};
-    const first=setupCircleAgentWallet({agent,client:x.client,circle:x.circle,journal:await createCircleAgentJournal(dir),confirm:true});
+    const first=setupCircleAgentWallet({agent,client:x.client,circle:x.circle,journal:await createCircleAgentJournal(dir,{identityDirectory:join(sandbox,'identities')}),confirm:true});
     await started;
-    x.journal2=await createCircleAgentJournal(dir);
+    x.journal2=await createCircleAgentJournal(dir,{identityDirectory:join(sandbox,'identities')});
     try { await assert.rejects(()=>setupCircleAgentWallet({agent,client:x.client,circle:x.circle,journal:x.journal2,confirm:true}),/locked/); }
     finally { release(); }
     assert.equal((await first).status,'unknown');
-    const next=await setupCircleAgentWallet({agent,client:x.client,circle:x.circle,journal:await createCircleAgentJournal(dir),confirm:true});
+    const next=await setupCircleAgentWallet({agent,client:x.client,circle:x.circle,journal:await createCircleAgentJournal(dir,{identityDirectory:join(sandbox,'identities')}),confirm:true});
     assert.equal(next.status,'unknown');assert.equal(x.events.filter(x=>x==='send').length,1);
   } finally {await rm(sandbox,{recursive:true,force:true});}
 });

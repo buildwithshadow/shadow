@@ -110,6 +110,26 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
       if (JSON.stringify(previous) !== JSON.stringify(identity)) throw new Error('Circle journal root was replaced. Restore the original root or explicitly reconcile its full records and locks; do not reset its identity marker.');
     } finally { await saved.close(); }
   } finally { if (marker) await marker.close(); }
+  // Bind a wallet namespace to one root across every journal using this
+  // operator identity store. A fresh root must not create a fresh spend ledger.
+  const bindings = await requirePrivateState(join(parent, 'wallet-root-bindings'));
+  async function bindNamespace(key) {
+    if (typeof key !== 'string' || !key.length || key.length > 256) throw new Error('Invalid Circle wallet namespace.');
+    await requirePrivateState(bindings);
+    const path = join(bindings, createHash('sha256').update(key).digest('hex') + '.json');
+    const expected = Buffer.from(JSON.stringify({version: 1, namespace: key, journal: identity}));
+    let file;
+    try {
+      file = await open(path, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+      await file.writeFile(expected); await file.sync();
+      const folder = await open(bindings, constants.O_RDONLY | constants.O_DIRECTORY);
+      try { await folder.sync(); } finally { await folder.close(); }
+    } catch (error) {
+      if (error.code !== 'EEXIST') throw error;
+      const previous = await privateBytes(path);
+      if (!previous?.equals(expected)) throw new Error('Circle wallet namespace belongs to another journal root or has invalid binding state. Reconcile the original journal; do not switch roots or resend.');
+    } finally { await file?.close(); }
+  }
   const checkpointDirectory = await requirePrivateState(`${anchor}.records`);
   const worker = spawn(process.execPath, ['--input-type=module', '-e', WORKER, String(info.dev), String(info.ino), checkpointDirectory, token], {
     cwd: dir, stdio: ['pipe', 'pipe', 'ignore'],
@@ -151,6 +171,7 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
     get: key => call('get', filename(key)),
     put: (key, value) => call('put', filename(key), value),
     async withLock(key, action) {
+      await bindNamespace(key);
       const name = filename(key) + '.lock', token = randomUUID();
       try { await call('lock', name, { token, pid: process.pid, createdAt: new Date().toISOString() }); }
       catch (error) { if (error.code === 'EEXIST') throw new Error('Circle wallet journal is locked. Resolve any active or interrupted operator before continuing.'); throw error; }

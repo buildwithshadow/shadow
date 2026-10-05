@@ -10,10 +10,10 @@ test('an abrupt operator process death preserves its uncertain request and stale
   const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-journal-crash-')),dir=join(parent,'original'),restored=join(parent,'restored');
   try {
     const module=new URL('./circle-agent-journal.mjs',import.meta.url).href;
-    const child=spawnSync(process.execPath,['--input-type=module','-e',`import {createCircleAgentJournal} from ${JSON.stringify(module)};const j=await createCircleAgentJournal(process.argv[1]);await j.withLock('wallet',async()=>{await j.put('original-request',{status:'unknown',idempotencyKey:'original-key'});process.kill(process.pid,'SIGKILL');});`,dir]);
+    const child=spawnSync(process.execPath,['--input-type=module','-e',`import {createCircleAgentJournal} from ${JSON.stringify(module)};const j=await createCircleAgentJournal(process.argv[1],{identityDirectory:process.argv[2]});await j.withLock('wallet',async()=>{await j.put('original-request',{status:'unknown',idempotencyKey:'original-key'});process.kill(process.pid,'SIGKILL');});`,dir,join(parent,'identities')]);
     assert.equal(child.signal,'SIGKILL');
     await cp(dir,restored,{recursive:true});
-    const a=await createCircleAgentJournal(dir);
+    const a=await createCircleAgentJournal(dir,{identityDirectory:join(parent,'identities')});
     await assert.rejects(()=>createCircleAgentJournal(restored),/explicit reconciliation/);
     for(const j of [a]){
       assert.deepEqual(await j.get('original-request'),{status:'unknown',idempotencyKey:'original-key'});
@@ -149,4 +149,29 @@ test('identity checkpoints cannot share the journal rollback boundary', async ()
    assert.deepEqual(await readdir(dir),[], 'invalid configuration must not initialize identity state inside the root');
   }
  } finally {await rm(parent,{recursive:true,force:true});}
+});
+
+test('another fresh root cannot bypass an unresolved wallet operation', async () => {
+ const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-wallet-roots-'));
+ const options={identityDirectory:join(parent,'identities')};let a,b,c;
+ try {
+  a=await createCircleAgentJournal(join(parent,'original'),options);
+  b=await createCircleAgentJournal(join(parent,'fresh'),options);
+  await a.withLock('wallet-namespace',()=>a.put('wallet-namespace:active',{status:'unknown',idempotencyKey:'original'}));
+  await assert.rejects(()=>b.withLock('wallet-namespace',async()=>assert.fail('fresh root must not reach send')),/another journal root/);
+  await b.withLock('different-wallet',async()=>{});
+  c=await createCircleAgentJournal(join(parent,'original'),options);
+  await c.withLock('wallet-namespace',async()=>assert.deepEqual(await c.get('wallet-namespace:active'),{status:'unknown',idempotencyKey:'original'}));
+ } finally {a?.close();b?.close();c?.close();await rm(parent,{recursive:true,force:true});}
+});
+
+test('concurrent fresh roots cannot both claim the same wallet namespace',async()=>{
+ const parent=await mkdtemp(join(await realpath(tmpdir()),'shadow-wallet-root-race-'));
+ const options={identityDirectory:join(parent,'identities')};let a,b;
+ try{
+  a=await createCircleAgentJournal(join(parent,'a'),options);b=await createCircleAgentJournal(join(parent,'b'),options);
+  let calls=0;
+  const results=await Promise.allSettled([a.withLock('same-wallet',async()=>{calls++;}),b.withLock('same-wallet',async()=>{calls++;})]);
+  assert.equal(calls,1);assert.equal(results.filter(r=>r.status==='fulfilled').length,1);
+ }finally{a?.close();b?.close();await rm(parent,{recursive:true,force:true});}
 });
