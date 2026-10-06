@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { createPublicClient, createTestClient, createWalletClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getAddress, http, keccak256, stringToHex, toHex, zeroAddress, zeroHash, type Address, type Hex } from 'viem'
+import { TransactionReceiptNotFoundError, createPublicClient, createTestClient, createWalletClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getAddress, http, keccak256, stringToHex, toHex, zeroAddress, zeroHash, type Address, type Hex } from 'viem'
 // @ts-expect-error Existing shared JavaScript Anvil helpers have no declaration file.
 import { account, startAnvil, e2eSkip } from './float-mainnet-e2e.mjs'
 import {
@@ -71,7 +71,7 @@ function fixture() {
     },
     async simulateContract() { state.simulation++; if (state.simulationError) throw state.simulationError; return { result: undefined } },
     async getTransaction({ hash }: any) { const tx = state.transactions.get(hash); if (!tx) throw new Error('transaction not found'); return tx },
-    async getTransactionReceipt({ hash }: any) { const receipt = state.receipts.get(hash); if (!receipt) throw new Error('receipt not found'); return receipt },
+    async getTransactionReceipt({ hash }: any) { const receipt = state.receipts.get(hash); if (!receipt) throw new TransactionReceiptNotFoundError({ hash }); return receipt },
   } as unknown as CandidateReadClient
   const wallet = {
     async getChainId() { return state.walletChain },
@@ -86,13 +86,13 @@ function fixture() {
   } as unknown as CandidateWalletClient
   const session = { publicClient: client, walletClient: wallet, account: sponsor, journal }
   function mined(prepared: CandidatePrepared, overrides: any = {}) {
-    const transaction = { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: state.walletNonce, chainId: CANDIDATE_FUNDING.chainId, blockHash, blockNumber: state.block.number, ...overrides }
+    const transaction = { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: state.walletNonce, chainId: CANDIDATE_FUNDING.chainId, blockHash, blockNumber: state.block.number + 1n, ...overrides }
     const kind = prepared.kind
     const logs = kind === 'approve' ? [eventLog('Approval', { owner: sponsor, spender: CANDIDATE_FUNDING.address, value: prepared.amount }, true)]
       : kind === 'open' ? [eventLog('LineOpened', { lineId: prepared.lineId, sponsor, agent: prepared.agent, epoch: prepared.expectedEpoch, reserve: prepared.amount, termsVersion: 1n })]
       : kind === 'repay' ? [eventLog('Repaid', { lineId: prepared.lineId, payer: sponsor, amount: prepared.amount, principalRemaining: 0n })]
       : [eventLog(kind === 'close' ? 'LineClosed' : 'SponsorClaimed', { lineId: prepared.lineId, sponsor, amount: prepared.amount })]
-    const receipt = { status: 'success', transactionHash: transaction.hash, blockNumber: state.block.number, blockHash, logs }
+    const receipt = { status: 'success', transactionHash: transaction.hash, blockNumber: transaction.blockNumber, blockHash, logs }
     state.transactions.set(transaction.hash, transaction)
     state.receipts.set(transaction.hash, receipt)
     return { transaction, receipt }
@@ -280,6 +280,7 @@ test('equal-amount repayment from a different nonce cannot resolve the saved pay
 test('a mined different same-nonce transaction proves replacement, while orphaned receipts do not', async () => {
   const f = fixture(); const prepared = await prepareCandidateOpen(f.client, sponsor, input)
   await executeCandidateCall(f.session, prepared)
+  const original = f.mined(prepared); f.state.receipts.delete(txHash); original.transaction.blockHash = null; original.transaction.blockNumber = null
   const { receipt } = f.mined(prepared, { hash: otherHash, to: sponsor, input: '0x' })
   assert.equal((await reconcileCandidatePending(f.client, f.journal.load()!, otherHash)).status, 'replaced')
   receipt.blockHash = otherHash
@@ -468,7 +469,7 @@ test('an exact successful idempotent registration resolves without a repeated ad
     account: sponsor, kind: 'register', to: prepared.to, data: prepared.data, value: '0', amount: '0', lineId: null, agent: null,
     expectedEpoch: null, fromBlock: f.state.block.number.toString(), nonce: f.state.nonce, createdAt: new Date().toISOString(), status: 'pending', txHash }
   f.state.transactions.set(txHash, { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: pending.nonce, chainId: pending.chainId, blockHash })
-  f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber: f.state.block.number, blockHash, logs: [] })
+  f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber: f.state.block.number + 1n, blockHash, logs: [] })
   f.state.sponsorAllowed = true
   assert.equal((await kit.reconcileCandidatePending(f.client, pending)).status, 'confirmed')
   f.state.sponsorAllowed = false
@@ -481,3 +482,126 @@ test('pasted funding line and wallet whitespace is normalized before contract re
   assert.equal((await readCandidateLine(f.client, `  ${lineId}\n`)).lineId, lineId)
   assert.equal((await prepareCandidateOpen(f.client, ` ${sponsor} `, { ...input, agent: ` ${input.agent} ` })).account, sponsor)
 })
+
+test('the wallet-returned exact transaction can confirm at a reassigned nonce', async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:8});return txHash;};
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'confirmed');
+ assert.equal(f.journal.load(),null);assert.equal(f.state.sends,1);
+});
+
+test('an unrelated consumed proposed nonce cannot release a reassigned pending wallet transaction', async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ await executeCandidateCall(f.session,prepared);
+ const original=f.mined(prepared,{nonce:8});f.state.receipts.delete(txHash);
+ original.transaction.blockHash=null;original.transaction.blockNumber=null;
+ f.mined(prepared,{hash:otherHash,nonce:7,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash)).status,'unknown');
+ assert.ok(f.journal.load());assert.equal(f.state.sends,1);
+});
+
+test('hashless sends cannot be cancelled by proving only the proposed nonce was used', async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{throw new Error('lost response');};await executeCandidateCall(f.session,prepared);
+ f.mined(prepared,{hash:otherHash,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash)).status,'unknown');
+ assert.ok(f.journal.load());
+});
+
+test('a verified adjusted nonce survives dropped-original cancellation recovery',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{const original=f.mined(prepared,{nonce:8});original.transaction.blockHash=null;original.transaction.blockNumber=null;f.state.receipts.delete(txHash);return txHash;};
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,8);
+ f.state.transactions.delete(txHash);
+ f.mined(prepared,{hash:otherHash,nonce:8,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'replaced');
+ assert.equal(f.state.sends,1);
+});
+
+test('an older identical wallet hash cannot poison recovery of the current action',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const old=f.mined(prepared,{nonce:6,blockNumber:99n});
+   old.receipt.blockNumber=99n;
+   return txHash;
+ };
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+ f.mined(prepared,{hash:otherHash,nonce:8});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'confirmed');
+ assert.equal(f.journal.load()!.actualNonce,8);
+ assert.equal(f.journal.load()!.txHash,otherHash);
+ assert.equal(f.state.sends,1);
+});
+
+test('an unrelated transaction cannot clear a record with an older identical original hash',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const old=f.mined(prepared,{nonce:6,blockNumber:99n});old.receipt.blockNumber=99n;return txHash;
+ };
+ await executeCandidateCall(f.session,prepared);
+ f.mined(prepared,{hash:otherHash,nonce:6,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+});
+
+test('an identical transaction in the sampled boundary block is historical',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:6,blockNumber:100n});return txHash;};
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+ assert.equal(f.state.sends,1);
+});
+
+test('a pasted current pending hash preserves its nonce after an old wallet hash',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:6,blockNumber:99n});return txHash;};
+ await executeCandidateCall(f.session,prepared);
+ f.mined(prepared,{hash:otherHash,nonce:8,blockHash:null,blockNumber:null});
+ f.state.receipts.delete(otherHash);
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,8);assert.equal(f.journal.load()!.txHash,otherHash);
+ f.state.transactions.delete(otherHash);
+ const cancellation='0x'+'cc'.repeat(32) as typeof txHash;
+ f.mined(prepared,{hash:cancellation,nonce:8,to:sponsor,input:'0x'});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,cancellation,f.journal)).status,'replaced');
+ assert.equal(f.state.sends,1);
+});
+
+test('an inconsistent pending transaction response cannot poison the recovered hash or nonce',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{f.mined(prepared,{nonce:6,blockNumber:99n});return txHash;};
+ await executeCandidateCall(f.session,prepared);
+ const current=f.mined(prepared,{hash:otherHash,nonce:8,blockHash:null,blockNumber:null});
+ current.transaction.hash='0x'+'cc'.repeat(32);f.state.receipts.delete(otherHash);
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);assert.equal(f.journal.load()!.txHash,txHash);
+ current.transaction.hash=otherHash;
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,8);assert.equal(f.journal.load()!.txHash,otherHash);
+});
+
+test('a historical receipt overrides a backend that labels the original pending',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const old=f.mined(prepared,{nonce:6,blockNumber:99n});
+   old.transaction.blockNumber=null;old.transaction.blockHash=null;return txHash;
+ };
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+ f.mined(prepared,{hash:otherHash,nonce:8});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'confirmed');
+ assert.equal(f.journal.load()!.actualNonce,8);
+});
+
+test('a receipt transport failure cannot be treated as evidence of a pending original',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const original=f.mined(prepared,{nonce:8,blockNumber:null,blockHash:null});
+   f.state.receipts.delete(txHash);return txHash;
+ };
+ const client={...f.client,getTransactionReceipt:async()=>{throw Error('RPC timeout');}};
+ assert.equal((await executeCandidateCall({...f.session,publicClient:client},prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+});
