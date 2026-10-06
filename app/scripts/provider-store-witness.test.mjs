@@ -162,3 +162,21 @@ test('unsupported Windows migration refuses before creating any witness director
     assert.equal(existsSync(witnessDir), false);
   } finally { Object.defineProperty(process, 'platform', descriptor); }
 }));
+
+
+test('symlinked witness ancestors refuse before creating an incomplete directory', () => fixture(({ options, root, storeDir }) => {
+  storeOnce(join(storeDir, `${digest}.acceptance.json`), { digest });
+  const snapshot = captureStoreSnapshot(options), approvedSnapshotSha256 = fingerprint(snapshot);
+  const parent = join(root, 'real-parent'), alias = join(root, 'parent-alias');
+  mkdirSync(parent); symlinkSync(parent, alias);
+  const target = join(parent, 'witness');
+  assert.throws(() => initializeStoreWitness({ ...options, witnessDir: join(alias, 'witness'), snapshot, approvedSnapshotSha256 }), /witness parent/);
+  assert.equal(existsSync(target), false);
+}));
+
+test('fresh server witness refuses symlinked ancestors without writing there', () => fixture(({ options, root }) => {
+  const parent = join(root, 'real-parent'), alias = join(root, 'parent-alias');
+  mkdirSync(parent); symlinkSync(parent, alias);
+  assert.throws(() => createStoreWitness({ ...options, witnessDir: join(alias, 'witness') }), ProviderStoreHold);
+  assert.equal(existsSync(join(parent, 'witness')), false);
+}));

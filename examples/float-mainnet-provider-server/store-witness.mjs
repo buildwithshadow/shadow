@@ -27,6 +27,7 @@ export function createStoreWitness({ storeDir, witnessDir, identity, storeOnce, 
     }
   };
   assertDirectory(store);
+  assertDirectory(dirname(witness));
   if (!existsSync(witness)) {
     if (readOnly) throw new ProviderStoreHold("recovery mode requires an existing witness");
     if (readdirSync(store).some(name => name.endsWith('.json'))) {
@@ -129,6 +130,9 @@ export function initializeStoreWitness({ storeDir, witnessDir, identity, snapsho
     }
   };
   verify();
+  if (realpathSync(dirname(witness)) !== dirname(witness) || !lstatSync(dirname(witness)).isDirectory()) {
+    throw new ProviderStoreHold('noncanonical witness parent');
+  }
   // Exclusive creation. Any interrupted initialization stays visibly incomplete
   // and refuses retry; an operator must reconcile it, never reset it silently.
   mkdirSync(witness, { mode: 0o700 });
