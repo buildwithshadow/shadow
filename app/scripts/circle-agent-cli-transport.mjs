@@ -1,8 +1,9 @@
+import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { createHash } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { freezeCircleCliSource } from './circle-agent-cli-runtime.mjs';
 import { getAddress } from 'viem';
 import abi from './float-mainnet-abi.json' with { type: 'json' };
@@ -48,8 +49,9 @@ export async function createCircleCliTransport({ entrypoint, agent, journal, run
 export function createCircleCliDriver({ entrypoint, compatibility, agent, journal, run = runFile }) {
   const address = getAddress(agent);
   async function command(args, raw = false) {
+    const environment = circleCliEnvironment();
     try {
-      const { stdout } = await run(process.execPath, [raw ? compatibility : entrypoint, ...args, '--output', 'json'], { encoding: 'utf8', timeout: 150_000, maxBuffer: 2_000_000 });
+      const { stdout } = await run(process.execPath, [raw ? compatibility : entrypoint, ...args, '--output', 'json'], { env: environment, cwd: dirname(raw ? compatibility : entrypoint), encoding: 'utf8', timeout: 150_000, maxBuffer: 2_000_000 });
       return unwrapCircle(JSON.parse(stdout));
     } catch {
       // Child-process errors can contain signatures or session details; never echo them.

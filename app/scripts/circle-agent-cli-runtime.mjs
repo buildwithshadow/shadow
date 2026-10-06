@@ -4,18 +4,20 @@ import { createHash } from 'node:crypto';
 import { createRequire, isBuiltin } from 'node:module';
 import { requirePrivateState } from './circle-agent-private-state.mjs';
 
+import approval from './circle-cli-dependency-approval.json' with { type: 'json' };
+export const APPROVED_CIRCLE_DEPENDENCY_DIGEST = approval.runtimes?.find(record=>record.platform===process.platform && record.arch===process.arch)?.dependencyDigest;
+
 const hashBytes = value => createHash('sha256').update(value).digest('hex');
 const packageName = name => /^(?:@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/.test(name) && name !== '.' && name !== '..';
 
 // Callers verify vendor entrypoint bytes first. Snapshot the full resolved
 // dependency closure into private state: no executable dependency points back
 // to a mutable installation. This freezes supplied bytes, not an audit of them.
-export async function freezeCircleCliSource(source, originalEntrypoint, runtimeDirectory) {
-  if (!runtimeDirectory) throw new Error('An owner-controlled writable Circle runtime directory is required.');
-  const original = resolve(originalEntrypoint), root = await requirePrivateState(runtimeDirectory);
+async function snapshotCircleCliSource(source, originalEntrypoint) {
+  const original = resolve(originalEntrypoint);
   const metadata = JSON.parse(await readFile(join(dirname(original),'..','package.json'),'utf8'));
   if (metadata.version !== '1.1.4' || metadata.type !== 'module') throw new Error('Unexpected Circle runtime package metadata.');
-  const packages = new Map(); let byteCount = 0;
+  const packages = new Map(), packageRoots = new Map(); let byteCount = 0;
   async function dependenciesFor(pkg, entrypoint) {
     const links = [], lookup = createRequire(entrypoint);
     const required = pkg.dependencies ?? {};
@@ -35,9 +37,11 @@ export async function freezeCircleCliSource(source, originalEntrypoint, runtimeD
         if (name in required && !(name in (pkg.optionalDependencies ?? {}))) throw new Error(`Circle dependency package identity unavailable: ${name}.`);
         continue;
       }
-      const id = hashBytes(packageRoot);
+      const known = packageRoots.get(packageRoot);
+      const id = known ?? `package-${String(packageRoots.size).padStart(6,'0')}`;
       links.push([name,id]);
-      if (packages.has(id)) continue;
+      if (known !== undefined) continue;
+      packageRoots.set(packageRoot,id);
       const identity = JSON.parse(await readFile(join(packageRoot,'package.json'),'utf8'));
       const record = {id, files:[], links:[]}; packages.set(id,record);
       async function walk(path, prefix = '') {
@@ -60,15 +64,35 @@ export async function freezeCircleCliSource(source, originalEntrypoint, runtimeD
   const topLinks = await dependenciesFor(metadata,original);
   const files = [{path:'dist/index.js',bytes:Buffer.from(source)}, {path:'package.json',bytes:Buffer.from(JSON.stringify(metadata))}];
   const links = topLinks.map(([name,id]) => ({path:`node_modules/${name}`, target:relative(dirname(`node_modules/${name}`),`packages/${id}`)}));
-  for (const record of [...packages.values()].sort((a,b)=>a.id.localeCompare(b.id))) {
+  for (const record of [...packages.values()].sort((a,b)=>a.id<b.id?-1:a.id>b.id?1:0)) {
     for (const file of record.files) files.push({path:`packages/${record.id}/${file.path}`,bytes:file.bytes});
     for (const [name,id] of record.links) {
       const path = `packages/${record.id}/node_modules/${name}`;
       links.push({path,target:relative(dirname(path),`packages/${id}`)});
     }
   }
-  files.sort((a,b)=>a.path.localeCompare(b.path)); links.sort((a,b)=>a.path.localeCompare(b.path));
+  files.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0); links.sort((a,b)=>a.path<b.path?-1:a.path>b.path?1:0);
   const manifest = JSON.stringify({files:files.map(f=>[f.path,hashBytes(f.bytes)]),links});
+  const dependencyManifest = JSON.stringify({files:files.filter(f=>f.path!=='dist/index.js').map(f=>[f.path,hashBytes(f.bytes)]),links});
+  return {files,links,manifest,dependencyManifest,dependencyDigest:hashBytes(dependencyManifest)};
+}
+
+// Read only inspection returns no executable cache. Approving this digest is
+// a separate maintainer action; it must not be inferred from the live install.
+export async function inspectCircleCliDependencies(originalEntrypoint) {
+  const source = await readFile(resolve(originalEntrypoint),'utf8');
+  const snapshot = await snapshotCircleCliSource(source,originalEntrypoint);
+  return {dependencyDigest:snapshot.dependencyDigest,manifest:JSON.parse(snapshot.dependencyManifest)};
+}
+
+export async function freezeCircleCliSource(source, originalEntrypoint, runtimeDirectory, {approvedDependencyDigest = APPROVED_CIRCLE_DEPENDENCY_DIGEST} = {}) {
+  if (!runtimeDirectory) throw new Error('An owner-controlled writable Circle runtime directory is required.');
+  const snapshot = await snapshotCircleCliSource(source,originalEntrypoint);
+  if (!/^[a-f0-9]{64}$/.test(approvedDependencyDigest ?? '') || snapshot.dependencyDigest !== approvedDependencyDigest) {
+    throw new Error('Circle dependency closure differs from the approved manifest. Do not approve the live installation implicitly.');
+  }
+  const root = await requirePrivateState(runtimeDirectory);
+  const {files,links,manifest} = snapshot;
   const directory = join(root,`verified-${hashBytes(manifest)}`);
   async function validate() {
     const expected = new Map(files.map(f=>[f.path,f]));

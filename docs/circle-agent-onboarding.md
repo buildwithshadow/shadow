@@ -15,14 +15,35 @@ pnpm --dir app install --frozen-lockfile
 Install the tested Circle runtime in a dedicated directory, separate from any global CLI:
 
 ```sh
-npm install --prefix "$HOME/.local/share/shadow/circle-runtime" --ignore-scripts @circle-fin/cli@1.1.4
+shadow_runtime="$HOME/.local/share/shadow/circle-runtime"
+mkdir -p "$shadow_runtime"
+cp tooling/circle-cli-runtime/package.json tooling/circle-cli-runtime/package-lock.json "$shadow_runtime/"
+npm ci --prefix "$shadow_runtime" --ignore-scripts
 ```
 
-Log in using Circle's command in your own terminal. Review Circle's first-use terms and enter the newest OTP yourself. Never paste it into a chat, Shadow, or a log:
+For an existing runtime or unresolved operation, preserve the old installation and journal. Prepare a new directory and pass its path with `--runtime`; do not run `npm ci` inside an active installation.
+
+Check the saved session first with `node app/scripts/circle-cli-verified.mjs wallet status --type agent --output json`. Reuse a valid session; do not request another OTP unnecessarily.
+
+If Circle reports that terms acceptance is required, show the current vendor response:
 
 ```sh
-node "$HOME/.local/share/shadow/circle-runtime/node_modules/@circle-fin/cli/dist/index.js" wallet login you@example.com --testnet
-node "$HOME/.local/share/shadow/circle-runtime/node_modules/@circle-fin/cli/dist/index.js" wallet list --type agent --chain ARC-TESTNET --output json
+node app/scripts/circle-cli-verified.mjs terms show --init --output json
+```
+
+Review the live `termsOfUseUrl`, `privacyPolicyUrl` and `termsNotice` returned by that command. Only if you accept them, run this yourself:
+
+```sh
+node app/scripts/circle-cli-verified.mjs terms accept --confirm-terms --output json
+```
+
+The launcher requires your explicit confirmation flag. It does not accept automatically, forward `CIRCLE_ACCEPT_TERMS`, or reset prior acceptance. An assistant must obtain your explicit consent before recording acceptance. See [Circle's terms gate](https://github.com/circlefin/skills/blob/master/plugins/circle/skills/use-agent-wallet/references/terms-of-use.md).
+
+Log in using the verified launcher in your own terminal. Review Circle's first-use terms and enter the newest OTP yourself. Never paste it into a chat, Shadow, or a log:
+
+```sh
+node app/scripts/circle-cli-verified.mjs wallet login you@example.com --testnet
+node app/scripts/circle-cli-verified.mjs wallet list --type agent --chain ARC-TESTNET --output json
 ```
 
 If you already have a valid testnet Circle session, skip login. Do not repeatedly request OTPs. Testnet and mainnet sessions are separate.
@@ -85,6 +106,10 @@ State defaults to `~/.local/share/shadow/agent-testnet`. Keep it private: purcha
 ## Circle CLI compatibility
 
 Circle CLI 1.1.4 does not expose the raw-calldata option needed for Shadow's tuple call. Shadow checks the SHA-256 of the tested release and writes a separate, narrowly scoped compatibility copy inside the dedicated runtime. The original CLI file is unchanged. Authentication, Circle policies and version checks are preserved. This is **Shadow compatibility code, not an official Circle browser integration**.
+
+The launcher validates the vendor entrypoint and the complete dependency closure before authentication. The committed approval contains separate reference digests for macOS ARM64 and Linux x64, produced from the exact lockfile with install scripts disabled. Installation paths do not affect the digest. Changed dependency bytes or metadata are refused before a new executable cache is created. Inspection does not approve an installation; a different platform or supplier update needs a maintainer review and a new committed approval.
+
+Authentication and inspection run from the frozen directory with a restricted environment. Remove `NODE_OPTIONS`, `NODE_PATH` and `CIRCLE_PROXY_URL` before use. Native keyring variables and an absolute `CIRCLE_CLI_HOME` remain supported. The verified launcher accepts explicit terms consent, login and inspection only; use the bounded Shadow runner for signatures and transactions. The byte approval is not a vulnerability audit.
 
 An unknown CLI source/version is refused. Do not bypass the hash check or a required Circle update. A supported-version change needs a new compatibility review. A failed command does not imply a transaction failed; use recovery.
 
