@@ -3,6 +3,7 @@ import { test } from "node:test";
 import { keccak256, toHex, hashTypedData, createWalletClient, custom, defineChain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
+import { assertPurchaseResolved } from "../src/gatewayFundingGuard.ts";
 const agent = privateKeyToAccount(`0x${"11".repeat(32)}`),
   provider = privateKeyToAccount(`0x${"22".repeat(32)}`);
 const contract = `0x${"33".repeat(20)}`,
@@ -43,6 +44,8 @@ function setup({mainnet=false,providerCode='0x',bindingVersion=2n}={}) {
     status = 0,
     receiptTamper = false;
   const storage = {
+    get length() { return data.size; },
+    key: index => [...data.keys()][index] ?? null,
     getItem: (k) => data.get(k) ?? null,
     setItem: (k, v) => data.set(k, v),
     removeItem: (k) => data.delete(k),
@@ -167,6 +170,24 @@ test('an unrelated funding hold blocks signing but permits read only recovery an
  h.advance(2000n);await flow.archive();assert.equal(flow.load(),null);
  assert.deepEqual(h.counts(),before);
  await assert.rejects(flow.prepare(lineId,'another'),/unresolved funding/);
+});
+
+test('a conflicting deployment appearing after review blocks signing without blocking the current intent',async()=>{
+ const h=setup();
+ const lock=async(key,work,operation)=>{
+   if(operation!=='recover' && operation!=='archive')assertPurchaseResolved(agent.address,h.storage,5042002,key);
+   return work();
+ };
+ const flow=h.create(lock),otherKey=`shadow.public-purchase.v1:5042002:0x${'aa'.repeat(20)}:${agent.address}`;
+ h.data.set(otherKey,JSON.stringify({stage:'submitted'}));
+ await assert.rejects(flow.prepare(lineId,'cross-route'),/earlier purchase/);
+ assert.deepEqual(h.counts(),{sends:0,signs:0});
+ h.data.delete(otherKey);await flow.prepare(lineId,'cross-route');
+ h.data.set(otherKey,JSON.stringify({stage:'submitted'}));
+ await assert.rejects(flow.submit(),/earlier purchase/);
+ assert.deepEqual(h.counts(),{sends:0,signs:0});
+ h.data.delete(otherKey);await flow.submit();
+ assert.deepEqual(h.counts(),{sends:1,signs:1});
 });
 test("altered signing payload or changed wallet is rejected before signing", async () => {
   const h = setup(),

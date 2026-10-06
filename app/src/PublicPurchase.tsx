@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
 import { candidateErrorMessage, candidateChainFor, type CandidateDeployment } from './candidateFunding';
-import { assertGatewayFundingResolved, assertCandidateFundingResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
+import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPurchaseResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
 import { createSelfServicePurchase, createGuardedMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string; requestKind?: 'arc-wallet' }
@@ -31,6 +31,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         if (operation !== 'recover' && operation !== 'archive') {
           assertCandidateFundingResolved(account, window.localStorage, deployment.chainId);
           if (!mainnet) assertGatewayFundingResolved(account);
+          assertPurchaseResolved(account, window.localStorage, deployment.chainId, key);
         }
         return navigator.locks.request(key, {ifAvailable:true}, async purchaseLock => {
           if (!purchaseLock) throw new Error('Another tab is using this purchase.');
