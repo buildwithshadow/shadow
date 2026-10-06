@@ -1,0 +1,7 @@
+{
+  "name": "shadow-circle-cli-runtime",
+  "private": true,
+  "dependencies": {
+    "@circle-fin/cli": "1.1.4"
+  }
+}

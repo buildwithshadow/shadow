@@ -1,0 +1,20 @@
+{
+  "schema": 1,
+  "circleVersion": "1.1.4",
+  "lockfileSha256": "0252017a24812ba3c1f23694815dc8b46bb20856a48c59869038f8d07c5fc803",
+  "cliEntrypointSha256": "89f8610b586ca929c3419779405b59618c60be10836bc4428d21c75a7c18f6a4",
+  "approvedInput": "tooling/circle-cli-runtime/package-lock.json",
+  "install": "npm ci --ignore-scripts",
+  "runtimes": [
+    {
+      "platform": "darwin",
+      "arch": "arm64",
+      "dependencyDigest": "a82eccf20d8b7cf86912c655b7103f95529daec8ae88f0e9708870eb04e64d79"
+    },
+    {
+      "platform": "linux",
+      "arch": "x64",
+      "dependencyDigest": "7b53aab087ba19d38234296cc165b5a4e0d2ae703283f926949153456e332103"
+    }
+  ]
+}

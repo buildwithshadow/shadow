@@ -1,7 +1,8 @@
+import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { dirname, resolve } from 'node:path';
 import { freezeCircleCliSource } from './circle-agent-cli-runtime.mjs';
 import { createHash } from 'node:crypto';
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress } from 'viem';
@@ -32,9 +33,10 @@ export function createCircleGuardedCliDriver({ entrypoint, agent, contract, maxA
   must(typeof entrypoint === 'string' && entrypoint.length > 0, 'Circle runtime is required.');
   must(journal && typeof journal.get === 'function' && typeof journal.put === 'function', 'Durable response journal is required.');
   async function command(args) {
+    const environment = circleCliEnvironment();
     try {
       const { stdout } = await run(process.execPath, [entrypoint, ...args, '--output', 'json'], {
-        encoding: 'utf8', timeout: 150_000, maxBuffer: 2_000_000,
+        env: environment, cwd: dirname(entrypoint), encoding: 'utf8', timeout: 150_000, maxBuffer: 2_000_000,
       });
       return unwrapCircle(JSON.parse(stdout));
     } catch {
