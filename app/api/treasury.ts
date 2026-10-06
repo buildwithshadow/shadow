@@ -17,7 +17,8 @@ import {
   readHistoricalProofInput,
   transactionInputContainsAddress,
 } from "../leptonM1Config.js";
-import { cachedHistoricalRead, readBeforeDeadline } from "../historicalReads.js";
+import { cachedHistoricalRead, readBeforeDeadline, readExplorerLogPages } from "../historicalReads.js";
+import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
 
 export const config = { maxDuration: 20 };
 const TREASURY_READ_BUDGET_MS = 18_000;
@@ -650,9 +651,15 @@ function explorerTransaction(txHash: `0x${string}`, budget: ReadBudget) {
 function explorerLogs(txHash: `0x${string}`, budget: ReadBudget) {
   const key = txHash.toLowerCase();
   return readBeforeDeadline(() => cachedHistoricalRead<any[]>(explorerLogsCache, key, () =>
-    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`, budget).then((body) =>
-      Array.isArray(body?.items) ? body.items : [],
-    ),
+    readExplorerLogPages({
+      url: `${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`,
+      deadlineAt: Math.min(budget.deadlineAt, Date.now() + 8_000),
+      maxPages: 20,
+      fetchPage: (url, init) => fetchBlockscoutExplorer(String(url), { ...init, signal: AbortSignal.any([init!.signal!, budget.signal]) }, { chainId: CHAIN_ID }),
+    }).then(({ items, warnings }) => {
+      if (warnings.length) throw new Error("Treasury explorer log history is incomplete");
+      return items;
+    }),
   ), budget.deadlineAt, "Treasury explorer deadline exceeded");
 }
 
@@ -663,7 +670,10 @@ function explorerTransfers(tx: any): any[] {
 async function fetchJson(url: string, budget: ReadBudget) {
   return readBeforeDeadline(async (signal) => {
     budget.signal.throwIfAborted();
-    const response = await fetch(url, { signal: AbortSignal.any([signal, budget.signal]) });
+    const requestOptions = { signal: AbortSignal.any([signal, budget.signal]) };
+    const response = url.startsWith(`${DEFAULT_EXPLORER_API}/`)
+      ? await fetchBlockscoutExplorer(url, requestOptions, { chainId: CHAIN_ID })
+      : await fetch(url, requestOptions);
     const text = await response.text();
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
     return JSON.parse(text);
