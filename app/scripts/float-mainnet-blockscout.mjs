@@ -49,8 +49,13 @@ export async function blockscoutBlock({ chainId, blockNumber, env = process.env,
   };
   const session = await call("unlock_blockchain_analysis", {});
   const sessionId = session?.data?.session_id;
-  if (typeof sessionId !== "string" || !sessionId) throw new Error("Blockscout session initialization failed");
-  const result = await call("get_block_info", { chain_id: chainId, number_or_hash: blockNumber, session_id: sessionId });
+  if (!session?.data || typeof session.data !== "object" || Array.isArray(session.data)
+    || (sessionId !== undefined && sessionId !== null && (typeof sessionId !== "string" || !sessionId))) {
+    throw new Error("Blockscout session initialization failed");
+  }
+  const params = { chain_id: chainId, number_or_hash: blockNumber };
+  if (sessionId) params.session_id = sessionId;
+  const result = await call("get_block_info", params);
   const block = result?.data?.block_details;
   if (String(block?.height) !== String(blockNumber) || !/^0x[0-9a-fA-F]{64}$/.test(block?.hash ?? "")) {
     throw new Error("Blockscout returned a malformed or different block");

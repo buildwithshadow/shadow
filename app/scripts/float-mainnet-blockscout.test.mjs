@@ -38,6 +38,15 @@ test("wrong block, invalid hash and missing initialization are refused", async (
   await assert.rejects(blockscoutBlock({ chainId: 5042, blockNumber: 1, env, fetchImpl: async () => response({}) }), /initialization failed/);
 });
 
+test("authenticated deployments may initialize without issuing a session ID", async () => {
+  const block = await blockscoutBlock({ chainId: 5042, blockNumber: 23761925, env, fetchImpl: async url => {
+    if (url.pathname.includes("unlock")) return response({ data: { server_version: "test" } });
+    assert.equal(url.searchParams.has("session_id"), false);
+    return response(fixture);
+  }});
+  assert.equal(block.hash, hash);
+});
+
 test("4xx is not retried and upstream response bodies and transport exceptions cannot leak credentials", async () => {
   for (const status of [401, 403, 404, 429]) {
     let calls = 0;
