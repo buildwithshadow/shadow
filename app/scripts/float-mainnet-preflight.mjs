@@ -19,6 +19,7 @@ import {
 } from "viem";
 import { createRpcReadQueue } from "./rpc-read-queue.mjs";
 import { sourcifyAvailability } from "./float-mainnet-sourcify.mjs";
+import { blockscoutBlock } from "./float-mainnet-blockscout.mjs";
 
 const repoRoot = fileURLToPath(new URL("../../", import.meta.url));
 export const contractsRoot = resolve(repoRoot, "contracts");
@@ -134,10 +135,13 @@ export function parseConfig(env, { requireDeployer = false } = {}) {
     expectedDeployer: address("FLOAT_MAINNET_EXPECTED_DEPLOYER", requireDeployer),
     rpcUrls: [url("ARC_RPC_URL"), url("ARC_RPC_URL_2")],
     explorerUrl: url("ARC_EXPLORER_URL"),
+    explorerDataRoute: env.ARC_EXPLORER_DATA_ROUTE?.trim() || "legacy",
     verificationRoute: env.FLOAT_MAINNET_VERIFICATION_ROUTE?.trim() || "explorer",
   };
 
   if (!["explorer", "sourcify"].includes(config.verificationRoute)) errors.push("FLOAT_MAINNET_VERIFICATION_ROUTE must be explorer or sourcify");
+  if (!["legacy", "blockscout"].includes(config.explorerDataRoute)) errors.push("ARC_EXPLORER_DATA_ROUTE must be legacy or blockscout");
+  if (config.explorerDataRoute === "blockscout" && ![5042n, 5042002n].includes(config.expectedChainId)) errors.push("Blockscout data route requires Arc mainnet or testnet");
   if (config.verificationRoute === "sourcify" && ![5042n, 5042002n].includes(config.expectedChainId)) errors.push("Sourcify verification route requires Arc mainnet or testnet");
 
   if (config.expectedChainId === 0n) errors.push("FLOAT_MAINNET_EXPECTED_CHAIN_ID must be nonzero");
@@ -353,6 +357,7 @@ async function main() {
       expectedDeployer: config.expectedDeployer,
       rpcs: config.rpcUrls.map((url) => url && redactUrl(url)),
       explorer: config.explorerUrl && redactUrl(config.explorerUrl),
+      explorerDataRoute: config.explorerDataRoute,
       verificationRoute: config.verificationRoute,
     },
   };
@@ -432,6 +437,17 @@ async function main() {
     );
   }
 
+  if (config.explorerDataRoute === "blockscout") {
+    try {
+      if (commonHeight === null) throw new Error("Independent RPC agreement is required before explorer comparison");
+      const block = await blockscoutBlock({ chainId: config.expectedChainId, blockNumber: commonHeight });
+      report.explorer = { route: "blockscout-mcp", blockHash: block.hash, blockNumber: block.height };
+      pass(`explorer indexes the same chain (block ${commonHeight})`, block.hash === blockHashes[0], `${block.hash} vs ${blockHashes[0]}`);
+    } catch (error) {
+      pass("Blockscout explorer data reachable and consistent", false, errorMessage(error));
+    }
+  }
+
   if (config.verificationRoute === "sourcify") {
     try {
       report.verification = await sourcifyAvailability(config.expectedChainId);
@@ -442,10 +458,14 @@ async function main() {
     }
   } else if (config.explorerUrl) {
     try {
-      const landing = await fetch(config.explorerUrl, { redirect: "follow", signal: AbortSignal.timeout(20_000) });
-      report.explorer = { requested: redactUrl(config.explorerUrl), resolved: redactUrl(landing.url), status: landing.status };
-      pass("explorer reachable", landing.ok, `HTTP ${landing.status} at ${redactUrl(landing.url)}`);
-      if (commonHeight !== null) {
+      const landing = config.explorerDataRoute === "legacy"
+        ? await fetch(config.explorerUrl, { redirect: "follow", signal: AbortSignal.timeout(20_000) })
+        : { url: config.explorerUrl };
+      if (config.explorerDataRoute === "legacy") {
+        report.explorer = { requested: redactUrl(config.explorerUrl), resolved: redactUrl(landing.url), status: landing.status };
+        pass("explorer reachable", landing.ok, `HTTP ${landing.status} at ${redactUrl(landing.url)}`);
+      }
+      if (config.explorerDataRoute === "legacy" && commonHeight !== null) {
         const block = await fetchJson(new URL(`/api/v2/blocks/${commonHeight}`, landing.url));
         report.explorer.blockHash = block.hash;
         pass(`explorer indexes the same chain (block ${commonHeight})`, block.hash === blockHashes[0], `${block.hash} vs ${blockHashes[0]}`);
