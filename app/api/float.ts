@@ -34,6 +34,7 @@ import {
 import { createRpcReadQueue } from "../scripts/rpc-read-queue.mjs";
 import { buildFloatV2OperationalHealth } from "../floatV2Operations.js";
 import { readBeforeDeadline, readExplorerLogPages } from "../historicalReads.js";
+import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
 
 export const config = { maxDuration: 20 };
 
@@ -1468,6 +1469,7 @@ async function readFloatLogsFromExplorer(address: Address, deadlineAt: number) {
     url: `${EXPLORER_API}/addresses/${address}/logs`,
     deadlineAt,
     maxPages: EXPLORER_MAX_PAGES,
+    fetchPage: (url, init) => fetchBlockscoutExplorer(String(url), init, { chainId: ARC_CHAIN_ID }),
   });
   for (const item of items) {
     try {

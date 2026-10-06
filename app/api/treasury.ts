@@ -18,6 +18,7 @@ import {
   transactionInputContainsAddress,
 } from "../leptonM1Config.js";
 import { cachedHistoricalRead, readBeforeDeadline } from "../historicalReads.js";
+import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
 
 export const config = { maxDuration: 20 };
 const TREASURY_READ_BUDGET_MS = 18_000;
@@ -663,7 +664,10 @@ function explorerTransfers(tx: any): any[] {
 async function fetchJson(url: string, budget: ReadBudget) {
   return readBeforeDeadline(async (signal) => {
     budget.signal.throwIfAborted();
-    const response = await fetch(url, { signal: AbortSignal.any([signal, budget.signal]) });
+    const requestOptions = { signal: AbortSignal.any([signal, budget.signal]) };
+    const response = url.startsWith(`${DEFAULT_EXPLORER_API}/`)
+      ? await fetchBlockscoutExplorer(url, requestOptions, { chainId: CHAIN_ID })
+      : await fetch(url, requestOptions);
     const text = await response.text();
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${text.slice(0, 200)}`);
     return JSON.parse(text);

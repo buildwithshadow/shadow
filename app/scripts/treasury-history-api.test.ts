@@ -10,6 +10,7 @@ async function withTreasury(t: TestContext, mode: ReadScenario, action: (state: 
   const originalFetch = globalThis.fetch;
   const scenarioId = ["slow-proof", "slow-verification", "slow-configured", "slow-canonical"].indexOf(mode);
   const env = {
+    BLOCKSCOUT_PRO_API_KEY: "proapi_test_only",
     ARC_RPC_URL: "https://configured.example.test",
     ARC_PUBLIC_RPC_URL: "https://canonical.example.test",
     TREASURY_VERIFY_FLOAT_API_URL: "https://float.example.test/api/float",
@@ -66,9 +67,10 @@ async function withTreasury(t: TestContext, mode: ReadScenario, action: (state: 
     }
     calls.push({ url, at: Date.now() });
     if (url === env.TREASURY_VERIFY_FLOAT_API_URL) return Response.json({ receipts: [] });
-    if (url.startsWith("https://testnet.arcscan.app/api/v2/transactions/")) {
+    if (url.startsWith("https://mcp.blockscout.com/v1/unlock_blockchain_analysis")) return Response.json({ data: {} });
+    if (url.startsWith("https://mcp.blockscout.com/v1/direct_api_call")) {
       if (mode === "slow-verification") return neverRespond(init!.signal!);
-      return Response.json(url.endsWith("/logs") ? { items: [] } : { status: "ok", token_transfers: [] });
+      return Response.json({ data: new URL(url).searchParams.get("endpoint_path")?.endsWith("/logs") ? { items: [] } : { status: "ok", token_transfers: [] } });
     }
     throw new Error(`Unexpected network request ${url}`);
   };

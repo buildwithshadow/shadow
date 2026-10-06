@@ -5,6 +5,9 @@ on:
     paths:
       - ".github/workflows/float-self-serve.yml"
       - "app/api/float.ts"
+      - "app/api/explorer.ts"
+      - "app/blockscoutExplorer.*"
+      - "app/scripts/blockscout-explorer-web.test.ts"
       - "app/api/reasoning-x402.ts"
       - "app/api/treasury.ts"
       - "app/floatV2Config.d.ts"
@@ -150,7 +153,7 @@ jobs:
       - name: Test Lepton readiness and historical proof fallback
         run: npm run lepton:readiness:test
       - name: Test historical explorer retries, deadlines and empty histories
-        run: node --test app/scripts/historical-reads.test.mjs app/scripts/float-history-api.test.ts app/scripts/treasury-history-api.test.ts
+        run: node --test app/scripts/historical-reads.test.mjs app/scripts/float-history-api.test.ts app/scripts/treasury-history-api.test.ts app/scripts/blockscout-explorer-web.test.ts
       - name: Test Treasury CLI JSON reports and exit status
         run: node --test app/scripts/treasury-verify-live.test.mjs
       - name: Test domain migration and mandate identity compatibility
