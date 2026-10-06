@@ -4,6 +4,15 @@ import { fetchBlockscoutExplorer } from "./blockscoutExplorer.mjs";
 const cache = new Map();
 let windowAt = 0;
 let requests = 0;
+const CURSOR_NAMES = ["block_number", "index", "items_count", "value", "hash", "inserted_at", "fee"];
+function validCursorField(name, value) {
+  if (typeof value !== "string" && typeof value !== "number") return false;
+  const text = String(value);
+  if (["value", "fee"].includes(name)) return /^\d{1,78}$/.test(text) && BigInt(text) < 2n ** 256n;
+  if (name === "hash") return isHash(text);
+  if (name === "inserted_at") return text.length <= 40 && /^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(?:\.\d{1,9})?(?:Z|[+-]\d\d:\d\d)$/.test(text) && Number.isFinite(Date.parse(text));
+  return ["block_number", "index", "items_count"].includes(name) && /^\d{1,16}$/.test(text);
+}
 
 export default async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
@@ -11,11 +20,11 @@ export default async function handler(req, res) {
   const query = req.query ?? {};
   const chainId = Number(query.chainId);
   const account = query.account;
-  const cursorNames = ["block_number", "index", "items_count"];
+  const cursorNames = CURSOR_NAMES;
   if (![5042, 5042002].includes(chainId) || typeof account !== "string" || !isAddress(account)
     || Object.keys(query).some(name => !["chainId", "account", "filter", ...cursorNames].includes(name))
     || (query.filter !== undefined && query.filter !== "from")
-    || cursorNames.some(name => query[name] !== undefined && (typeof query[name] !== "string" || !/^\d{1,16}$/.test(query[name])))) {
+    || cursorNames.some(name => query[name] !== undefined && !validCursorField(name, query[name]))) {
     return res.status(400).json({ error: "Invalid explorer lookup" });
   }
   const host = chainId === 5042 ? "explorer.arc.io" : "explorer.testnet.arc.io";
@@ -34,7 +43,7 @@ export default async function handler(req, res) {
       || !isAddress(item?.from?.hash ?? "") || getAddress(item.from.hash) !== getAddress(account))) throw new Error();
     const next = data.next_page_params;
     if (next != null && (typeof next !== "object" || Array.isArray(next)
-      || Object.entries(next).some(([name, value]) => !cursorNames.includes(name) || !/^\d{1,16}$/.test(String(value))))) throw new Error();
+      || Object.entries(next).some(([name, value]) => !cursorNames.includes(name) || !validCursorField(name, value)))) throw new Error();
     const result = {
       items: data.items.map((item) => ({ hash: item.hash, nonce: item.nonce, from: { hash: item.from?.hash } })),
       next_page_params: data.next_page_params ?? null,

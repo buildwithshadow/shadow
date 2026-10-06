@@ -113,3 +113,33 @@ test("truncated log data cannot become a successful empty or complete history", 
     chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async target => Response.json({ items: [{ data: "0x", data_truncated: true }] }),
   }), /truncated/);
 });
+
+test("public recovery preserves and forwards the full supported transaction cursor", async () => {
+  const originalFetch = globalThis.fetch;
+  const originalKey = process.env.BLOCKSCOUT_PRO_API_KEY;
+  process.env.BLOCKSCOUT_PRO_API_KEY = key;
+  const next = { index: 185, value: "1400000000000000000000", hash, inserted_at: "2021-10-19T04:21:43.201751Z", block_number: 12495947, fee: "0", items_count: 50 };
+  let calls = 0; let status = 0; let data: any;
+  globalThis.fetch = async input => {
+    calls++;
+    if (calls === 2) {
+      const params = new URL(String(input)).searchParams;
+      for (const [name, value] of Object.entries(next)) assert.equal(params.get(name), String(value));
+    }
+    return Response.json({ ...page, next_page_params: calls === 1 ? next : null });
+  };
+  const res = { setHeader() {}, status(code: number) { status = code; return this; }, json(value: unknown) { data = value; } };
+  try {
+    await handler({ method: "GET", query: { chainId: "5042002", account, index: "99" } }, res);
+    assert.equal(status, 200);
+    assert.deepEqual(data.next_page_params, next);
+    const cursor = Object.fromEntries(Object.entries(next).map(([name, value]) => [name, String(value)]));
+    await handler({ method: "GET", query: { chainId: "5042002", account, ...cursor } }, res);
+    assert.equal(status, 200);
+    assert.equal(calls, 2);
+  } finally {
+    globalThis.fetch = originalFetch;
+    if (originalKey === undefined) delete process.env.BLOCKSCOUT_PRO_API_KEY;
+    else process.env.BLOCKSCOUT_PRO_API_KEY = originalKey;
+  }
+});
