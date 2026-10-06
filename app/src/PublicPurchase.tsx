@@ -28,7 +28,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       if (!navigator.locks) throw new Error('This browser cannot coordinate wallet actions.');
       return navigator.locks.request(gatewayWalletLockKey(account, deployment.chainId), {ifAvailable:true}, async lock => {
         if (!lock) throw new Error('Another Shadow tab is using this wallet.');
-        if (operation === 'prepare' || operation === 'submit') {
+        if (operation !== 'recover' && operation !== 'archive') {
           assertCandidateFundingResolved(account, window.localStorage, deployment.chainId);
           if (!mainnet) assertGatewayFundingResolved(account);
         }
