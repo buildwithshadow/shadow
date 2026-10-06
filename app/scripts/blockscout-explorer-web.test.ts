@@ -11,20 +11,17 @@ const hash = `0x${"ab".repeat(32)}`;
 const page = { items: [{ hash, nonce: 20, from: { hash: account }, raw_input: key }], next_page_params: null };
 const url = `https://explorer.testnet.arc.io/api/v2/addresses/${account}/transactions?filter=from`;
 
-test("server transport uses the fixed authenticated service and optional sessions", async () => {
-  for (const session of [{}, { session_id: "opaque" }]) {
-    const result = await fetchBlockscoutExplorer(url, undefined, { chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async (target, options) => {
-      const u = new URL(String(target));
-      assert.equal(u.origin, "https://mcp.blockscout.com");
-      assert.equal(options?.redirect, "error");
-      assert.equal((options?.headers as Record<string, string>)["Blockscout-MCP-Pro-Api-Key"], key);
-      assert.ok(!u.href.includes(key));
-      if (u.pathname.includes("unlock")) return Response.json({ data: session });
-      assert.equal(u.searchParams.has("session_id"), "session_id" in session);
-      return Response.json({ data: page });
-    }});
-    assert.deepEqual(await result.json(), page);
-  }
+test("server transport preserves raw data and keeps the key in a header on the fixed API", async () => {
+  const result = await fetchBlockscoutExplorer(url, undefined, { chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async (target, options) => {
+    const u = new URL(String(target));
+    assert.equal(u.origin, "https://api.blockscout.com");
+    assert.equal(u.pathname, `/5042002/api/v2/addresses/${account}/transactions`);
+    assert.equal(options?.redirect, "error");
+    assert.equal((options?.headers as Record<string, string>).Authorization, `Bearer ${key}`);
+    assert.ok(!u.href.includes(key));
+    return Response.json(page);
+  }});
+  assert.deepEqual(await result.json(), page);
 });
 
 test("untrusted hosts, paths, network mismatches and missing keys never fetch", async () => {
@@ -49,7 +46,7 @@ test("public recovery endpoint returns only transaction suggestions and refuses 
   const originalFetch = globalThis.fetch;
   const originalKey = process.env.BLOCKSCOUT_PRO_API_KEY;
   process.env.BLOCKSCOUT_PRO_API_KEY = key;
-  globalThis.fetch = async input => Response.json({ data: String(input).includes("unlock") ? {} : page });
+  globalThis.fetch = async () => Response.json(page);
   let status = 0; let data: any;
   const res = { setHeader() {}, status(code: number) { status=code; return this; }, json(value: unknown) { data=value; } };
   try {
@@ -92,33 +89,27 @@ test("existing Float function dispatches the recovery rewrite before legacy conf
   } finally { if (originalKey !== undefined) process.env.BLOCKSCOUT_PRO_API_KEY = originalKey; }
 });
 
-test("MCP log continuation reaches the second page before claiming a complete history", async () => {
+test("raw log pagination reaches the second page before claiming a complete history", async () => {
   let pages = 0;
   const endpoint = `/api/v2/addresses/${account}/logs`;
   const result = await readExplorerLogPages({
     url: `https://explorer.testnet.arc.io${endpoint}`,
     deadlineAt: Date.now() + 5000,
     fetchPage: (target, init) => fetchBlockscoutExplorer(String(target), init, { chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async input => {
-      const u = new URL(String(input));
-      if (u.pathname.includes("unlock")) return Response.json({ data: {} });
-      pages++;
-      if (pages === 1) return Response.json({ data: [{ index: 2, data_truncated: false }], pagination: { next_call: {
-        tool_name: "direct_api_call", params: { chain_id: "5042002", endpoint_path: endpoint, cursor: "next_page" },
-      } } });
-      assert.equal(u.searchParams.get("cursor"), "next_page");
-      assert.equal(u.searchParams.has("query_params[mcp_cursor]"), false);
-      return Response.json({ data: [{ index: 1, data_truncated: false }] });
+      const u = new URL(String(input)); pages++;
+      if (pages === 1) return Response.json({ items: [{ index: 2, data: "0x1234" }], next_page_params: { block_number: 1, index: 2 } });
+      assert.equal(u.searchParams.get("block_number"), "1");
+      assert.equal(u.searchParams.get("index"), "2");
+      return Response.json({ items: [{ index: 1, data: "0x5678" }], next_page_params: null });
     } }),
   });
   assert.equal(result.pages, 2);
-  assert.deepEqual(result.items, [{ index: 2, data_truncated: false }, { index: 1, data_truncated: false }]);
+  assert.deepEqual(result.items, [{ index: 2, data: "0x1234" }, { index: 1, data: "0x5678" }]);
   assert.deepEqual(result.warnings, []);
 });
 
-test("truncated MCP log data cannot become a successful empty or complete history", async () => {
+test("truncated log data cannot become a successful empty or complete history", async () => {
   await assert.rejects(fetchBlockscoutExplorer(`https://explorer.testnet.arc.io/api/v2/addresses/${account}/logs`, undefined, {
-    chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async target => Response.json({
-      data: String(target).includes("unlock") ? {} : [{ data: "0x", data_truncated: true }],
-    }),
+    chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async target => Response.json({ items: [{ data: "0x", data_truncated: true }] }),
   }), /truncated/);
 });

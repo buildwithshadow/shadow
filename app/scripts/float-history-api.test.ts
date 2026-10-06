@@ -49,9 +49,8 @@ async function runHistory({
       }
       return Response.json({ jsonrpc: "2.0", id: request.id, result });
     }
-    if (url.startsWith("https://mcp.blockscout.com/v1/unlock_blockchain_analysis")) return Response.json({ data: {} });
-    if (url.startsWith("https://mcp.blockscout.com/v1/direct_api_call")) {
-      return Response.json({ data: explorerBody }, { status: explorerStatus });
+    if (url.startsWith("https://api.blockscout.com/5042002/api/v2/addresses/")) {
+      return Response.json(explorerBody, { status: explorerStatus });
     }
     throw new Error(`Unexpected network request: ${url}`);
   };

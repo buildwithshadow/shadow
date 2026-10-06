@@ -14,7 +14,7 @@ Unavailable indexing leaves the original operation pending.
 The Float and Treasury historical fallbacks use the same server only adapter
 for their existing read endpoints. The adapter validates chain and explorer
 host, forwards no incoming credentials, sends the Pro key only to the fixed
-Blockscout MCP service, refuses redirects and limits the entire read to eight
+Blockscout Pro API, refuses redirects and limits the entire read to eight
 seconds and three MB. Server errors have bounded retries inside that same
 deadline; client errors fail without retry. Prior deadline and completeness
 checks remain in place.
@@ -23,3 +23,8 @@ The public recovery endpoint has a small bounded process local cache and a
 process local request budget. These reduce repeated lookups but are not a
 distributed abuse prevention guarantee. The vendor plan quota remains the
 global limit. This integration does not enable paid overages or x402 payments.
+
+The assistant MCP service truncates log data, so it cannot supply exact ABI
+evidence. Application reads use the raw authenticated Pro API instead. Native
+page parameters remain intact; Treasury follows log pages to completion within
+its deadline and refuses capped or unavailable histories.
