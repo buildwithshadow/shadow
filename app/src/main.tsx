@@ -4,6 +4,8 @@ import { GUARDED_MAINNET, GUARDED_MAINNET_SERVICE } from "./guardedMainnet";
 import { PUBLIC_TESTNET, PUBLIC_TEST_SERVICE } from "./publicTestnet";
 import { HomePage } from "./HomePage";
 import { CandidateFundingDesk } from "./CandidateFundingDesk";
+import { BuildersPage } from "./BuildersPage";
+import { RoadmapPage } from "./RoadmapPage";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -2469,144 +2471,8 @@ function App() {
     </>
   );
 
-  const buildersPage = (
-    <div className="routePage">
-      <section className="pageHead">
-        <p className="pageEyebrow">builders · agent access</p>
-        <h1 className="pageTitle">Give your agent sponsor-backed capacity without pre-funding it first.</h1>
-        <p className="pageLede">
-          Shadow Float is for buyer agents that need paid data, compute, or API calls under strict policy. The agent signs
-          a bounded intent; V2 verifies it onchain, pays the named provider from sponsor reserve, and records the debt trail.
-        </p>
-      </section>
-      <FloatBuilderPilot
-        account={account}
-        state={floatV2State}
-        loading={floatV2Loading}
-        onAccountChange={setAccount}
-        onRefresh={refreshFloatV2}
-      />
-      <FloatPilotOperations state={floatV2State} loading={floatV2Loading} />
-      <section className="builderFlowGrid" aria-label="Builder integration flow">
-        <article className="builderFlowCard">
-          <span>1</span>
-          <strong>Request a line</strong>
-          <p>Share the Arc testnet wallet your agent actually controls. A sponsor reserves bounded USDC capacity for that signer.</p>
-        </article>
-        <article className="builderFlowCard">
-          <span>2</span>
-          <strong>Sign an intent</strong>
-          <p>Sign typed data locally. The key stays on your machine; only the intent JSON and signature are shared.</p>
-        </article>
-        <article className="builderFlowCard">
-          <span>3</span>
-          <strong>Contract pays provider</strong>
-          <p>ShadowFloat verifies the intent onchain, pays the named provider from sponsor reserve, and opens debt against the line.</p>
-        </article>
-        <article className="builderFlowCard">
-          <span>4</span>
-          <strong>Repay when ready</strong>
-          <p>Your agent can repay from its own wallet to close the spend, debt, and repayment loop.</p>
-        </article>
-      </section>
-      <section className="builderReferenceGrid" aria-label="Builder references">
-        <article className="builderReferenceCard">
-          <span>line state lookup</span>
-          <code>/api/float-tools?action=agent&amp;address=0x...</code>
-          <p>Read the current line limit, available capacity, active debt, and status for a registered agent.</p>
-        </article>
-        <article className="builderReferenceCard">
-          <span>typed-data intent</span>
-          <code>/api/float-tools?action=intent&amp;agent=0x...&amp;reason=...</code>
-          <p>Returns the exact EIP-712 payload a builder can sign with their own wallet tooling. No Shadow script or secret env is required.</p>
-        </article>
-        <article className="builderReferenceCard">
-          <span>intent verifier</span>
-          <code>/api/float-tools?action=verify&amp;hash=0x...</code>
-          <p>Verify signer, request hash, onchain receipt, V2 direct provider payment, and nonce use.</p>
-        </article>
-        <article className="builderReferenceCard">
-          <span>local scripts</span>
-          <code>float-builder-sign.mjs · float-builder-repay.mjs</code>
-          <p>Reference helpers for local signing and repayment. Builders can also construct calls with their own signer.</p>
-        </article>
-        <a
-          className="builderReferenceCard"
-          href="https://github.com/buildwithshadow/shadow/blob/main/docs/PILOT_RECRUITMENT.md"
-          target="_blank"
-          rel="noreferrer noopener"
-        >
-          <span>pilot handoff</span>
-          <strong>Run three unassisted cycles</strong>
-          <p>Participant roles, safe defaults, proof requirements, repeat-use target, and reserve-reclaim finish line.</p>
-        </a>
-      </section>
-    </div>
-  );
-
-  const roadmapPage = (
-    <div className="routePage">
-      <section className="pageHead">
-        <p className="pageEyebrow">product status</p>
-        <h1 className="pageTitle">What is live on Arc, and what comes next.</h1>
-        <p className="pageLede">
-          Shadow Float now covers the full testnet loop: sponsor reserve, signed authorization, provider payment, debt,
-          repayment, automated scoring, external sponsors, and labeled open debt. The roadmap below keeps the Float path
-          separate from supporting records.
-        </p>
-      </section>
-      <section className="roadmapStatusBand" aria-label="Live Shadow Float milestones">
-        <article>
-          <span>live now</span>
-          <strong>Float V2 spending lines</strong>
-          <p>Agents sign bounded intents, providers are paid from sponsor-backed reserve, debt is recorded, and repayment restores capacity.</p>
-        </article>
-        <article>
-          <span>matured</span>
-          <strong>External sponsor capital</strong>
-          <p>CitePay and Forum Tollgate opened external sponsored lines; Forum also proved reserve reclaim and reopen.</p>
-        </article>
-        <article>
-          <span>matured</span>
-          <strong>Autonomous line scoring</strong>
-          <p>Sponsored lines are re-scored by ShadowFloat from recorded paid, blocked, and repaid behavior after each action.</p>
-        </article>
-        <article>
-          <span>matured</span>
-          <strong>CCTP-funded reserve</strong>
-          <p>Sepolia USDC was burned, minted on Arc, locked as a Float reserve, drawn to pay CitePay, and repaid.</p>
-        </article>
-      </section>
-      <section className="roadmapGrid" aria-label="Shadow Float roadmap">
-        <article className="roadmapCard">
-          <span>next</span>
-          <strong>Production-grade mandate custody</strong>
-          <p>Move M1 adapter allocation into a withdrawable custody model with cleaner release rules and stronger execution accountability.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>matured</span>
-          <strong>Provider delivery receipts</strong>
-          <p>CitePay signed a delivery receipt for a Driplet-paid request, and ShadowFloat recorded it onchain. Standardizing that receipt across every provider remains next.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>next</span>
-          <strong>More independent providers</strong>
-          <p>Expand from CitePay-style paid answers into more data, scan, compute, and API services that agents can buy through Float.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>next</span>
-          <strong>Deeper sponsor controls</strong>
-          <p>Give sponsors clearer dashboards for daily limits, provider mandates, reserve reclaim, defaults, and risk exposure.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>mainnet</span>
-          <strong>Treasury reserve model</strong>
-          <p>Define reserve providers, fee policy, and default handling for larger spending lines without weakening the reserve floor.</p>
-        </article>
-      </section>
-    </div>
-  );
-
+  const buildersPage = <BuildersPage />;
+  const roadmapPage = <RoadmapPage />;
   return (
     <main className={isFundingDeskRoute ? "shell candidateShell" : "shell"}>
       <nav className="nav">
