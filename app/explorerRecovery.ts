@@ -1,7 +1,6 @@
 import { getAddress, isAddress, isHash } from "viem";
-import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
+import { fetchBlockscoutExplorer } from "./blockscoutExplorer.mjs";
 
-export const config = { maxDuration: 15 };
 const cache = new Map<string, { at: number; data: unknown }>();
 let windowAt = 0;
 let requests = 0;

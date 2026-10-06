@@ -4,7 +4,8 @@ The application server needs a private `BLOCKSCOUT_PRO_API_KEY` environment
 variable. Do not prefix it with `VITE_`, commit it, or send it to the browser.
 
 Browser saved nonce recovery calls the same origin `/api/explorer` endpoint.
-The endpoint supports only outgoing address transaction pages on Arc mainnet
+A rewrite dispatches this route through the existing Float server function,
+so it does not add a serverless function. The endpoint supports only outgoing address transaction pages on Arc mainnet
 and testnet and returns only hash, nonce, sender and validated page cursors.
 It is a transaction suggestion, not confirmation: the existing recovery code
 still validates the sender, nonce, exact call and onchain result independently.

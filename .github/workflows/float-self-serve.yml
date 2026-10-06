@@ -5,7 +5,8 @@ on:
     paths:
       - ".github/workflows/float-self-serve.yml"
       - "app/api/float.ts"
-      - "app/api/explorer.ts"
+      - "app/explorerRecovery.ts"
+      - "app/vercel.json"
       - "app/blockscoutExplorer.*"
       - "app/scripts/blockscout-explorer-web.test.ts"
       - "app/api/reasoning-x402.ts"

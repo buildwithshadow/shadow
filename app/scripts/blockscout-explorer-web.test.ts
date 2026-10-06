@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import handler from "../api/explorer.ts";
+import handler from "../explorerRecovery.ts";
+import floatHandler from "../api/float.ts";
 import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
 
 const key = "proapi_fixture";
@@ -76,4 +77,16 @@ test("public endpoint retains unavailable status when no server credential exist
     assert.equal(status,503);
     assert.match(data.error,/original operation pending/);
   } finally { if(originalKey!==undefined)process.env.BLOCKSCOUT_PRO_API_KEY=originalKey; }
+});
+
+test("existing Float function dispatches the recovery rewrite before legacy configuration reads", async () => {
+  const originalKey = process.env.BLOCKSCOUT_PRO_API_KEY;
+  delete process.env.BLOCKSCOUT_PRO_API_KEY;
+  let status = 0; let data: any;
+  const res = { setHeader() {}, status(code: number) { status = code; return this; }, json(value: unknown) { data = value; } };
+  try {
+    await floatHandler({ method: "GET", url: `/api/float?mode=explorer&chainId=5042&account=${account}` }, res);
+    assert.equal(status, 503);
+    assert.match(data.error, /original operation pending/);
+  } finally { if (originalKey !== undefined) process.env.BLOCKSCOUT_PRO_API_KEY = originalKey; }
 });
