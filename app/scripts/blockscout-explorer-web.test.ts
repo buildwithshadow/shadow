@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import handler from "../explorerRecovery.ts";
+import handler from "../explorerRecovery.mjs";
 import floatHandler from "../api/float.ts";
 import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
 import { readExplorerLogPages } from "../historicalReads.js";

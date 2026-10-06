@@ -35,7 +35,7 @@ import { createRpcReadQueue } from "../scripts/rpc-read-queue.mjs";
 import { buildFloatV2OperationalHealth } from "../floatV2Operations.js";
 import { readBeforeDeadline, readExplorerLogPages } from "../historicalReads.js";
 import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
-import explorerRecovery from "../explorerRecovery.ts";
+import explorerRecovery from "../explorerRecovery.mjs";
 
 export const config = { maxDuration: 20 };
 
