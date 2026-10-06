@@ -183,6 +183,7 @@ export function createGatewayBrowserFunding({
     }
     await identity();
     return runGatewayStep({
+      sponsor: account,
       journal,
       operation: record.operation,
       phase: "attestation",
@@ -296,6 +297,7 @@ export function createGatewayBrowserFunding({
     );
     const request = { to: g.minter, data, value: "0", nonce: String(nonce) };
     return runGatewayStep({
+      sponsor: account,
       journal,
       operation: record.operation,
       phase: "mint",
@@ -352,6 +354,7 @@ export function createGatewayBrowserFunding({
     assert(record, "No saved Gateway funding operation");
     if (record.steps.mint) {
       return runGatewayStep({
+        sponsor: account,
         journal,
         operation: record.operation,
         phase: "mint",
@@ -364,6 +367,7 @@ export function createGatewayBrowserFunding({
     }
     if (record.steps.attestation) {
       return runGatewayStep({
+        sponsor: account,
         journal,
         operation: record.operation,
         phase: "attestation",

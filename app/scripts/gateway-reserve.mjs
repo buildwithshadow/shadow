@@ -63,9 +63,11 @@ export async function gatewayRead(path, body, fetcher=fetch) {
 /** A side effect is attempted at most once per durable identity. A missing response
  * stays unknown. Reconciliation may supply evidence, never a second send. The
  * caller must retain this journal; deleting it removes the local protection. */
-export async function runGatewayStep({journal,operation,phase,request,send,reconcile}) {
+export async function runGatewayStep({journal,sponsor,operation,phase,request,send,reconcile}) {
+  assert.match(sponsor, /^0x[0-9a-fA-F]{40}$/, 'A sponsor wallet identity is required');
+  assert.notEqual(BigInt(sponsor), 0n, 'A nonzero sponsor wallet is required');
   const key=`gateway:${operation}:${phase}`;
-  return journal.withLock('gateway-reserve-operator',async()=>{
+  return journal.withLock(`gateway-reserve:${GATEWAY_TESTNET.chainId}:${sponsor.toLowerCase()}`,async()=>{
     const prior=await journal.get(key);
     if(prior){
       assert.deepEqual(prior.request,request,'Refusing changed request for an existing operation');

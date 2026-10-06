@@ -144,8 +144,8 @@ test('cached success is revalidated against canonical chain before being returne
 test('file journal survives recreation, restricts file permissions and serializes independent instances',async()=>{
   const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-circle-journal-')),dir=join(sandbox,'journal');
   try{
-    const a=await createCircleAgentJournal(dir);await a.put('entry',{key:'stable'});
-    const b=await createCircleAgentJournal(dir);assert.deepEqual(await b.get('entry'),{key:'stable'});
+    const a=await createCircleAgentJournal(dir,{identityDirectory:join(sandbox,'identities')});await a.put('entry',{key:'stable'});
+    const b=await createCircleAgentJournal(dir,{identityDirectory:join(sandbox,'identities')});assert.deepEqual(await b.get('entry'),{key:'stable'});
     for(const name of await readdir(dir))assert.equal((await stat(join(dir,name))).mode&0o777,0o600);
     await a.withLock('wallet',async()=>{await assert.rejects(()=>b.withLock('wallet',async()=>{}),/locked/);});
     await b.withLock('wallet',async()=>{});
@@ -219,9 +219,9 @@ test('saved repayment attribution cannot silently change while the request hash 
 test('disk-backed lost repayment survives independent journal/adapter recreation without a second send', async () => {
   const sandbox=await mkdtemp(join(await realpath(tmpdir()),'shadow-guarded-repayment-')),dir=join(sandbox,'journal');
   try {
-    const journal=await createCircleAgentJournal(dir);const x=setup({journal});x.state.lose=true;
+    const journal=await createCircleAgentJournal(dir,{identityDirectory:join(sandbox,'identities')});const x=setup({journal});x.state.lose=true;
     const first=await x.adapter.execute(repay);assert.equal(first.status,'unknown');
-    const restoredJournal=await createCircleAgentJournal(dir);
+    const restoredJournal=await createCircleAgentJournal(dir,{identityDirectory:join(sandbox,'identities')});
     const restored=createCircleGuardedRepayer({...x.options,journal:restoredJournal});
     assert.equal((await restored.execute(repay)).status,'unknown');
     await assert.rejects(()=>restored.execute({...repay,operationId:'repay:replacement'}),/previous Circle operation/);

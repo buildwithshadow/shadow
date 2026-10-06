@@ -22,7 +22,7 @@ for (const phase of ['approve-deposit', 'deposit', 'attestation', 'mint', 'appro
   test(`browser ${phase}: effect succeeds but response is lost; reload never sends twice`, async () => {
     const env = environment(), journal = env.create(), operation = (await journal.begin(intent())).operation;
     let sends = 0;
-    const options = { journal, operation, phase, request: { original: 'fixed' }, send: async () => { sends++; throw Error('timeout after effect'); }, reconcile: async () => null };
+    const options = { sponsor: account, journal, operation, phase, request: { original: 'fixed' }, send: async () => { sends++; throw Error('timeout after effect'); }, reconcile: async () => null };
     await assert.rejects(runGatewayStep(options), /timeout/);
     assert.equal((await runGatewayStep({ ...options, journal: env.create() })).status, 'unknown');
     const done = await runGatewayStep({ ...options, journal: env.create(), reconcile: async () => ({ exactOriginalReceipt: 'verified' }) });
@@ -39,7 +39,7 @@ test('two tabs cannot both execute, even with different phase names', async () =
   let release, entered;
   const gate = new Promise(r => release = r), start = new Promise(r => entered = r);
   let sends = 0;
-  const options = { journal: first, operation, phase: 'deposit', request: {}, send: async () => { sends++; entered(); await gate; return {}; }, reconcile: async () => null };
+  const options = { sponsor: account, journal: first, operation, phase: 'deposit', request: {}, send: async () => { sends++; entered(); await gate; return {}; }, reconcile: async () => null };
   const pending = runGatewayStep(options);
   await start;
   await assert.rejects(runGatewayStep({ ...options, journal: second, phase: 'mint' }), /another tab/);
@@ -51,7 +51,7 @@ test('storage failure before effect cannot send; failed response persistence rem
   let sends = 0;
   const original = env.storage.setItem;
   env.storage.setItem = () => { throw Error('quota'); };
-  const options = { journal, operation, phase: 'attestation', request: {}, send: async () => { sends++; return { id: 'transfer-1' }; }, reconcile: async () => null };
+  const options = { sponsor: account, journal, operation, phase: 'attestation', request: {}, send: async () => { sends++; return { id: 'transfer-1' }; }, reconcile: async () => null };
   await assert.rejects(runGatewayStep(options), /quota/);
   assert.equal(sends, 0);
   env.storage.setItem = original;
@@ -74,7 +74,7 @@ test('missing locks, corrupt records, mismatched sponsor and silent storage fail
 });
 test('journal prevents changed stored response and confirmed outcome', async () => {
   const env = environment(), j = env.create(), operation = (await j.begin(intent())).operation;
-  const options = { journal: j, operation, phase: 'mint', request: {}, send: async () => ({ hash: 'original' }), reconcile: async () => ({ hash: 'original' }) };
+  const options = { sponsor: account, journal: j, operation, phase: 'mint', request: {}, send: async () => ({ hash: 'original' }), reconcile: async () => ({ hash: 'original' }) };
   const done = await runGatewayStep(options), key = `gateway:${operation}:mint`;
   await assert.rejects(j.put(key, done), /tab lock/);
   await assert.rejects(j.withLock('', () => j.put(key, { ...done, response: { hash: 'other' } })), /response cannot change/);

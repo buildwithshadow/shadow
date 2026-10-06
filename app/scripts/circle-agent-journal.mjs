@@ -1,4 +1,4 @@
-import { mkdir, lstat, realpath, open, readdir } from 'node:fs/promises';
+import { mkdir, lstat, realpath, open, readdir, link, unlink } from 'node:fs/promises';
 import { resolve, join, sep } from 'node:path';
 import { randomUUID, randomBytes, createHash } from 'node:crypto';
 import { spawn } from 'node:child_process';
@@ -110,6 +110,35 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
       if (JSON.stringify(previous) !== JSON.stringify(identity)) throw new Error('Circle journal root was replaced. Restore the original root or explicitly reconcile its full records and locks; do not reset its identity marker.');
     } finally { await saved.close(); }
   } finally { if (marker) await marker.close(); }
+  // Bind a wallet namespace to one root across every journal using this
+  // operator identity store. A fresh root must not create a fresh spend ledger.
+  const bindings = await requirePrivateState(join(parent, 'wallet-root-bindings'));
+  // Persist the new binding directory entry before any operation can rely on it.
+  const bindingParent = await open(parent, constants.O_RDONLY | constants.O_DIRECTORY);
+  try { await bindingParent.sync(); } finally { await bindingParent.close(); }
+  async function bindNamespace(key) {
+    if (typeof key !== 'string' || !key.length || key.length > 256) throw new Error('Invalid Circle wallet namespace.');
+    await requirePrivateState(bindings);
+    const path = join(bindings, createHash('sha256').update(key).digest('hex') + '.json');
+    const expected = Buffer.from(JSON.stringify({version: 1, namespace: key, journal: identity}));
+    // Publish only complete, synced bytes. An exclusive hard link selects one
+    // winner without exposing a partially written canonical binding.
+    const temporary = path + '.' + randomUUID() + '.tmp';
+    const file = await open(temporary, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600);
+    try {
+      await file.writeFile(expected); await file.sync();
+      try { await link(temporary, path); }
+      catch (error) {
+        if (error.code !== 'EEXIST') throw error;
+        const previous = await privateBytes(path);
+        if (!previous?.equals(expected)) throw new Error('Circle wallet namespace belongs to another journal root or has invalid binding state. Reconcile the original journal; do not switch roots or resend.');
+      }
+      // Also sync when another writer won: its publication must be durable
+      // before this caller can enter the wallet operation.
+      const folder = await open(bindings, constants.O_RDONLY | constants.O_DIRECTORY);
+      try { await folder.sync(); } finally { await folder.close(); }
+    } finally { await file.close(); await unlink(temporary); }
+  }
   const checkpointDirectory = await requirePrivateState(`${anchor}.records`);
   const worker = spawn(process.execPath, ['--input-type=module', '-e', WORKER, String(info.dev), String(info.ino), checkpointDirectory, token], {
     cwd: dir, stdio: ['pipe', 'pipe', 'ignore'],
@@ -151,6 +180,7 @@ export async function createCircleAgentJournal(directory, { identityDirectory = 
     get: key => call('get', filename(key)),
     put: (key, value) => call('put', filename(key), value),
     async withLock(key, action) {
+      await bindNamespace(key);
       const name = filename(key) + '.lock', token = randomUUID();
       try { await call('lock', name, { token, pid: process.pid, createdAt: new Date().toISOString() }); }
       catch (error) { if (error.code === 'EEXIST') throw new Error('Circle wallet journal is locked. Resolve any active or interrupted operator before continuing.'); throw error; }
