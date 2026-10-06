@@ -201,3 +201,41 @@ not revoke a stolen key or invalidate an already signed acceptance: separately
 disable the retired provider's policy on every applicable funding line (or use
 the protocol's pause controls) before accepting new work under a replacement
 provider. Clients must continue verifying recovered receipts normally.
+
+### Detecting an older provider store restore
+
+Set `PROVIDER_WITNESS_DIR` to a private, persistent directory outside
+`PROVIDER_STORE_DIR`. Embedded callers pass `witnessDir`. This is an opt in
+control; existing installations without it retain their previous behavior.
+The witness belongs to exactly one provider, contract, chain, endpoint and
+canonical store path. Use one process per store.
+
+For a new empty store, the server creates the witness identity. Every provider
+record is hashed and witnessed durably before publication in the provider
+store. The server checks all records on startup, before requests and before
+new work or signing. A missing or changed acceptance, request binding, work
+marker, result or delivery causes a reconciliation hold. Live requests return
+409; a restart with inconsistent records refuses to listen. Restore the exact
+original records to resume. Never delete a witness entry to clear a hold.
+A crash between witness publication and the provider write also holds the
+store. This deliberately favors reconciliation over repeating work.
+
+Do not include the witness in an older provider backup restore. If both the
+store and its witness are lost or rolled back together, local checks cannot
+prove what happened. Use independently retained backups and reconcile all
+accepted and paid digests with original provider records and onchain payment
+evidence before resuming. This does not discover payments submitted directly
+to the contract without a provider acceptance.
+
+An existing populated store cannot create a fresh witness automatically.
+Migration needs an offline verified inventory and a separately reviewed
+initialization procedure. Configuring this variable on an existing runtime
+before that procedure is complete will prevent startup. Recovery only mode
+can still return complete original signed deliveries without issuing new
+receipts, but is not clearance to resume active signing from an older backup.
+
+The witness hashes every retained record. Performance therefore depends on
+retained history; benchmark a realistic inventory before production migration.
+The directory checks address accidental replacement and symlink use. They do
+not provide protection against a malicious local user who can rewrite both
+store and witness, or concurrent operators replacing files during reads.

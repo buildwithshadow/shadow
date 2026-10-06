@@ -35,6 +35,8 @@ import {
 // The example has no install of its own; keccak256 comes from the viem the kit uses.
 const { keccak256 } = createRequire(new URL("../../app/package.json", import.meta.url))("viem");
 
+import { createStoreWitness, ProviderStoreHold } from "./store-witness.mjs";
+
 const KEY = "FLOAT_PROVIDER_PRIVATE_KEY";
 const MAX_BODY_BYTES = 65_536;
 
@@ -96,7 +98,7 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null }) {
   if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
   for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine, maxSignatureTtl]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
   if (typeof recoveryOnly !== "boolean") throw new Error("recoveryOnly must be boolean");
@@ -106,6 +108,11 @@ export function createProviderServer({ connection, account, endpointHash, price,
   } else mkdirSync(storeDir, { recursive: true });
   const provider = parseAddress("account.address", account.address, Error);
   const fileOf = (digest, slot) => join(storeDir, `${digest}.${slot}.json`);
+  const witness = witnessDir ? createStoreWitness({
+    storeDir, witnessDir, identity: { provider, chainId: String(connection.chainId), contract: connection.address.toLowerCase(), endpointHash: endpointHash.toLowerCase() },
+    readOnly: recoveryOnly, storeOnce, serialize: value => `${stableStringify(value)}\n`,
+  }) : null;
+  const persist = witness ? witness.storeOnce : storeOnce;
   const accepting = new Map();
   const serving = new Map();
   const admitting = new Map();
@@ -149,7 +156,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
           ]);
           if (used || cancelled) reason = used ? "nonce-used-unpaid" : "nonce-cancelled-unpaid";
         }
-        if (reason) storeOnce(fileOf(digest, "released"), { digest, reason, blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() });
+        if (reason) persist(fileOf(digest, "released"), { digest, reason, blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() });
       }
     })().finally(() => { reclaiming = null; });
     return reclaiming;
@@ -181,7 +188,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
   function bindRequest(requestId, digest, claim = true) {
     const file = join(storeDir, `request-${requestIdHashOf(requestId)}.json`);
     const binding = { requestId, digest };
-    const kept = claim ? (storeOnce(file, binding) ? binding : readStored(file)) : readStored(file);
+    const kept = claim ? (persist(file, binding) ? binding : readStored(file)) : readStored(file);
     if (!claim && kept === null) return;
     if (kept?.requestId !== requestId || !/^0x[0-9a-f]{64}$/.test(kept?.digest)) {
       throw new HttpError(`the stored binding for request ${JSON.stringify(requestId)} is invalid; the provider has to repair it`, 500);
@@ -258,7 +265,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     // acceptIntent refuses with a plain Error listing its problems, before it
     // signs anything. An RPC failure is one of viem's Error subclasses, and a
     // failure once signing has begun is the provider's own: neither is a refusal.
-    const rememberAdmission = () => storeOnce(fileOf(digest, "admission"), { digest, agent: struct.agent, lineId: struct.lineId, nonce: struct.nonce.toString(), dueAt: struct.dueAt.toString(), signatureExpiry: struct.signatureExpiry.toString() });
+    const rememberAdmission = () => persist(fileOf(digest, "admission"), { digest, agent: struct.agent, lineId: struct.lineId, nonce: struct.nonce.toString(), dueAt: struct.dueAt.toString(), signatureExpiry: struct.signatureExpiry.toString() });
     let signing = false;
     const signer = {
       address: account.address,
@@ -268,12 +275,13 @@ export function createProviderServer({ connection, account, endpointHash, price,
         // after preparation, before persisting anything under this digest.
         bindRequest(requestId, digest, false);
         if (typeof service.prepare === "function" && !checkedPrepared(digest, requestId)) {
+          witness?.assertConsistent();
           const output = await service.prepare({ digest, requestId });
           if (output === null) throw new HttpError(`service request ${JSON.stringify(requestId)} is unavailable; no acceptance was signed`, 422);
           const prepared = outputRecord(digest, requestId, output);
           bindRequest(requestId, digest);
           rememberAdmission();
-          if (!storeOnce(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
+          if (!persist(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
         }
         // Recheck time-sensitive snapshots before a new signature, including a
         // retry after a signer/process failure. Stored acceptances and paid
@@ -285,6 +293,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
         }
         bindRequest(requestId, digest);
         rememberAdmission();
+        witness?.assertConsistent();
         return account.signTypedData(typed);
       },
     };
@@ -296,7 +305,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       throw error;
     }
     bindRequest(requestId, digest);
-    const kept = storeOnce(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
+    const kept = persist(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
     return { acceptance: kept, checkedIntent: intent };
     } finally { releaseAdmission(); }
   }
@@ -341,7 +350,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (prepared) {
       // Prepared bytes were frozen before acceptance and payment. Copying them
       // cannot repeat external work, even if an older process left a marker.
-      const kept = storeOnce(fileOf(digest, "result"), prepared) ? prepared : readStored(fileOf(digest, "result"));
+      const kept = persist(fileOf(digest, "result"), prepared) ? prepared : readStored(fileOf(digest, "result"));
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || kept?.result !== prepared.result || kept?.resultRef !== prepared.resultRef) {
         throw new HttpError(`the provider's stored result for digest ${digest} disagrees with its prepared output; the provider has to repair it`, 500);
       }
@@ -349,7 +358,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     const markerFile = fileOf(digest, "started");
     const marker = { digest, requestId: acceptance.requestId };
-    if (!storeOnce(markerFile, marker)) {
+    if (!persist(markerFile, marker)) {
       const kept = readStored(markerFile);
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId) {
         throw new HttpError(`the provider's stored service marker for digest ${digest} disagrees with its acceptance; the provider has to repair it`, 500);
@@ -357,8 +366,9 @@ export function createProviderServer({ connection, account, endpointHash, price,
       throw new HttpError(`service outcome for digest ${digest} is unknown; the provider must reconcile it before work can be retried`, 409);
     }
     try {
+      witness?.assertConsistent();
       const record = outputRecord(digest, acceptance.requestId, await service({ digest, requestId: acceptance.requestId, acceptance }));
-      const kept = storeOnce(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
+      const kept = persist(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || typeof kept?.result !== "string") {
         throw new Error(`stored result for digest ${digest} is missing or disagrees with its acceptance`);
       }
@@ -419,7 +429,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     await assertPaidProviderBinding(connection, payment, acceptance);
     // Upgrade legacy delivered stores too: persist only the independently
     // verified original transaction, before any successful return.
-    if (!recoveryOnly) storeOnce(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
+    if (!recoveryOnly) persist(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
     // Returning our stored bytes creates no new receipt/signature. A rotated
     // smart-provider key must not strand that result; payment binding is still
     // freshly established from the original canonical transaction.
@@ -427,14 +437,16 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const verified = await checkDeliveryPayment(connection, { acceptance, account, transactionHash: payment.providerPaid.transactionHash });
     const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
+    witness?.assertConsistent();
+    const deliveryAccount = witness ? { address: account.address, signTypedData: typed => { witness.assertConsistent(); return account.signTypedData(typed); } } : account;
     const { delivery } = await deliverResult(connection, {
       acceptance,
       resultHash: keccak256(Buffer.from(produced.result, "base64")),
       resultRef: produced.resultRef ?? undefined,
-      account,
+      account: deliveryAccount,
       transactionHash: verified.payment.providerPaid.transactionHash,
     });
-    const kept = storeOnce(fileOf(digest, "delivery"), delivery) ? delivery : storedReceipt(digest, DELIVERY_KIND);
+    const kept = persist(fileOf(digest, "delivery"), delivery) ? delivery : storedReceipt(digest, DELIVERY_KIND);
     return [200, { result: produced.result, delivery: kept }];
   }
 
@@ -456,6 +468,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
   }
 
   async function route(request, context, inputBody) {
+    witness?.assertConsistent();
     const { pathname } = new URL(request.url, "http://provider.invalid");
     if (request.method === "GET" && pathname.startsWith("/status/")) {
       context.digest = parseBytes32("digest", pathname.slice("/status/".length), HttpError);
@@ -557,9 +570,9 @@ export function createProviderServer({ connection, account, endpointHash, price,
       serviceAdmitted = true;
       [status, body] = await route(request, context, inputBody);
     } catch (error) {
-      status = error instanceof HttpError ? error.status : 500;
+      status = error instanceof HttpError || error instanceof ProviderStoreHold ? error.status : 500;
       const failed = `the provider failed on ${context.digest === null ? "this request" : `digest ${context.digest}`} and logged the error; the request can be retried`;
-      body = { error: error instanceof HttpError ? errorMessage(error) : failed };
+      body = { error: error instanceof HttpError || error instanceof ProviderStoreHold ? errorMessage(error) : failed };
       if (status >= 500) {
         console.error(JSON.stringify({ request: `${request.method} ${request.url}`, digest: context.digest, status, error: scrubUrls(inspect(error)) }));
       }
@@ -628,7 +641,7 @@ async function main() {
     const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
     ({ default: service } = await import(serviceModule));
   }
-  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, recoveryOnly, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
+  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, recoveryOnly, witnessDir: env.PROVIDER_WITNESS_DIR?.trim() || null, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
     server.once("error", reject);

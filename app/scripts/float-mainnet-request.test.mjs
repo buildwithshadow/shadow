@@ -673,6 +673,43 @@ describe("request client against the reference provider server", { skip: e2eSkip
     assert.deepEqual([await executorNonce(), await balance(provider.address)], before);
   });
 
+  test("an older provider backup holds live requests and restart without repeating paid work", async () => {
+    const intent = await signedIntent("witnessed-restore");
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    const canonicalRoot = fs.realpathSync(dir);
+    const isolatedStore = join(canonicalRoot, "witnessed-store"), witnessDir = join(canonicalRoot, "independent-witness");
+    let work = 0, signatures = 0;
+    const signer = { address: provider.address, signTypedData: typed => { signatures++; return provider.signTypedData(typed); } };
+    const options = { connection, account: signer, endpointHash: ENDPOINT_HASH, price: PRICE,
+      storeDir: isolatedStore, witnessDir, service: async () => ({ result: `external answer ${++work}` }) };
+    const server = await listen(createProviderServer(options), 0);
+    const port = server.address().port;
+    try {
+      assert.equal((await post(port, "/accept", { intent: readJson(intent.file), requestId: "req-witnessed" })).status, 200);
+      const backup = path("witnessed-backup"); fs.cpSync(isolatedStore, backup, { recursive: true });
+      assert.equal((await ok("submit", ["submit", "--intent", intent.file, "--execute"], EXECUTOR)).status, "paid");
+      const delivered = await post(port, "/serve", { digest: intent.digest });
+      assert.equal(delivered.status, 200);
+      assert.equal(work, 1); assert.equal(signatures, 2);
+      const completed = path("witnessed-completed"); fs.cpSync(isolatedStore, completed, { recursive: true });
+      for (const name of readdirSync(isolatedStore)) unlinkSync(join(isolatedStore, name));
+      fs.cpSync(backup, isolatedStore, { recursive: true });
+      const held = await post(port, "/serve", { digest: intent.digest });
+      assert.equal(held.status, 409); assert.match(held.json.error, /reconciliation/);
+      assert.equal((await send(port, "GET", `/status/${intent.digest}`)).status, 409);
+      assert.equal((await post(port, "/accept", { intent: readJson(intent.file), requestId: "req-witnessed" })).status, 409);
+      assert.equal(work, 1); assert.equal(signatures, 2);
+      assert.throws(() => createProviderServer(options), /reconciliation/);
+      // Recovery requires the exact missing originals, never a fresh receipt.
+      fs.cpSync(completed, isolatedStore, { recursive: true });
+      assert.deepEqual(await post(port, "/serve", { digest: intent.digest }), delivered);
+      assert.equal(work, 1); assert.equal(signatures, 2);
+    } finally {
+      await stop(server);
+      assert.equal(await client.request({ method: "evm_revert", params: [snapshot] }), true);
+    }
+  });
+
   test("a service side effect with no durable result remains unresolved after restart", async () => {
     const intent = await signedIntent("unknown-work");
     const snapshot = await client.request({ method: "evm_snapshot", params: [] });
