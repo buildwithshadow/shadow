@@ -51,8 +51,22 @@ export async function fetchBlockscoutExplorer(url, init = {}, { chainId, env = p
     if (typeof session.data.session_id !== "string" || !session.data.session_id) throw new Error("Explorer session unavailable");
     params.session_id = session.data.session_id;
   }
-  for (const [name, value] of source.searchParams) params[`query_params[${name}]`] = value;
+  for (const [name, value] of source.searchParams) {
+    if (name === "mcp_cursor") {
+      if (!/^[A-Za-z0-9_-]{1,8192}$/.test(value)) throw new Error("Invalid explorer continuation");
+      params.cursor = value;
+    } else params[`query_params[${name}]`] = value;
+  }
   const result = await call("direct_api_call", params);
   if (!result?.data || typeof result.data !== "object" || Array.isArray(result.data)) throw new Error("Invalid explorer data");
-  return new Response(JSON.stringify(result.data), { status: 200, headers: { "Content-Type": "application/json" } });
+  const data = { ...result.data };
+  if (result.pagination != null) {
+    const next = result.pagination.next_call;
+    if (next?.tool_name !== "direct_api_call" || String(next?.params?.chain_id) !== String(chainId)
+      || next?.params?.endpoint_path !== source.pathname || !/^[A-Za-z0-9_-]{1,8192}$/.test(next?.params?.cursor ?? "")) {
+      throw new Error("Invalid explorer continuation");
+    }
+    data.next_page_params = { mcp_cursor: next.params.cursor };
+  }
+  return new Response(JSON.stringify(data), { status: 200, headers: { "Content-Type": "application/json" } });
 }

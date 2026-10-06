@@ -17,7 +17,7 @@ import {
   readHistoricalProofInput,
   transactionInputContainsAddress,
 } from "../leptonM1Config.js";
-import { cachedHistoricalRead, readBeforeDeadline } from "../historicalReads.js";
+import { cachedHistoricalRead, readBeforeDeadline, readExplorerLogPages } from "../historicalReads.js";
 import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
 
 export const config = { maxDuration: 20 };
@@ -651,9 +651,15 @@ function explorerTransaction(txHash: `0x${string}`, budget: ReadBudget) {
 function explorerLogs(txHash: `0x${string}`, budget: ReadBudget) {
   const key = txHash.toLowerCase();
   return readBeforeDeadline(() => cachedHistoricalRead<any[]>(explorerLogsCache, key, () =>
-    fetchJson(`${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`, budget).then((body) =>
-      Array.isArray(body?.items) ? body.items : [],
-    ),
+    readExplorerLogPages({
+      url: `${DEFAULT_EXPLORER_API}/transactions/${txHash}/logs`,
+      deadlineAt: Math.min(budget.deadlineAt, Date.now() + 8_000),
+      maxPages: 20,
+      fetchPage: (url, init) => fetchBlockscoutExplorer(String(url), { ...init, signal: AbortSignal.any([init!.signal!, budget.signal]) }, { chainId: CHAIN_ID }),
+    }).then(({ items, warnings }) => {
+      if (warnings.length) throw new Error("Treasury explorer log history is incomplete");
+      return items;
+    }),
   ), budget.deadlineAt, "Treasury explorer deadline exceeded");
 }
 

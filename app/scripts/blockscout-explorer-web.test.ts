@@ -3,6 +3,7 @@ import test from "node:test";
 import handler from "../explorerRecovery.ts";
 import floatHandler from "../api/float.ts";
 import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
+import { readExplorerLogPages } from "../historicalReads.js";
 
 const key = "proapi_fixture";
 const account = "0x894f6d4d3a7cFF40aeFD63Ac3794358E38a3dDc3";
@@ -89,4 +90,27 @@ test("existing Float function dispatches the recovery rewrite before legacy conf
     assert.equal(status, 503);
     assert.match(data.error, /original operation pending/);
   } finally { if (originalKey !== undefined) process.env.BLOCKSCOUT_PRO_API_KEY = originalKey; }
+});
+
+test("MCP log continuation reaches the second page before claiming a complete history", async () => {
+  let pages = 0;
+  const endpoint = `/api/v2/addresses/${account}/logs`;
+  const result = await readExplorerLogPages({
+    url: `https://explorer.testnet.arc.io${endpoint}`,
+    deadlineAt: Date.now() + 5000,
+    fetchPage: (target, init) => fetchBlockscoutExplorer(String(target), init, { chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async input => {
+      const u = new URL(String(input));
+      if (u.pathname.includes("unlock")) return Response.json({ data: {} });
+      pages++;
+      if (pages === 1) return Response.json({ data: { items: [{ index: 2 }] }, pagination: { next_call: {
+        tool_name: "direct_api_call", params: { chain_id: "5042002", endpoint_path: endpoint, cursor: "next_page" },
+      } } });
+      assert.equal(u.searchParams.get("cursor"), "next_page");
+      assert.equal(u.searchParams.has("query_params[mcp_cursor]"), false);
+      return Response.json({ data: { items: [{ index: 1 }], next_page_params: null } });
+    } }),
+  });
+  assert.equal(result.pages, 2);
+  assert.deepEqual(result.items, [{ index: 2 }, { index: 1 }]);
+  assert.deepEqual(result.warnings, []);
 });
