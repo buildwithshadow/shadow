@@ -1757,8 +1757,7 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
 
 const HOME_TITLE = document.title;
 const ROUTE_TITLES: Record<string, string> = {
-  "/float": "Float | Shadow",
-  "/records": "Records | Shadow",
+  "/evidence": "Evidence | Shadow",
   "/builders": "Builders | Shadow",
   "/start": "Fund an agent | Shadow",
   "/funding": "Earlier candidate | Shadow",
@@ -1768,7 +1767,8 @@ const ROUTE_TITLES: Record<string, string> = {
 function App() {
   const { pathname } = useLocation();
   const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
-  const isRecordsRoute = route === "/records";
+  const isEvidenceRoute = route === "/evidence";
+  const usesFloatV2State = isEvidenceRoute || route === "/builders";
   const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
   const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet";
   const [state, setState] = useState<ShadowState | null>(null);
@@ -1822,7 +1822,7 @@ function App() {
   }, [route]);
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     let cancelled = false;
     async function load() {
       try {
@@ -1839,7 +1839,7 @@ function App() {
       cancelled = true;
       stopPolling();
     };
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refresh() {
     setLoading(true);
@@ -1853,9 +1853,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refresh, 5 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refreshLepton() {
     setLeptonLoading(true);
@@ -1870,9 +1870,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshLepton, 10 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refreshFloat() {
     setFloatLoading(true);
@@ -1892,9 +1892,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshFloat, 10 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refreshFloatV2() {
     setFloatV2Loading(true);
@@ -1911,8 +1911,9 @@ function App() {
   }
 
   useEffect(() => {
+    if (!usesFloatV2State) return;
     return startVisiblePolling(refreshFloatV2, 5 * 60_000);
-  }, []);
+  }, [usesFloatV2State]);
 
   async function refreshFloatDesk() {
     setFloatDeskLoading(true);
@@ -1927,8 +1928,9 @@ function App() {
   }
 
   useEffect(() => {
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshFloatDesk, 5 * 60_000);
-  }, []);
+  }, [isEvidenceRoute]);
 
   async function refreshTreasury() {
     setTreasuryLoading(true);
@@ -1948,9 +1950,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshTreasury, 10 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   useEffect(() => {
     if (state?.sources?.length && !selectedSource) {
@@ -2444,20 +2446,18 @@ function App() {
     navigate("/follow");
   };
 
-  const treasuryPage = (
-    <>
-      <TreasuryHero treasuryState={treasuryState} />
-      <TreasuryEvidenceStrip treasuryState={treasuryState} />
-      <ForumFeeRouterCanaryProof />
-      <TreasuryRailSplit leptonState={leptonState} />
-      <TreasuryLiveVerifierPanel state={treasuryState} loading={treasuryLoading} error={treasuryError} />
-      <TreasuryOnchainLinks />
-      <TreasuryValidationPanel />
-    </>
-  );
-
-  const floatPage = (
-    <>
+  const evidencePage = (
+    <div className="routePage">
+      <section className="pageHead">
+        <p className="pageEyebrow">public records</p>
+        <h1 className="pageTitle">Evidence</h1>
+        <p className="pageLede">This page brings the Float board and supporting records together.</p>
+      </section>
+      <section className="evidenceGroup" id="float" aria-labelledby="evidenceFloatTitle">
+        <div className="treasurySectionHeader">
+          <h2 id="evidenceFloatTitle">Float activity</h2>
+          <p>The Float activity panel shows the current board and desk journal.</p>
+        </div>
       <FloatV2CurrentPanel
         state={floatV2State}
         loading={floatV2Loading}
@@ -2466,7 +2466,21 @@ function App() {
         deskLoading={floatDeskLoading}
         deskError={floatDeskError}
       />
-    </>
+      </section>
+      <section className="evidenceGroup" id="records" aria-labelledby="evidenceRecordsTitle">
+        <div className="treasurySectionHeader">
+          <h2 id="evidenceRecordsTitle">Supporting records</h2>
+          <p>These panels show mandate checks, settlement records, and linked onchain evidence.</p>
+        </div>
+        <TreasuryHero treasuryState={treasuryState} />
+        <TreasuryEvidenceStrip treasuryState={treasuryState} />
+        <ForumFeeRouterCanaryProof />
+        <TreasuryRailSplit leptonState={leptonState} />
+        <TreasuryLiveVerifierPanel state={treasuryState} loading={treasuryLoading} error={treasuryError} />
+        <TreasuryOnchainLinks />
+        <TreasuryValidationPanel />
+      </section>
+    </div>
   );
 
   const buildersPage = (
@@ -2615,20 +2629,14 @@ function App() {
           <span>Shadow</span>
         </Link>
         <div className="navLinks">
-          <NavLink end to="/" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Home
-          </NavLink>
-          <NavLink to="/float" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Float
-          </NavLink>
-          <NavLink to="/records" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Records
+          <Link to="/#how" className="navLink">
+            How it works
+          </Link>
+          <NavLink to="/evidence" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
+            Evidence
           </NavLink>
           <NavLink to="/builders" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Builders
-          </NavLink>
-          <NavLink to={isGuardedMainnetRoute ? "/mainnet" : "/start"} className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Funding
           </NavLink>
           <NavLink to="/roadmap" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Roadmap
@@ -2654,20 +2662,21 @@ function App() {
 
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/agents" element={<Navigate to="/float" replace />} />
+        <Route path="/evidence" element={evidencePage} />
+        <Route path="/agents" element={<Navigate to="/evidence" replace />} />
         <Route path="/follow" element={<Navigate to="/builders" replace />} />
-        <Route path="/receipts" element={<Navigate to="/float" replace />} />
-        <Route path="/lepton" element={<Navigate to="/records" replace />} />
-        <Route path="/treasury" element={<Navigate to="/records" replace />} />
-        <Route path="/records" element={treasuryPage} />
-        <Route path="/float" element={floatPage} />
-        <Route path="/proof" element={<Navigate to="/float" replace />} />
+        <Route path="/receipts" element={<Navigate to="/evidence" replace />} />
+        <Route path="/lepton" element={<Navigate to="/evidence#records" replace />} />
+        <Route path="/treasury" element={<Navigate to="/evidence#records" replace />} />
+        <Route path="/records" element={<Navigate to="/evidence#records" replace />} />
+        <Route path="/float" element={<Navigate to="/evidence" replace />} />
+        <Route path="/proof" element={<Navigate to="/evidence" replace />} />
         <Route path="/builders" element={buildersPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
         {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="guarded-mainnet" deployment={GUARDED_MAINNET} service={GUARDED_MAINNET_SERVICE} />} />}
         <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
-        <Route path="/archive" element={<Navigate to="/float" replace />} />
+        <Route path="/archive" element={<Navigate to="/evidence" replace />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
@@ -3635,7 +3644,7 @@ function errorMessage(error: unknown): string {
 }
 
 function RouteScroll() {
-  const { pathname, hash } = useLocation();
+  const { pathname, hash, key } = useLocation();
   useEffect(() => {
     if (hash) {
       const id = hash.slice(1);
@@ -3647,7 +3656,7 @@ function RouteScroll() {
     } else {
       window.scrollTo({ top: 0, behavior: "auto" });
     }
-  }, [pathname, hash]);
+  }, [pathname, hash, key]);
   return null;
 }
 
@@ -3670,14 +3679,14 @@ function TreasuryHero({ treasuryState }: {
     <section className="treasuryHero" aria-label="Shadow supporting records overview">
       <div className="treasuryHeroCopy">
         <p className="eyebrow">supporting records</p>
-        <h1>Mandate checks and settlement records sit behind the Float product.</h1>
+        <h2>Mandate checks and settlement records sit behind the Float product.</h2>
         <p>
           This page keeps the supporting records visible without making them the main story: approved-adapter checks,
           settlement records, and over-limit blocks that complement Float V2.
         </p>
         <div className="treasuryHeroActions">
-          <Link className="treasuryHeroPrimary" to="/float">
-            Open Float V2
+          <Link className="treasuryHeroPrimary" to="/evidence#float">
+            View Float activity
           </Link>
           <a className="treasuryHeroSecondary" href={FLOAT_V2_PROOF.sourcify} target="_blank" rel="noreferrer">
             View V2 source
@@ -3825,15 +3834,15 @@ function TreasuryRailSplit({
       title: "Float pays before the agent is funded",
       body: "Signed agents authorize a spend, Float pays the approved provider from reserved capacity, debt opens, and repayment restores capacity.",
       stat: "V2 signed intent live",
-      href: "/float",
-      cta: "Open Float",
+      href: "/evidence#float",
+      cta: "View Float activity",
     },
     {
       eyebrow: "allocation path",
       title: "Mandate adapters gate approved movement",
       body: "The approved adapter authenticates the account, reads the bonded enforcer's ALLOW or BLOCK decision, and only moves vault-style USDC on ALLOW. This guarantee is scoped to approved adapters.",
       stat: leptonState?.morphoDepositedUSDC !== undefined ? `${formatUSDC(leptonState.morphoDepositedUSDC)} USDC allocated` : "0.1 USDC allocated",
-      href: "/records",
+      href: "/evidence#records",
       cta: "View records",
     },
     {
@@ -4125,10 +4134,10 @@ function TreasuryLiveVerifierPanel({
       <div className="treasuryLiveVerifierHeader">
         <div>
           <p className="eyebrow">live verifier · no private keys</p>
-          <h2>The Records page reads the same onchain checks as the CLI.</h2>
+          <h2>This panel reads the same onchain checks as the CLI.</h2>
           <p>
             This endpoint verifies the mandate adapter path from live Arc state. The current Float V2 payment anchors are
-            shown on the Float page.
+            shown in the Float activity section.
           </p>
         </div>
         <a href="/api/treasury" target="_blank" rel="noreferrer" className={`treasuryVerifierBadge ${state?.ok ? "pass" : error ? "fail" : ""}`}>
@@ -4361,7 +4370,7 @@ function TreasuryValidationPanel() {
             External agents can authorize a bounded Float spend without pre funding the provider payment first. The contract
             verifies the signature and pays the provider from sponsor reserve.
           </p>
-          <Link to="/float">Open Float →</Link>
+          <Link to="/evidence#float">View Float activity →</Link>
         </article>
 
         <article className="treasuryValidationCard treasuryValidationCardValidated">
@@ -4383,7 +4392,7 @@ function TreasuryValidationPanel() {
             Forum, CitePay, Obol, Crux, and Argus-style agents are the relevant surface now: bounded intents, provider
             payment, debt, repayment, and overrun blocks on V2.
           </p>
-          <Link to="/float">Open Float →</Link>
+          <Link to="/evidence#float">View Float activity →</Link>
         </article>
       </div>
 
@@ -4803,7 +4812,7 @@ function FloatV2CurrentPanel({
       <div className="floatHeroShell">
         <div className="floatHeroCopy">
           <p className="eyebrow">Shadow Float V2 · live on Arc</p>
-          <h1>Let agents pay providers without pre funding every wallet.</h1>
+          <h2>Let agents pay providers without pre funding every wallet.</h2>
           <p className="floatLede">
             Shadow Float lets a sponsor reserve Arc USDC for an agent. The agent signs a bounded spend intent, the contract
             pays the named provider from that reserve, and the line is restored when the agent repays.
@@ -7220,7 +7229,7 @@ function Shadow2ProofStrip({
       unit: "agent-loop cycles",
       title: "Behavior becomes spending power",
       body: "A verified agent receives bounded USDC capacity, buys approved provider resources, opens debt, and gets blocked when it overreaches.",
-      to: "/float",
+      to: "/evidence",
       tone: "float",
     },
     {
@@ -7281,8 +7290,8 @@ function SiteFooter({mainnetCandidate = false}: {mainnetCandidate?: boolean}) {
       title: "Product",
       links: [
         { label: "Home", href: "/" },
-        { label: "Shadow Float", href: "/float" },
-        { label: "Records", href: "/records" },
+        { label: "Evidence", href: "/evidence" },
+        { label: "Records", href: "/evidence#records" },
         { label: "Roadmap", href: "/roadmap" },
       ],
     },

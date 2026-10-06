@@ -240,7 +240,7 @@ export function HomePage() {
           </li>
           <li>
             <span>Earlier contract records</span>
-            <Link to="/float">
+            <Link to="/evidence">
               Records from Shadow&apos;s earlier Float V2 contract
             </Link>
           </li>
