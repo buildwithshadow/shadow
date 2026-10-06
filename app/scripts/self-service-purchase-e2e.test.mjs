@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { readFileSync, mkdtempSync, rmSync } from "node:fs";
+import { readFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -14,12 +14,13 @@ import {
   getAddress,
 } from "viem";
 import { account, startAnvil, e2eSkip } from "./float-mainnet-e2e.mjs";
+import { storeOnce } from './float-mainnet-provider.mjs';
 import { connectCandidate } from "./float-mainnet-config.mjs";
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
 import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
 
-for (const mainnet of [false,true]) for (const fault of ["wallet-response", "delivery-response"]) test(
-  `new ${mainnet?"guarded mainnet":"testnet"} sponsor: ${fault} lost after payment succeeds; retry delivers once, repays and reclaims`,
+for (const mainnet of [false,true]) for (const fault of ["wallet-response", "delivery-response", "prepared-marker", "unprepared-marker"]) test(
+  `new ${mainnet?"guarded mainnet":"testnet"} sponsor: ${fault} after payment retains exact recovery behavior`,
   { skip: e2eSkip, timeout: 120000 },
   async (t) => {
     const chainId=mainnet?5042:5042002,price=mainnet?5000n:50000n;
@@ -138,16 +139,19 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     });
     let jobs = 0,
       sends = 0;
+    const service = async () => {
+      if (fault === 'prepared-marker') throw Error('prepared output must never repeat external work');
+      jobs++;
+      return { result: 'paid report' };
+    };
+    if (fault === 'prepared-marker') service.prepare = async () => { jobs++;return { result:'paid report' }; };
     server = createProviderServer({
       connection,
       account: provider,
       endpointHash: keccak256(stringToHex(endpoint)),
       price,
       storeDir: dir,
-      service: async () => {
-        jobs++;
-        return { result: "paid report" };
-      },
+      service,
     });
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const map = new Map(),
@@ -207,6 +211,19 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     await flow.prepare(lineId, "job-public-1");
     if (fault === "wallet-response") {
       await assert.rejects(flow.submit(), /lost wallet response/);
+    } else if (fault === 'prepared-marker' || fault === 'unprepared-marker') {
+      await flow.submit();
+      const digest = flow.load().intent.digest;
+      assert.equal(storeOnce(join(dir, `${digest}.started.json`), { digest, requestId:'job-public-1' }),true);
+      if (fault === 'unprepared-marker') {
+        await assert.rejects(create().recover(), /409/);
+        assert.equal(jobs,0);assert.equal(sends,1);
+        assert.equal(existsSync(join(dir, `${digest}.result.json`)),false);
+        assert.equal((await read('lines',[lineId])).principalOutstanding,price);
+        return;
+      }
+      assert.equal(existsSync(join(dir, `${digest}.prepared.json`)),true);
+      assert.equal(existsSync(join(dir, `${digest}.result.json`)),false);
     } else {
       await flow.submit();
       await assert.rejects(flow.recover(), /lost delivery response/);

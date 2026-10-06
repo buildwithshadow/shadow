@@ -338,6 +338,15 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (typeof service.prepare === "function" && !prepared) {
       throw new HttpError(`prepared service result for digest ${digest} is missing; the provider must reconcile it before serving`, 409);
     }
+    if (prepared) {
+      // Prepared bytes were frozen before acceptance and payment. Copying them
+      // cannot repeat external work, even if an older process left a marker.
+      const kept = storeOnce(fileOf(digest, "result"), prepared) ? prepared : readStored(fileOf(digest, "result"));
+      if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || kept?.result !== prepared.result || kept?.resultRef !== prepared.resultRef) {
+        throw new HttpError(`the provider's stored result for digest ${digest} disagrees with its prepared output; the provider has to repair it`, 500);
+      }
+      return kept;
+    }
     const markerFile = fileOf(digest, "started");
     const marker = { digest, requestId: acceptance.requestId };
     if (!storeOnce(markerFile, marker)) {
@@ -348,7 +357,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       throw new HttpError(`service outcome for digest ${digest} is unknown; the provider must reconcile it before work can be retried`, 409);
     }
     try {
-      const record = prepared ?? outputRecord(digest, acceptance.requestId, await service({ digest, requestId: acceptance.requestId, acceptance }));
+      const record = outputRecord(digest, acceptance.requestId, await service({ digest, requestId: acceptance.requestId, acceptance }));
       const kept = storeOnce(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || typeof kept?.result !== "string") {
         throw new Error(`stored result for digest ${digest} is missing or disagrees with its acceptance`);
