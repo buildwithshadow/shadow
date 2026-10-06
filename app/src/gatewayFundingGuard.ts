@@ -29,3 +29,19 @@ export function assertCandidateFundingResolved(account: string, storage: Storage
     }
   }
 }
+
+// An unresolved purchase on any deployment of this chain must not be hidden by
+// switching routes. Reading and recovering it still remain available.
+export function assertPurchaseResolved(account: string, storage: Storage = window.localStorage, chainId = 5042002, ownRecordKey?: string) {
+  const prefix = `shadow.public-purchase.v1:${chainId}:`;
+  const suffix = `:${account.toLowerCase()}`;
+  for (let i = 0; i < storage.length; i++) {
+    const originalKey = storage.key(i);
+    const key = originalKey?.toLowerCase();
+    if (originalKey && key?.startsWith(prefix) && key.endsWith(suffix) && key !== ownRecordKey?.toLowerCase()) {
+      let record;
+      try { record = JSON.parse(storage.getItem(originalKey) ?? 'null'); } catch { /* preserve the hold */ }
+      if (record?.stage !== 'delivered') throw new Error('Resolve the earlier purchase on its original page before another wallet action. Recovery remains available; keep site data.');
+    }
+  }
+}

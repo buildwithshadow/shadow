@@ -183,14 +183,17 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
       endpoint,
       principal: String(price),
     };
-    let droppedDelivery = false;
+    let droppedDelivery = false, unrelatedFundingHold = false;
     const create = () =>
       (mainnet?createGuardedMainnetPurchase:createSelfServicePurchase)({
         client,
         wallet: agentWallet,
         config,
         storage,
-        withLock: async (_k, work) => work(),
+        withLock: async (_k, work, operation) => {
+          if (unrelatedFundingHold && (operation === 'prepare' || operation === 'submit')) throw Error('unresolved funding');
+          return work();
+        },
         fetchImpl: async (url, options) => {
           const path = new URL(url).pathname;
           if (path === "/serve") {
@@ -232,6 +235,7 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     }
     await assert.rejects(create().submit(), /reconciliation/);
     assert.equal(sends, 1);
+    unrelatedFundingHold = true;
     const result = await create().recover();
     assert.equal(result.status, "delivered");
     assert.equal(new TextDecoder().decode(result.bytes), "paid report");

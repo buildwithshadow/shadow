@@ -557,10 +557,10 @@ function createPurchase({
     storage.removeItem(key);
   }
   return {
-    prepare: (...args) => withLock(key, () => prepare(...args)),
-    submit: () => withLock(key, submit),
-    recover: () => withLock(key, recover),
-    archive: () => withLock(key, archive),
+    prepare: (...args) => withLock(key, () => prepare(...args), 'prepare'),
+    submit: () => withLock(key, submit, 'submit'),
+    recover: () => withLock(key, recover, 'recover'),
+    archive: () => withLock(key, archive, 'archive'),
     load,
   };
 }
