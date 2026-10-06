@@ -116,6 +116,8 @@ jobs:
         # The glob includes new provider, evidence, review and pilot suites as
         # they land. Run serially because the suites use fixed local RPC ports.
         run: npm run float:mainnet:all-tools:test
+      - name: Test provider store rollback and crash holds
+        run: node --test app/scripts/provider-store-witness.test.mjs
       - name: Test public testnet observer failure and recovery
         run: node --test app/scripts/public-testnet-observer.test.mjs app/scripts/public-testnet-observer-alerts.test.mjs
       - name: Test candidate funding and browser transaction recovery
