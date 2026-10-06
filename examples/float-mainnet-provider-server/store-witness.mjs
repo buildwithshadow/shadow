@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, mkdirSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
-import { basename, join, relative, resolve, sep } from 'node:path';
+import { closeSync, existsSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, readdirSync, realpathSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 
 // This directory is independent of provider backups. Losing or rolling back
 // both stores cannot be detected locally and requires operator reconciliation.
@@ -97,4 +97,55 @@ export function createStoreWitness({ storeDir, witnessDir, identity, storeOnce, 
       return result;
     },
   };
+}
+
+// Inspection is not approval. The operator must independently reconcile this
+// inventory with trusted original records and payment evidence before pinning
+// its digest for initialization. Never derive the approved digest implicitly.
+export function captureStoreSnapshot({ storeDir, identity }) {
+  const store = resolve(storeDir);
+  if (realpathSync(store) !== store || !lstatSync(store).isDirectory()) throw new ProviderStoreHold('noncanonical snapshot directory');
+  const files = [];
+  for (const name of readdirSync(store).sort()) {
+    if (name.endsWith('.tmp')) continue;
+    const file = join(store, name), info = lstatSync(file);
+    if (!recordName(name) || !info.isFile() || info.isSymbolicLink()) throw new ProviderStoreHold('unsafe snapshot record');
+    files.push([name, checksum(readFileSync(file))]);
+  }
+  return { version: 1, store, identity, files };
+}
+
+export function initializeStoreWitness({ storeDir, witnessDir, identity, snapshot, approvedSnapshotSha256, storeOnce, serialize }) {
+  if (!/^[a-f0-9]{64}$/.test(approvedSnapshotSha256 ?? '') || checksum(serialize(snapshot)) !== approvedSnapshotSha256) {
+    throw new ProviderStoreHold('snapshot lacks its independently approved fingerprint');
+  }
+  const store = resolve(storeDir), witness = resolve(witnessDir);
+  const within = (a, b) => { const path = relative(a, b); return !path || (path !== '..' && !path.startsWith(`..${sep}`)); };
+  if (within(store, witness) || within(witness, store)) throw new ProviderStoreHold('unsafe witness location');
+  const verify = () => {
+    if (serialize(captureStoreSnapshot({ storeDir: store, identity })) !== serialize(snapshot)) {
+      throw new ProviderStoreHold('store no longer matches the approved snapshot');
+    }
+  };
+  verify();
+  // Exclusive creation. Any interrupted initialization stays visibly incomplete
+  // and refuses retry; an operator must reconcile it, never reset it silently.
+  mkdirSync(witness, { mode: 0o700 });
+  if (realpathSync(witness) !== witness) throw new ProviderStoreHold('noncanonical witness directory');
+  syncParent(witness);
+  for (const [name, sha256] of snapshot.files) storeOnce(join(witness, name), { name, sha256 });
+  verify();
+  // Identity is the final commit marker. storeOnce durably publishes each file
+  // and its directory. No active server can initialize a populated store when
+  // this marker is absent.
+  storeOnce(join(witness, 'identity.json'), { version: 1, identity, store });
+  const guard = createStoreWitness({ storeDir: store, witnessDir: witness, identity, storeOnce, serialize });
+  guard.assertConsistent();
+  return { initialized: true, records: snapshot.files.length, approvedSnapshotSha256 };
+}
+
+function syncParent(path) {
+  if (process.platform === 'win32') throw new ProviderStoreHold('migration requires directory durability support');
+  const fd = openSync(dirname(path), 'r');
+  try { fsyncSync(fd); } finally { closeSync(fd); }
 }

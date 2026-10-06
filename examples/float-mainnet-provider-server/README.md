@@ -239,3 +239,16 @@ retained history; benchmark a realistic inventory before production migration.
 The directory checks address accidental replacement and symlink use. They do
 not provide protection against a malicious local user who can rewrite both
 store and witness, or concurrent operators replacing files during reads.
+
+The module exports `captureStoreSnapshot` for offline inspection and
+`initializeStoreWitness` for an explicitly approved inventory. Stop the
+provider before inspection and initialization. Pass the original identity,
+store and witness paths, the snapshot, an independently pinned SHA256 of its
+canonical serialized bytes, `storeOnce` from the provider kit, and
+`serialize: value => stableStringify(value) + "\n"` from the preflight kit.
+The initializer compares the complete current inventory before any write and
+again before committing its identity. It refuses an existing witness and
+leaves an interrupted initialization incomplete. It never modifies original
+provider records. A fingerprint of a freshly inspected store is not historical
+completeness proof: reconcile original signatures, request bindings, results
+and finalized provider payments before approving it.

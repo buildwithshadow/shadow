@@ -1,9 +1,10 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, symlinkSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { test } from 'node:test';
-import { createStoreWitness, ProviderStoreHold } from '../../examples/float-mainnet-provider-server/store-witness.mjs';
+import { captureStoreSnapshot, initializeStoreWitness, createStoreWitness, ProviderStoreHold } from '../../examples/float-mainnet-provider-server/store-witness.mjs';
 import { storeOnce } from './float-mainnet-provider.mjs';
 import { stableStringify } from './float-mainnet-preflight.mjs';
 const digest = `0x${'ab'.repeat(32)}`;
@@ -93,4 +94,59 @@ test('unknown imported records cannot silently become authoritative', () => fixt
  test('recovery mode never initializes missing witness state', () => fixture(({ options, witnessDir }) => {
   assert.throws(() => createStoreWitness({ ...options, readOnly: true }), /existing witness/);
   assert.equal(existsSync(witnessDir), false);
+}));
+
+const fingerprint = snapshot => createHash('sha256').update(serialize(snapshot)).digest('hex');
+
+test('explicit approved inventory initializes existing records without changing their bytes', () => fixture(({ options, storeDir, make }) => {
+  const file = join(storeDir, `${digest}.acceptance.json`);
+  storeOnce(file, { digest, requestId: 'original' });
+  const before = readFileSync(file);
+  const snapshot = captureStoreSnapshot(options);
+  assert.deepEqual(initializeStoreWitness({ ...options, snapshot, approvedSnapshotSha256: fingerprint(snapshot) }),
+    { initialized: true, records: 1, approvedSnapshotSha256: fingerprint(snapshot) });
+  assert.deepEqual(readFileSync(file), before);
+  make().assertConsistent();
+  assert.throws(() => initializeStoreWitness({ ...options, snapshot, approvedSnapshotSha256: fingerprint(snapshot) }), /EEXIST/);
+}));
+
+test('changed or extra records and missing approval refuse migration before writing', () => fixture(({ options, storeDir, witnessDir }) => {
+  const file = join(storeDir, `${digest}.acceptance.json`); storeOnce(file, { digest });
+  const snapshot = captureStoreSnapshot(options), approvedSnapshotSha256 = fingerprint(snapshot);
+  assert.throws(() => initializeStoreWitness({ ...options, snapshot }), /approved fingerprint/);
+  writeFileSync(file, serialize({ changed: true }));
+  assert.throws(() => initializeStoreWitness({ ...options, snapshot, approvedSnapshotSha256 }), /no longer matches/);
+  assert.equal(existsSync(witnessDir), false);
+}));
+
+test('migration rejects another deployment, path and witness inside the store', () => fixture(({ options, storeDir, witnessDir }) => {
+  storeOnce(join(storeDir, `${digest}.acceptance.json`), { digest });
+  const snapshot = captureStoreSnapshot(options), approvedSnapshotSha256 = fingerprint(snapshot);
+  assert.throws(() => initializeStoreWitness({ ...options, identity: { ...options.identity, contract: 'wrong' }, snapshot, approvedSnapshotSha256 }), /no longer matches/);
+  assert.throws(() => initializeStoreWitness({ ...options, snapshot, approvedSnapshotSha256, witnessDir: join(storeDir, 'witness') }), /location/);
+  assert.equal(existsSync(witnessDir), false);
+}));
+
+test('interrupted migration remains incomplete and cannot resume automatically', () => fixture(({ options, storeDir, witnessDir, make }) => {
+  storeOnce(join(storeDir, `${digest}.acceptance.json`), { digest });
+  const snapshot = captureStoreSnapshot(options), approvedSnapshotSha256 = fingerprint(snapshot);
+  const failStore = (file, value) => { if (file.endsWith('/identity.json')) throw new Error('interrupted commit'); return storeOnce(file, value); };
+  assert.throws(() => initializeStoreWitness({ ...options, storeOnce: failStore, snapshot, approvedSnapshotSha256 }), /interrupted commit/);
+  assert.equal(existsSync(join(witnessDir, `${digest}.acceptance.json`)), true);
+  assert.equal(existsSync(join(witnessDir, 'identity.json')), false);
+  assert.throws(make, /missing identity/);
+  assert.throws(() => initializeStoreWitness({ ...options, snapshot, approvedSnapshotSha256 }), /EEXIST/);
+}));
+
+test('store activity during migration prevents publishing the identity commit marker', () => fixture(({ options, storeDir, witnessDir, make }) => {
+  const file = join(storeDir, `${digest}.acceptance.json`); storeOnce(file, { digest });
+  const snapshot = captureStoreSnapshot(options), approvedSnapshotSha256 = fingerprint(snapshot);
+  const changingStore = (target, value) => {
+    const result = storeOnce(target, value);
+    writeFileSync(file, serialize({ changedDuringInitialization: true }));
+    return result;
+  };
+  assert.throws(() => initializeStoreWitness({ ...options, storeOnce: changingStore, snapshot, approvedSnapshotSha256 }), /no longer matches/);
+  assert.equal(existsSync(join(witnessDir, 'identity.json')), false);
+  assert.throws(make, /missing identity/);
 }));
