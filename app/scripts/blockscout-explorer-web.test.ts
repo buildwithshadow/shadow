@@ -102,15 +102,23 @@ test("MCP log continuation reaches the second page before claiming a complete hi
       const u = new URL(String(input));
       if (u.pathname.includes("unlock")) return Response.json({ data: {} });
       pages++;
-      if (pages === 1) return Response.json({ data: { items: [{ index: 2 }] }, pagination: { next_call: {
+      if (pages === 1) return Response.json({ data: [{ index: 2, data_truncated: false }], pagination: { next_call: {
         tool_name: "direct_api_call", params: { chain_id: "5042002", endpoint_path: endpoint, cursor: "next_page" },
       } } });
       assert.equal(u.searchParams.get("cursor"), "next_page");
       assert.equal(u.searchParams.has("query_params[mcp_cursor]"), false);
-      return Response.json({ data: { items: [{ index: 1 }], next_page_params: null } });
+      return Response.json({ data: [{ index: 1, data_truncated: false }] });
     } }),
   });
   assert.equal(result.pages, 2);
-  assert.deepEqual(result.items, [{ index: 2 }, { index: 1 }]);
+  assert.deepEqual(result.items, [{ index: 2, data_truncated: false }, { index: 1, data_truncated: false }]);
   assert.deepEqual(result.warnings, []);
+});
+
+test("truncated MCP log data cannot become a successful empty or complete history", async () => {
+  await assert.rejects(fetchBlockscoutExplorer(`https://explorer.testnet.arc.io/api/v2/addresses/${account}/logs`, undefined, {
+    chainId: 5042002, env: { BLOCKSCOUT_PRO_API_KEY: key }, fetchImpl: async target => Response.json({
+      data: String(target).includes("unlock") ? {} : [{ data: "0x", data_truncated: true }],
+    }),
+  }), /truncated/);
 });

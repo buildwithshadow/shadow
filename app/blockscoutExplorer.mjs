@@ -58,8 +58,11 @@ export async function fetchBlockscoutExplorer(url, init = {}, { chainId, env = p
     } else params[`query_params[${name}]`] = value;
   }
   const result = await call("direct_api_call", params);
-  if (!result?.data || typeof result.data !== "object" || Array.isArray(result.data)) throw new Error("Invalid explorer data");
-  const data = { ...result.data };
+  if (!result?.data || typeof result.data !== "object") throw new Error("Invalid explorer data");
+  const data = Array.isArray(result.data) ? { items: result.data, next_page_params: null } : { ...result.data };
+  if (Array.isArray(data.items) && data.items.some(item => item?.data_truncated === true)) {
+    throw new Error("Explorer log data is truncated");
+  }
   if (result.pagination != null) {
     const next = result.pagination.next_call;
     if (next?.tool_name !== "direct_api_call" || String(next?.params?.chain_id) !== String(chainId)
