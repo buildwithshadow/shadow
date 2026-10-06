@@ -114,14 +114,14 @@ function setup({mainnet=false,providerCode='0x',bindingVersion=2n}={}) {
     if (receiptTamper) message.principal = "50001";
     return new Response(JSON.stringify({ typedData, signature }));
   };
-  const create = () =>
+  const create = (withLock = async (_key, work) => work()) =>
     (mainnet?createGuardedMainnetPurchase:createSelfServicePurchase)({
       client,
       wallet,
       config: selectedConfig,
       storage,
       fetchImpl,
-      withLock: async (_key, work) => work(),
+      withLock,
       random: () => new Uint8Array(32).fill(8),
     });
   return {
@@ -149,6 +149,24 @@ test("wallet purchase needs no enrollment token and persists the attempt before 
   await assert.rejects(h.create().submit(), /reconciliation/);
   assert.equal(h.counts().sends, 1);
   assert.equal((await h.create().recover()).status, "unconfirmed");
+});
+
+test('an unrelated funding hold blocks signing but permits read only recovery and verified expiry archive',async()=>{
+ const h=setup();let held=false;
+ const lock=async(_key,work,operation)=>{
+   if(held && (operation==='prepare'||operation==='submit'))throw Error('unresolved funding');
+   return work();
+ };
+ const flow=h.create(lock);
+ await flow.prepare(lineId,'held-funding-recovery');
+ held=true;await assert.rejects(flow.submit(),/unresolved funding/);
+ assert.deepEqual(h.counts(),{sends:0,signs:0});
+ held=true;
+ const before=h.counts();
+ assert.equal((await flow.recover()).status,'unconfirmed');
+ h.advance(2000n);await flow.archive();assert.equal(flow.load(),null);
+ assert.deepEqual(h.counts(),before);
+ await assert.rejects(flow.prepare(lineId,'another'),/unresolved funding/);
 });
 test("altered signing payload or changed wallet is rejected before signing", async () => {
   const h = setup(),

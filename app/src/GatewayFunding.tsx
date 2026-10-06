@@ -4,7 +4,6 @@ import {
   createWalletClient,
   custom,
   formatUnits,
-  getAddress,
   http,
   parseUnits,
   type Address,
@@ -19,7 +18,7 @@ import {
   type GatewayPlan,
   type GatewayRecord,
 } from "../scripts/gateway-reserve-browser-funding.mjs";
-import { gatewayWalletLockKey, assertCandidateFundingResolved } from "./gatewayFundingGuard";
+import { gatewayWalletLockKey, assertCandidateFundingResolved, assertPurchaseResolved } from "./gatewayFundingGuard";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { createGatewayBrowserJournal, gatewayMintConfirmed } from "../scripts/gateway-reserve-browser-journal.mjs";
 
@@ -189,13 +188,7 @@ export function GatewayFunding({
             );
           if (kind !== "recover" && kind !== "archive") {
             assertCandidateFundingResolved(account);
-            const purchase = window.localStorage.getItem(
-              `shadow.public-purchase.v1:${deployment.chainId}:${getAddress(deployment.address)}:${getAddress(account)}`,
-            );
-            if (purchase && JSON.parse(purchase).stage !== "delivered")
-              throw Error(
-                "Resolve and archive the earlier purchase before using Gateway.",
-              );
+            assertPurchaseResolved(account, window.localStorage, deployment.chainId);
           }
           if (kind === "quote") {
             if (!/^\d+(\.\d{1,6})?$/.test(reserve))

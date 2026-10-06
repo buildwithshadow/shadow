@@ -24,12 +24,14 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const setup = useMemo(() => { try { return { engine: account && window.ethereum ? (mainnet ? createGuardedMainnetPurchase : createSelfServicePurchase)({
     client, wallet: createWalletClient({ chain, transport: custom(window.ethereum), account }),
     storage: window.localStorage,
-    withLock: async (key: string, work: () => Promise<unknown>) => {
+    withLock: async (key: string, work: () => Promise<unknown>, operation: 'prepare' | 'submit' | 'recover' | 'archive') => {
       if (!navigator.locks) throw new Error('This browser cannot coordinate wallet actions.');
       return navigator.locks.request(gatewayWalletLockKey(account, deployment.chainId), {ifAvailable:true}, async lock => {
         if (!lock) throw new Error('Another Shadow tab is using this wallet.');
-        assertCandidateFundingResolved(account, window.localStorage, deployment.chainId);
-        if (!mainnet) assertGatewayFundingResolved(account);
+        if (operation === 'prepare' || operation === 'submit') {
+          assertCandidateFundingResolved(account, window.localStorage, deployment.chainId);
+          if (!mainnet) assertGatewayFundingResolved(account);
+        }
         return navigator.locks.request(key, {ifAvailable:true}, async purchaseLock => {
           if (!purchaseLock) throw new Error('Another tab is using this purchase.');
           return work();
@@ -49,7 +51,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   useEffect(() => { if (reviewing && !dialog.current?.open) dialog.current?.showModal(); else if (!reviewing) dialog.current?.close(); }, [reviewing]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
-    if (!engine || inFlight.current || busy || !correctNetwork || fundingPending) return;
+    if (!engine || inFlight.current || busy || !correctNetwork || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
     inFlight.current = true;
     const current = revision.current;
     setError(''); setNotice(''); setBusy(kind === 'submit' ? 'Confirm the purchase signature, then the transaction in your wallet…' : 'Checking your purchase…');
@@ -87,9 +89,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       inFlight.current = false; setBusy('');
     }
   }
-  const disabled = !account || !correctNetwork || Boolean(busy) || fundingPending;
+  const recoveryDisabled = !account || !correctNetwork || Boolean(busy);
+  const disabled = recoveryDisabled || fundingPending;
   const blocker = !account ? 'Connect the agent wallet to continue.' : !correctNetwork ? `Switch to ${network} to continue.`
-    : fundingPending ? 'Resolve the saved funding transaction first.' : busy ? busy : setup.error || null;
+    : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : busy ? busy : setup.error || null;
   const signable = record?.stage === 'prepared' || record?.stage === 'accepted';
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel" aria-labelledby="purchase-title">
@@ -108,8 +111,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       {record.txHash && <a href={`${chain.blockExplorers.default.url}/tx/${record.txHash}`} target="_blank" rel="noreferrer">View original transaction</a>}
       <div className="fundingActions">
         {signable && <button type="button" disabled={disabled} onClick={() => setReviewing(true)}>Review saved purchase</button>}
-        <button type="button" disabled={disabled} onClick={() => void action('recover')}>Check payment & recover result</button>
-        <button type="button" disabled={disabled} onClick={() => void action('archive')}>Resolve completed or expired purchase</button>
+        <button type="button" disabled={recoveryDisabled} onClick={() => void action('recover')}>Check payment & recover result</button>
+        <button type="button" disabled={recoveryDisabled} onClick={() => void action('archive')}>Resolve completed or expired purchase</button>
       </div>
       <p>Recovery never resends a payment. An unknown payment remains held until confirmed or its unpaid authorization has expired. Repay debt and reclaim eligible funds under “Manage a line.”</p>
     </>}

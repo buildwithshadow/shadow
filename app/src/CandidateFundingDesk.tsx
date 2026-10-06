@@ -10,7 +10,7 @@ import {
 import "./candidateFunding.css";
 import { PublicPurchase, type PublicService } from "./PublicPurchase";
 import { GatewayFunding } from "./GatewayFunding";
-import { assertGatewayFundingResolved, assertCandidateFundingResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
+import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPurchaseResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 
@@ -328,6 +328,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         if (!lock) throw new Error("Another Shadow tab is handling this wallet. Finish that transaction there first.");
         if (!mainnet) assertGatewayFundingResolved(sender);
         assertCandidateFundingResolved(sender, window.localStorage, deployment.chainId);
+        if (intent.kind !== 'repay' && !(intent.kind === 'approve' && intent.nextAction === 'repay')) assertPurchaseResolved(sender, window.localStorage, deployment.chainId);
         const result = await executeCandidateCall({
           publicClient: client,
           walletClient: createWalletClient({ chain, transport: custom(window.ethereum!), account: sender }),
