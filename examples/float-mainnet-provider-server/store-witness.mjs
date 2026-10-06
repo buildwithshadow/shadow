@@ -116,6 +116,7 @@ export function captureStoreSnapshot({ storeDir, identity }) {
 }
 
 export function initializeStoreWitness({ storeDir, witnessDir, identity, snapshot, approvedSnapshotSha256, storeOnce, serialize }) {
+  if (process.platform === 'win32') throw new ProviderStoreHold('migration requires directory durability support');
   if (!/^[a-f0-9]{64}$/.test(approvedSnapshotSha256 ?? '') || checksum(serialize(snapshot)) !== approvedSnapshotSha256) {
     throw new ProviderStoreHold('snapshot lacks its independently approved fingerprint');
   }

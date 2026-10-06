@@ -150,3 +150,15 @@ test('store activity during migration prevents publishing the identity commit ma
   assert.equal(existsSync(join(witnessDir, 'identity.json')), false);
   assert.throws(make, /missing identity/);
 }));
+
+
+test('unsupported Windows migration refuses before creating any witness directory', () => fixture(({ options, storeDir, witnessDir }) => {
+  storeOnce(join(storeDir, `${digest}.acceptance.json`), { digest });
+  const snapshot = captureStoreSnapshot(options), approvedSnapshotSha256 = fingerprint(snapshot);
+  const descriptor = Object.getOwnPropertyDescriptor(process, 'platform');
+  try {
+    Object.defineProperty(process, 'platform', { value: 'win32' });
+    assert.throws(() => initializeStoreWitness({ ...options, snapshot, approvedSnapshotSha256 }), /directory durability/);
+    assert.equal(existsSync(witnessDir), false);
+  } finally { Object.defineProperty(process, 'platform', descriptor); }
+}));
