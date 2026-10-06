@@ -38,3 +38,18 @@ test('failed verification or forbidden environment cannot launch authentication'
  await assert.rejects(()=>runVerifiedCli(['wallet','login','builder@example.com'],{inputEnvironment:{CIRCLE_PROXY_URL:'secret'},spawnImpl}),/CIRCLE_PROXY_URL/);
  assert.equal(started,false);
 });
+
+
+test('live terms inspection is allowed and acceptance requires the user confirmation flag',()=>{
+ assert.deepEqual(parseVerifiedCliArgs(['terms','show','--init','--output','json']).args,['terms','show','--init','--output','json']);
+ assert.deepEqual(parseVerifiedCliArgs(['terms','accept','--confirm-terms','--output','json']).args,['terms','accept','--output','json']);
+ for(const args of [['terms','accept'],['terms','accept','--output','json'],['terms','reset'],['terms','show','--init','--init']])assert.throws(()=>parseVerifiedCliArgs(args));
+ assert.equal(circleCliEnvironment({CIRCLE_ACCEPT_TERMS:'1'}).CIRCLE_ACCEPT_TERMS,undefined);
+});
+test('terms acceptance passes only the explicitly requested vendor command',async()=>{
+ let command;
+ await runVerifiedCli(['terms','accept','--confirm-terms','--output','json'],{
+  inputEnvironment:{},prepare:async()=>'/verified/dist/index.js',
+  spawnImpl:(_executable,args)=>{command=args;const child=new EventEmitter();queueMicrotask(()=>child.emit('exit',0,null));return child;},
+ });assert.deepEqual(command,['/verified/dist/index.js','terms','accept','--output','json']);
+});

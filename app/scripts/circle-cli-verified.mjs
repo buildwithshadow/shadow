@@ -20,16 +20,23 @@ export function parseVerifiedCliArgs(argv) {
   }
   if(args.length===1 && ['--version','--help'].includes(args[0]))return {...options,args};
   const command=args.slice(0,2).join(' ');
-  if(command==='wallet login') {
+  if(command==='terms show') {
+    const remaining=args.slice(2);
+    if(remaining[0]==='--init')remaining.shift();
+    if(remaining.length && !(remaining.length===2&&remaining[0]==='--output'&&remaining[1]==='json'))throw Error('Terms inspection supports --init and --output json only.');
+  } else if(command==='terms accept') {
+    if(args[2]!=='--confirm-terms' || (args.length!==3 && !(args.length===5&&args[3]==='--output'&&args[4]==='json')))throw Error('Read the live terms first, then explicitly supply --confirm-terms to record your acceptance.');
+    args.splice(2,1);
+  } else if(command==='wallet login') {
     if((args[2]??'').startsWith('-') || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(args[2]??'') ||
        (args.length!==3 && !(args.length===4&&args[3]==='--testnet')))throw Error('Login requires an email and optional --testnet. Enter the OTP privately in Terminal.');
   } else {
     const flags={
       'wallet status':new Set(['--type','--output']),
       'wallet list':new Set(['--type','--chain','--output']),
-      'transaction list':new Set(['--address','--chain','--output','--state','--page-size','--page-after']),
+      'transaction list':new Set(['--address','--chain','--output','--state','--limit','--cursor','--operation','--tx-type']),
     }[command];
-    if(!flags)throw Error('This launcher supports authentication and read only inspection. Use Shadow’s bounded runner for signing and transactions.');
+    if(!flags)throw Error('This launcher supports explicit terms consent, authentication and read only inspection. Use Shadow’s bounded runner for signing and transactions.');
     const used=new Set();
     for(let i=2;i<args.length;i+=2) {
       const flag=args[i],value=args[i+1];
