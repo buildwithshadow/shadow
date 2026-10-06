@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { createPublicClient, createTestClient, createWalletClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getAddress, http, keccak256, stringToHex, toHex, zeroAddress, zeroHash, type Address, type Hex } from 'viem'
+import { TransactionReceiptNotFoundError, createPublicClient, createTestClient, createWalletClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getAddress, http, keccak256, stringToHex, toHex, zeroAddress, zeroHash, type Address, type Hex } from 'viem'
 // @ts-expect-error Existing shared JavaScript Anvil helpers have no declaration file.
 import { account, startAnvil, e2eSkip } from './float-mainnet-e2e.mjs'
 import {
@@ -71,7 +71,7 @@ function fixture() {
     },
     async simulateContract() { state.simulation++; if (state.simulationError) throw state.simulationError; return { result: undefined } },
     async getTransaction({ hash }: any) { const tx = state.transactions.get(hash); if (!tx) throw new Error('transaction not found'); return tx },
-    async getTransactionReceipt({ hash }: any) { const receipt = state.receipts.get(hash); if (!receipt) throw new Error('receipt not found'); return receipt },
+    async getTransactionReceipt({ hash }: any) { const receipt = state.receipts.get(hash); if (!receipt) throw new TransactionReceiptNotFoundError({ hash }); return receipt },
   } as unknown as CandidateReadClient
   const wallet = {
     async getChainId() { return state.walletChain },
@@ -580,4 +580,28 @@ test('an inconsistent pending transaction response cannot poison the recovered h
  current.transaction.hash=otherHash;
  assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'unknown');
  assert.equal(f.journal.load()!.actualNonce,8);assert.equal(f.journal.load()!.txHash,otherHash);
+});
+
+test('a historical receipt overrides a backend that labels the original pending',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const old=f.mined(prepared,{nonce:6,blockNumber:99n});
+   old.transaction.blockNumber=null;old.transaction.blockHash=null;return txHash;
+ };
+ assert.equal((await executeCandidateCall(f.session,prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
+ f.mined(prepared,{hash:otherHash,nonce:8});
+ assert.equal((await reconcileCandidatePending(f.client,f.journal.load()!,otherHash,f.journal)).status,'confirmed');
+ assert.equal(f.journal.load()!.actualNonce,8);
+});
+
+test('a receipt transport failure cannot be treated as evidence of a pending original',async()=>{
+ const f=fixture(),prepared=await prepareCandidateOpen(f.client,sponsor,input);
+ f.state.onSend=()=>{
+   const original=f.mined(prepared,{nonce:8,blockNumber:null,blockHash:null});
+   f.state.receipts.delete(txHash);return txHash;
+ };
+ const client={...f.client,getTransactionReceipt:async()=>{throw Error('RPC timeout');}};
+ assert.equal((await executeCandidateCall({...f.session,publicClient:client},prepared)).status,'unknown');
+ assert.equal(f.journal.load()!.actualNonce,undefined);
 });
