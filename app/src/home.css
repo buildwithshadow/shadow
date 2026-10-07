@@ -103,6 +103,7 @@
   border-top: 1px solid var(--border-strong);
   min-width: 0;
   padding: 56px 0;
+  scroll-margin-top: 92px;
 }
 
 .homeSectionHead {
@@ -335,6 +336,12 @@
   }
 }
 
+@media (min-width: 721px) and (max-width: 880px) {
+  .homeSection {
+    scroll-margin-top: 184px;
+  }
+}
+
 @media (max-width: 720px) {
   .homePage {
     padding-left: 0;
@@ -355,6 +362,7 @@
 
   .homeSection {
     padding: 42px 0;
+    scroll-margin-top: 40px;
   }
 
   .homeSectionHead {

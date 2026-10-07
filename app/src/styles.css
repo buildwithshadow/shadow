@@ -4408,7 +4408,6 @@ a[href="/builders/v2"] {
 }
 
 .heroMetricsSyncDot {
-  animation: heroPulse 1.8s ease-in-out infinite;
   background: var(--copy);
   border-radius: 999px;
   box-shadow: 0 0 10px rgba(183, 255, 74, 0.45);
@@ -9030,17 +9029,11 @@ code {
 }
 
 .heroLedgerLiveDot {
-  animation: heroPulse 2.4s ease-in-out infinite;
   background: var(--copy);
   border-radius: 999px;
   display: inline-block;
   height: 6px;
   width: 6px;
-}
-
-@keyframes heroPulse {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.35; }
 }
 
 .heroLedgerIntent {
