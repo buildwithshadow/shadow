@@ -61,12 +61,18 @@ test('wallet identity binds one journal root without blocking unrelated sponsors
  assert.equal(sends,2);
 });
 test('RPC disagreement, unfinalized and wrong network cannot prove completion',async()=>{
- const hash='0x'+'aa'.repeat(32);const r={blockNumber:12n,blockHash:hash,status:'success',logs:[]};
+ const hash='0x'+'aa'.repeat(32);const r={transactionHash:hash,blockNumber:12n,blockHash:hash,status:'success',logs:[]};
  const c={getChainId:async()=>5042002,getTransactionReceipt:async()=>r,getBlock:async()=>({number:12n,hash})};
  assert.deepEqual(await finalizedGatewayReceipt([c,c],hash),r);
  await assert.rejects(finalizedGatewayReceipt([c,{...c,getChainId:async()=>1}],hash));
  await assert.rejects(finalizedGatewayReceipt([c,{...c,getBlock:async()=>({number:11n,hash})}],hash),/finalized/);
  await assert.rejects(finalizedGatewayReceipt([c,{...c,getTransactionReceipt:async()=>({...r,logs:[{wrong:true}]})}],hash),/disagreement/);
+ // Wrong transactionHash on one peer must be rejected.
+ const wrongHash='0x'+'bb'.repeat(32);
+ await assert.rejects(finalizedGatewayReceipt([c,{...c,getTransactionReceipt:async()=>({...r,transactionHash:wrongHash})}],hash),/transactionHash/);
+ await assert.rejects(finalizedGatewayReceipt([{...c,getTransactionReceipt:async()=>({...r,transactionHash:wrongHash})},c],hash),/transactionHash/);
+ // Missing transactionHash must be rejected.
+ await assert.rejects(finalizedGatewayReceipt([c,{...c,getTransactionReceipt:async()=>({blockNumber:12n,blockHash:hash,status:'success',logs:[]})}],hash),/transactionHash/);
 });
 test('attestation must contain exactly the authorized transfer and be unexpired',()=>{
  const i=intent(),s=i.spec;
