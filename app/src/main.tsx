@@ -4,6 +4,8 @@ import { GUARDED_MAINNET, GUARDED_MAINNET_SERVICE } from "./guardedMainnet";
 import { PUBLIC_TESTNET, PUBLIC_TEST_SERVICE } from "./publicTestnet";
 import { HomePage } from "./HomePage";
 import { CandidateFundingDesk } from "./CandidateFundingDesk";
+import { BuildersPage } from "./BuildersPage";
+import { RoadmapPage } from "./RoadmapPage";
 import { createRoot } from "react-dom/client";
 import {
   BrowserRouter,
@@ -1759,6 +1761,7 @@ const HOME_TITLE = document.title;
 const ROUTE_TITLES: Record<string, string> = {
   "/evidence": "Evidence | Shadow",
   "/builders": "Builders | Shadow",
+  "/builders/v2": "Float V2 tools | Shadow",
   "/start": "Fund an agent | Shadow",
   "/funding": "Earlier candidate | Shadow",
   "/roadmap": "Roadmap | Shadow",
@@ -1773,7 +1776,7 @@ function App() {
   const { pathname } = useLocation();
   const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
   const isEvidenceRoute = route === "/evidence";
-  const usesFloatV2State = isEvidenceRoute || route === "/builders" || route === "/builders/v2";
+  const usesFloatV2State = isEvidenceRoute || route === "/builders/v2";
   const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
   const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet";
   const [state, setState] = useState<ShadowState | null>(null);
@@ -2488,11 +2491,15 @@ function App() {
     </div>
   );
 
-  const buildersPage = (
+  const buildersPage = <BuildersPage />;
+  const floatV2ToolsPage = (
     <div className="routePage">
       <section className="pageHead">
         <p className="pageEyebrow">builders · agent access</p>
         <h1 className="pageTitle">Give your agent sponsor-backed capacity without pre-funding it first.</h1>
+        <p className="pageLede">
+          These tools are for the earlier Float V2 contract; the current public testnet browser flow starts at /start.
+        </p>
         <p className="pageLede">
           Shadow Float is for buyer agents that need paid data, compute, or API calls under strict policy. The agent signs
           a bounded intent; V2 verifies it onchain, pays the named provider from sponsor reserve, and records the debt trail.
@@ -2562,70 +2569,7 @@ function App() {
       </section>
     </div>
   );
-
-  const roadmapPage = (
-    <div className="routePage">
-      <section className="pageHead">
-        <p className="pageEyebrow">product status</p>
-        <h1 className="pageTitle">Public testnet flow and what comes next.</h1>
-        <p className="pageLede">
-          Shadow Float now covers the full testnet loop: sponsor reserve, signed authorization, provider payment, debt,
-          repayment, automated scoring, external sponsors, and labeled open debt. The roadmap below keeps the Float path
-          separate from supporting records.
-        </p>
-      </section>
-      <section className="roadmapStatusBand" aria-label="Live Shadow Float milestones">
-        <article>
-          <span>live now</span>
-          <strong>Float V2 spending lines</strong>
-          <p>Agents sign bounded intents, providers are paid from sponsor-backed reserve, debt is recorded, and repayment restores capacity.</p>
-        </article>
-        <article>
-          <span>matured</span>
-          <strong>External sponsor capital</strong>
-          <p>CitePay and Forum Tollgate opened external sponsored lines; Forum also proved reserve reclaim and reopen.</p>
-        </article>
-        <article>
-          <span>matured</span>
-          <strong>Autonomous line scoring</strong>
-          <p>Sponsored lines are re-scored by ShadowFloat from recorded paid, blocked, and repaid behavior after each action.</p>
-        </article>
-        <article>
-          <span>matured</span>
-          <strong>CCTP-funded reserve</strong>
-          <p>Sepolia USDC was burned, minted on Arc, locked as a Float reserve, drawn to pay CitePay, and repaid.</p>
-        </article>
-      </section>
-      <section className="roadmapGrid" aria-label="Shadow Float roadmap">
-        <article className="roadmapCard">
-          <span>next</span>
-          <strong>Production-grade mandate custody</strong>
-          <p>Move M1 adapter allocation into a withdrawable custody model with cleaner release rules and stronger execution accountability.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>matured</span>
-          <strong>Provider delivery receipts</strong>
-          <p>CitePay signed a delivery receipt for a Driplet-paid request, and ShadowFloat recorded it onchain. Standardizing that receipt across every provider remains next.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>next</span>
-          <strong>More independent providers</strong>
-          <p>Expand from CitePay-style paid answers into more data, scan, compute, and API services that agents can buy through Float.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>next</span>
-          <strong>Deeper sponsor controls</strong>
-          <p>Give sponsors clearer dashboards for daily limits, provider mandates, reserve reclaim, defaults, and risk exposure.</p>
-        </article>
-        <article className="roadmapCard">
-          <span>controlled mainnet rehearsal is paused</span>
-          <strong>Treasury reserve model</strong>
-          <p>Define reserve providers, fee policy, and default handling for larger spending lines without weakening the reserve floor.</p>
-        </article>
-      </section>
-    </div>
-  );
-
+  const roadmapPage = <RoadmapPage />;
   return (
     <main className={isFundingDeskRoute ? "shell candidateShell" : "shell"}>
       <nav className="nav">
@@ -2666,7 +2610,7 @@ function App() {
         <Route path="/" element={<HomePage />} />
         <Route path="/evidence" element={evidencePage} />
         <Route path="/agents" element={<EvidenceRedirect />} />
-        <Route path="/follow" element={<Navigate to="/builders" replace />} />
+        <Route path="/follow" element={<Navigate to="/builders/v2" replace />} />
         <Route path="/receipts" element={<EvidenceRedirect />} />
         <Route path="/lepton" element={<EvidenceRedirect fallbackHash="#records" />} />
         <Route path="/treasury" element={<EvidenceRedirect fallbackHash="#records" />} />
@@ -2674,6 +2618,7 @@ function App() {
         <Route path="/float" element={<EvidenceRedirect />} />
         <Route path="/proof" element={<EvidenceRedirect />} />
         <Route path="/builders" element={buildersPage} />
+        <Route path="/builders/v2" element={floatV2ToolsPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
         {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="guarded-mainnet" deployment={GUARDED_MAINNET} service={GUARDED_MAINNET_SERVICE} />} />}
         <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
@@ -4829,7 +4774,7 @@ function FloatV2CurrentPanel({
             <a className="floatPrimaryAction" href="#v2-activity">
               View activity
             </a>
-            <Link className="floatSecondaryAction" to="/builders">
+            <Link className="floatSecondaryAction" to="/builders/v2">
               Add an agent
             </Link>
           </div>

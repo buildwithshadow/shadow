@@ -724,6 +724,10 @@ body,
   margin-top: 22px;
 }
 
+.pageHead .floatHeroActions .floatPrimaryAction {
+  width: fit-content;
+}
+
 .floatPrimaryAction,
 .floatSecondaryAction {
   align-items: center;
@@ -3807,6 +3811,14 @@ input:focus-visible {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
+a[href="/builders/v2"] {
+  align-items: center;
+  color: var(--accent);
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
+}
+
 .builderReferenceCard code {
   background: rgba(0, 0, 0, 0.22);
   border: 1px solid var(--border);
@@ -3828,7 +3840,7 @@ input:focus-visible {
 .roadmapStatusBand {
   display: grid;
   gap: 14px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   margin: 30px var(--route-inset) 0;
 }
 
@@ -10565,6 +10577,7 @@ body {
   cursor: pointer;
   display: flex;
   gap: 9px;
+  min-height: 24px;
   min-width: 0;
 }
 
@@ -10726,10 +10739,12 @@ body {
 }
 
 .pilotOperationsRunbook {
+  align-items: center;
   color: var(--accent);
   display: inline-flex;
   font: 600 11px/1.2 var(--mono);
   margin-top: 16px;
+  min-height: 24px;
   text-decoration: none;
 }
 
@@ -10808,11 +10823,19 @@ body {
 }
 
 .builderFlowGrid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .builderReferenceGrid {
   grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.routePage .builderPrimaryAction,
+.routePage .builderLegacyTools {
+  align-items: center;
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
 }
 
 .builderFlowCard,
