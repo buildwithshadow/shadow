@@ -60,7 +60,7 @@ test("a used nonce returns the transaction from the saved account", async () => 
   assert.ok(signals[0] instanceof AbortSignal, "each explorer request carries a timeout signal");
   assert.match(
     urls[0],
-    /^https:\/\/explorer\.testnet\.arc\.io\/api\/v2\/addresses\/0x894f6d4d3a7cFF40aeFD63Ac3794358E38a3dDc3\/transactions\?filter=from$/,
+    /^\/api\/explorer\?chainId=5042002&account=0x894f6d4d3a7cFF40aeFD63Ac3794358E38a3dDc3&filter=from$/,
   );
 });
 
@@ -79,7 +79,7 @@ test("older nonces are found by following the explorer's page parameters", async
     hashFor(30),
   );
   assert.equal(urls.length, 2);
-  const query = new URL(urls[1]).searchParams;
+  const query = new URL(urls[1], "https://www.shadowbuild.xyz").searchParams;
   assert.equal(query.get("filter"), "from");
   assert.equal(query.get("block_number"), "64389445");
   assert.equal(query.get("index"), "17");
@@ -152,5 +152,5 @@ test("explorer failures and malformed results throw instead of guessing", async 
 test('mainnet nonce lookup uses its own explorer and never the testnet host',async()=>{
   const x=explorer([{items:[item(17)],next_page_params:null}]);
   assert.equal(await findSentTransactionHash({...base(17,21,x.fetchImpl),chainId:5042}),hashFor(17));
-  assert(x.urls[0].startsWith('https://explorer.arc.io/api/v2/'));
+  assert(x.urls[0].startsWith('/api/explorer?chainId=5042&'));
 });

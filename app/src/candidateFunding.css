@@ -12,6 +12,10 @@
 .fundingDesk :is(button, input, summary, a):focus-visible { outline: 3px solid var(--accent); outline-offset: 3px; }
 .fundingDesk a { color: var(--accent); text-underline-offset: 4px; }
 .fundingScope { color: var(--ink-soft); font-size: 14px; line-height: 1.6; border-left: 2px solid var(--accent); padding-left: 14px; margin: 0 0 24px; }
+.fundingPurchaseStatus { align-items: center; background: var(--surface); border: 1px solid var(--warn); border-left-width: 3px; border-radius: 10px; display: flex; flex-wrap: wrap; gap: 12px 18px; justify-content: space-between; margin: 0 0 24px; padding: 14px 16px; }
+.fundingPurchaseStatus > p { color: var(--ink); flex: 1 1 320px; line-height: 1.5; margin: 0; }
+.fundingDesk #purchase-title { scroll-margin-top: 112px; }
+.fundingDesk #purchase-title:focus { outline: 3px solid var(--accent); outline-offset: 3px; }
 .fundingModes { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 18px; }
 .fundingModes > span { flex-basis: 100%; }
 .fundingModes button[aria-pressed="true"] { background: var(--accent-soft); border-color: var(--accent); }
@@ -19,6 +23,8 @@
 .fundingFeedback { margin: 12px 0; scroll-margin-top: 112px; }
 @media (max-width: 880px) { .fundingFeedback { scroll-margin-top: 224px; } }
 @media (max-width: 720px) { .fundingFeedback { scroll-margin-top: 16px; } }
+@media (max-width: 880px) { .fundingDesk #purchase-title { scroll-margin-top: 224px; } }
+@media (max-width: 720px) { .fundingDesk #purchase-title { scroll-margin-top: 16px; } }
 .fundingFeedback p { padding: 14px 16px; margin: 8px 0; border: 1px solid var(--border-strong); border-radius: 8px; overflow-wrap: anywhere; line-height: 1.5; }
 .fundingFeedback .fundingError { border-color: var(--block); color: var(--ink); }
 .fundingFeedback .fundingSuccess { border-color: var(--accent); }

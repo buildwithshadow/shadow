@@ -27,6 +27,9 @@ export function HomePage() {
           <Link className="homeCta" to="/start">
             Fund an agent
           </Link>
+          <Link className="homeAgentLink" to="/start?role=agent">
+            I run an agent
+          </Link>
         </div>
       </section>
 

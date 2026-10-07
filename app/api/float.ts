@@ -34,6 +34,8 @@ import {
 import { createRpcReadQueue } from "../scripts/rpc-read-queue.mjs";
 import { buildFloatV2OperationalHealth } from "../floatV2Operations.js";
 import { readBeforeDeadline, readExplorerLogPages } from "../historicalReads.js";
+import { fetchBlockscoutExplorer } from "../blockscoutExplorer.mjs";
+import explorerRecovery from "../explorerRecovery.mjs";
 
 export const config = { maxDuration: 20 };
 
@@ -383,6 +385,12 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
     res.setHeader("Allow", "GET");
     res.status(405).json({ error: "method not allowed, use GET" });
     return;
+  }
+
+  if (queryParam(req, "mode") === "explorer") {
+    const query = req.query ? { ...req.query } : Object.fromEntries(new URL(req.url || "/", "https://www.shadowbuild.xyz").searchParams);
+    delete query.mode;
+    return explorerRecovery({ method: req.method || "GET", query }, res);
   }
 
   if (queryParam(req, "mode") === "desk") {
@@ -1468,6 +1476,7 @@ async function readFloatLogsFromExplorer(address: Address, deadlineAt: number) {
     url: `${EXPLORER_API}/addresses/${address}/logs`,
     deadlineAt,
     maxPages: EXPLORER_MAX_PAGES,
+    fetchPage: (url, init) => fetchBlockscoutExplorer(String(url), init, { chainId: ARC_CHAIN_ID }),
   });
   for (const item of items) {
     try {

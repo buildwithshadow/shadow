@@ -11,12 +11,13 @@ async function runHistory({
   rpcLogsFail = true,
 } = {}) {
   const originalFetch = globalThis.fetch;
-  const envNames = ["SHADOW_FLOAT", "ARC_RPC_URL", "KV_REST_API_URL", "KV_REST_API_TOKEN"];
+  const envNames = ["SHADOW_FLOAT", "ARC_RPC_URL", "KV_REST_API_URL", "KV_REST_API_TOKEN", "BLOCKSCOUT_PRO_API_KEY"];
   const originalEnv = new Map(envNames.map((name) => [name, process.env[name]]));
   process.env.SHADOW_FLOAT = "0x0000000000000000000000000000000000000001";
   process.env.ARC_RPC_URL = "https://rpc.example.test";
   delete process.env.KV_REST_API_URL;
   delete process.env.KV_REST_API_TOKEN;
+  process.env.BLOCKSCOUT_PRO_API_KEY = "proapi_test_only";
   let status = 0;
   let body: any;
   let logCalls = 0;
@@ -48,7 +49,7 @@ async function runHistory({
       }
       return Response.json({ jsonrpc: "2.0", id: request.id, result });
     }
-    if (url.startsWith("https://testnet.arcscan.app/api/v2/addresses/")) {
+    if (url.startsWith("https://api.blockscout.com/5042002/api/v2/addresses/")) {
       return Response.json(explorerBody, { status: explorerStatus });
     }
     throw new Error(`Unexpected network request: ${url}`);

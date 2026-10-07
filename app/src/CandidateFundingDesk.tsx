@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
@@ -60,10 +60,14 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     transport: createRpcReadTransport("https://rpc.drpc.testnet.arc.io", { timeout: 15_000,
       fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", "https://rpc.testnet.arc.network"], expectedChainId: deployment.chainId,
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment, chain, mainnet]);
-  const [mode, setMode] = useState<"open" | "manage">(() => new URLSearchParams(window.location.search).has("line") ? "manage" : "open");
+  const [mode, setMode] = useState<"open" | "manage">(() => {
+    const params = new URLSearchParams(window.location.search);
+    return params.has("line") || (service && !params.has("agent") && params.get("role") === "agent") ? "manage" : "open";
+  });
   const [role, setRole] = useState<"sponsor" | "agent" | null>(() => {
     const params = new URLSearchParams(window.location.search);
-    return !service ? null : params.has("agent") ? "sponsor" : params.has("line") ? "agent" : null;
+    return !service ? null : params.has("agent") ? "sponsor" : params.has("line") ? "agent"
+      : params.get("role") === "agent" ? "agent" : params.get("role") === "sponsor" ? "sponsor" : null;
   });
   const [account, setAccount] = useState<Address | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
@@ -87,10 +91,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [reviewInput, setReviewInput] = useState<CandidateOpenInput | null>(null);
   const [resolution, setResolution] = useState<CandidateResolution | null>(null);
   const [busy, setBusy] = useState("");
+  const [unresolvedPurchase, setUnresolvedPurchase] = useState(false);
+  const [focusPurchase, setFocusPurchase] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
   const feedback = useRef<HTMLDivElement>(null);
+  const purchaseSlot = useRef<HTMLDivElement>(null);
   const revision = useRef(0);
   const activeAccount = useRef<Address | null>(null);
   const walletReadSequence = useRef(0);
@@ -98,6 +105,39 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const autoChecked = useRef("");
   const correctNetwork = chainId === CANDIDATE_FUNDING.chainId;
   const canWrite = Boolean(account && correctNetwork && !busy && !pending && !journalError && !gatewayHeld);
+
+  const checkUnresolvedPurchase = useCallback(() => {
+    if (!service || !account) { setUnresolvedPurchase(false); return; }
+    try {
+      assertPurchaseResolved(account, window.localStorage, deployment.chainId);
+      setUnresolvedPurchase(false);
+    } catch {
+      // gatewayFundingGuard.ts belongs to the co-founder and exports only the asserting form, so catching it reuses his exact fail-closed rule instead of duplicating it.
+      setUnresolvedPurchase(true);
+    }
+  }, [account, deployment.chainId, service]);
+
+  useEffect(() => {
+    checkUnresolvedPurchase();
+  }, [busy, chainId, checkUnresolvedPurchase]);
+
+  useEffect(() => {
+    window.addEventListener("focus", checkUnresolvedPurchase);
+    window.addEventListener("storage", checkUnresolvedPurchase);
+    return () => {
+      window.removeEventListener("focus", checkUnresolvedPurchase);
+      window.removeEventListener("storage", checkUnresolvedPurchase);
+    };
+  }, [checkUnresolvedPurchase]);
+
+  useEffect(() => {
+    if (!focusPurchase || role !== "agent" || !purchaseSlot.current) return;
+    const purchaseTitle = purchaseSlot.current.querySelector<HTMLElement>("#purchase-title");
+    if (!purchaseTitle) return;
+    purchaseTitle.tabIndex = -1;
+    purchaseTitle.focus();
+    setFocusPurchase(false);
+  }, [focusPurchase, role]);
 
   function invalidate() {
     revision.current += 1;
@@ -416,6 +456,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div>
     </header>
 
+    {service && <div role="status">
+      {account && unresolvedPurchase && <div className="fundingPurchaseStatus">
+        <p>A purchase is unresolved. Check it before starting anything new.</p>
+        <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setMode("manage"); setRole("agent"); setFocusPurchase(true); }}>Check payment &amp; recover result</button>
+      </div>}
+    </div>}
+
     <p className="fundingScope">{mainnet ? "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
     {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase. Repayment needs separate test USDC from the repaying wallet—the line’s reserve cannot repay its own debt.</p>}
     {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
@@ -532,7 +579,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div>}
     </section>}
 
-    {service && <div className="fundingSlot" hidden={role === "sponsor"}><PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
+    {service && <div className="fundingSlot" ref={purchaseSlot} hidden={role === "sponsor"}><PublicPurchase account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
       client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={updateLineId} /></div>}
     <footer className="fundingFoot">{service && !mainnet && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · {network}</p>
       <p>Looking for the earlier integration? <Link to="/builders">Open Float V2 tools</Link>.</p></footer>
