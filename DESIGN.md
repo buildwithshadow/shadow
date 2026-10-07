@@ -61,7 +61,7 @@ Mono is for data and labels, not prose. Older pages use it more widely than that
 
 ## Motion
 
-1. Status indicators may pulse to show that something is live (`heroPulse` on the home ledger dot). Nothing else loops.
+1. Nothing on the site loops.
 2. Hover and state transitions are short, mostly 140 to 160ms. Any entrance animation is finite, and visibility never depends on an animation's end state: reduced motion removes the animation, so an element that starts hidden and relies on `forwards` would stay hidden.
 3. Under `prefers-reduced-motion: reduce`, all animation and transition stops and smooth scrolling turns off. The global rule sits at the end of `styles.css`. Scripted scrolls never pass `behavior: "smooth"`; the default, `auto`, follows the rule.
 
