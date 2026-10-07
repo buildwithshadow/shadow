@@ -1,10 +1,5 @@
 import { getAddress, isHash, type Address, type Hash } from "viem";
 
-// Explorer APIs by chain. testnet.arcscan.app redirects to this host, and only this host sends CORS headers.
-const EXPLORER_API: Record<number, string> = {
-  5042: "https://explorer.arc.io/api/v2",
-  5042002: "https://explorer.testnet.arc.io/api/v2",
-};
 const MAX_PAGES = 10;
 
 type ExplorerPage = {
@@ -26,8 +21,7 @@ export async function findSentTransactionHash(input: {
   readNextNonce: () => Promise<number>;
   fetchImpl?: typeof fetch;
 }): Promise<Hash | null> {
-  const api = EXPLORER_API[input.chainId];
-  if (!api) return null;
+  if (![5042, 5042002].includes(input.chainId)) return null;
   if ((await input.readNextNonce()) <= input.nonce) return null;
   const account = getAddress(input.account);
   const fetchImpl = input.fetchImpl ?? globalThis.fetch.bind(globalThis);
@@ -37,7 +31,7 @@ export async function findSentTransactionHash(input: {
       Object.entries(params).map(([key, value]) => [key, String(value)]),
     );
     const response = await fetchImpl(
-      `${api}/addresses/${account}/transactions?${query}`,
+      `/api/explorer?chainId=${input.chainId}&account=${account}&${query}`,
       { signal: AbortSignal.timeout(10_000) },
     );
     if (!response.ok)

@@ -1,0 +1,1 @@
+export function fetchBlockscoutExplorer(url: string, init: RequestInit | undefined, options: { chainId: number; env?: Record<string, string | undefined>; fetchImpl?: typeof fetch }): Promise<Response>;
