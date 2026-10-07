@@ -133,7 +133,8 @@ export async function finalizedGatewayReceipt(clients,hash) {
   return receipts[0];
 }
 
-export function validateGatewayAttestation(payload,intent,sponsor,currentBlock) {
+/** Decode one unexpired, hook-free transfer. This does not authorize a route. */
+export function decodeGatewayAttestation(payload,currentBlock) {
   assert.match(payload,/^0x(?:[0-9a-fA-F]{2})+$/);
   let bytes=hexToBytes(payload);
   if(bytesToHex(bytes.subarray(0,4)).slice(2)==='1e12db71'){
@@ -145,6 +146,10 @@ export function validateGatewayAttestation(payload,intent,sponsor,currentBlock) 
   assert.equal(bytes.length,380,'Trailing or missing attestation data');
   const expiry=BigInt(bytesToHex(bytes.subarray(4,36)));
   assert(expiry>BigInt(currentBlock),'Attestation expired');
-  assert.equal(keccak256(bytesToHex(bytes.subarray(40))),validateGatewayIntent(intent,sponsor),'Attestation does not match the signed funding intent');
-  return {transferSpecHash:transferSpecHash(intent.spec),expirationBlock:String(expiry)};
+  return {transferSpecBytes:bytesToHex(bytes.subarray(40)),expirationBlock:String(expiry)};
+}
+export function validateGatewayAttestation(payload,intent,sponsor,currentBlock) {
+  const decoded=decodeGatewayAttestation(payload,currentBlock);
+  assert.equal(keccak256(decoded.transferSpecBytes),validateGatewayIntent(intent,sponsor),'Attestation does not match the signed funding intent');
+  return {transferSpecHash:transferSpecHash(intent.spec),expirationBlock:decoded.expirationBlock};
 }
