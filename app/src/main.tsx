@@ -1776,7 +1776,7 @@ function App() {
   const { pathname } = useLocation();
   const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
   const isEvidenceRoute = route === "/evidence";
-  const usesFloatV2State = isEvidenceRoute || route === "/builders" || route === "/builders/v2";
+  const usesFloatV2State = isEvidenceRoute || route === "/builders/v2";
   const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
   const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet";
   const [state, setState] = useState<ShadowState | null>(null);
