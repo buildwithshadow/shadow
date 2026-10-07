@@ -17,11 +17,54 @@ import {
   finalizedGatewayReceipt,
   verifyGatewayEvent,
 } from "./gateway-reserve.mjs";
+import { gatewayMintConfirmed } from "./gateway-reserve-browser-journal.mjs";
+
+// ── Recovery outcome kinds ────────────────────────────────────────────────────
+//
+// A successful mint produces:
+//   { event: "AttestationUsed", hash, blockNumber, blockHash }
+//   — the only evidence that gatewayMintConfirmed accepts; the only path that
+//     permits archive.
+//
+// A recovery hold is appended to step.reconciliations[] (a bounded array on
+// the unknown step). The step stays status:'unknown' so the wallet nonce guard
+// remains live and runGatewayStep does not mark the step confirmed.
+//
+//   { recoveryHold: "cancellation-observed", replacementHash, replacementNonce,
+//     replacementBlockHash, replacementBlockNumber }
+//       A finalized tx at the same sender/nonce did NOT call gatewayMint.
+//       Both clients agreed on a canonical finalized receipt. The attestation's
+//       consumed/expired/revoked status is unknown. Keep original intent and
+//       attestation; safe no-submission retries remain available.
+//
+//   { recoveryHold: "replacement-reverted", replacementHash,
+//     replacementBlockHash, replacementBlockNumber }
+//       A finalized replacement with correct identity and calldata finalized
+//       with status "reverted". Attestation may still be live.
+//
+//   { recoveryHold: "wrong-sender-nonce", replacementHash, detail }
+//       Replacement sender or observed nonce mismatches observed original.
+//       Proposed/saved nonce NOT used for this comparison.
+//
+//   { recoveryHold: "conflicting-observations", replacementHash, detail }
+//       Two independent clients disagree on any field of original or
+//       replacement transaction (hash, from, to, input, value, nonce).
+//
+//   { recoveryHold: "finality-uncertain", replacementHash, detail }
+//       Replacement block not yet behind finalized head on at least one client,
+//       or one client couldn't confirm finality. Do not accept unfinalized state.
+//
+// A hold is returned from checkReplacementMint and written into
+// step.reconciliations[] by appendReconciliation; checkMint then returns null
+// so runGatewayStep leaves the step unknown.
+
 const same = (a, b) =>
   typeof a === "string" &&
   typeof b === "string" &&
   a.toLowerCase() === b.toLowerCase();
 const hashPattern = /^0x[0-9a-fA-F]{64}$/;
+// Maximum reconciliation entries kept per step.
+const MAX_RECONCILIATIONS = 20;
 
 // Existing Gateway balance -> sponsor wallet. The existing Shadow funding
 // review remains responsible for allowance and reserve opening afterwards.
@@ -220,17 +263,231 @@ export function createGatewayBrowserFunding({
     );
     return { transferSpecHash: record.operation };
   }
+
+  // ── Two-client canonical tx observation ──────────────────────────────────
+  //
+  // Fetch tx from BOTH clients independently. Validate all canonical fields
+  // (from, to, input, value, nonce) on BOTH observations, then assert both
+  // clients agree on every field. Returns the agreed canonical identity.
+  // Throws if either client fails, or if they disagree on any field.
+  //
+  // expectedCalldata / expectedValue / expectedTo are checked when provided,
+  // giving a hard mismatch error before any cross-client comparison.
+  async function observeTxBothClients(txHash, { expectedFrom, expectedTo, expectedInput, expectedValue } = {}) {
+    const [tx0, tx1] = await Promise.all([
+      clients[0].getTransaction({ hash: txHash }),
+      clients[1].getTransaction({ hash: txHash }),
+    ]);
+    // Validate each observation independently against saved expectations.
+    for (const [tx, label] of [[tx0, "client-0"], [tx1, "client-1"]]) {
+      if (expectedFrom !== undefined)
+        assert(same(tx.from, expectedFrom),
+          `${label}: transaction sender mismatch for ${txHash}`);
+      if (expectedTo !== undefined)
+        assert(same(tx.to, expectedTo),
+          `${label}: transaction destination mismatch for ${txHash}`);
+      if (expectedInput !== undefined)
+        assert(tx.input === expectedInput,
+          `${label}: transaction calldata mismatch for ${txHash}`);
+      if (expectedValue !== undefined)
+        assert(tx.value === expectedValue,
+          `${label}: transaction value mismatch for ${txHash}`);
+    }
+    // Assert both clients agree on every canonical field.
+    assert(
+      same(tx0.from, tx1.from) &&
+      same(tx0.to, tx1.to) &&
+      tx0.input === tx1.input &&
+      tx0.value === tx1.value &&
+      String(tx0.nonce) === String(tx1.nonce),
+      `Independent clients disagree on transaction ${txHash} (from/to/input/value/nonce)`,
+    );
+    return {
+      from: tx0.from.toLowerCase(),
+      to: tx0.to?.toLowerCase() ?? null,
+      input: tx0.input,
+      value: tx0.value,
+      nonce: String(tx0.nonce),
+    };
+  }
+
+  // Establish the canonical original transaction identity using both clients.
+  // Validates that the original was a gatewayMint call from this account with
+  // the saved calldata. Returns { from, nonce } for replacement comparison.
+  // Saved proposed nonce (state.request.nonce) is NOT used here.
+  async function observeOriginalTx(state) {
+    const originalHash = state.response?.hash;
+    assert.match(
+      originalHash,
+      hashPattern,
+      "Original transaction hash is not recorded; cannot establish canonical identity",
+    );
+    return observeTxBothClients(originalHash, {
+      expectedFrom: account,
+      expectedTo: g.minter,
+      expectedInput: state.request.data,
+      expectedValue: 0n,
+    });
+  }
+
+  // ── Shared canonical finality verifier ───────────────────────────────────
+  //
+  // Wraps finalizedGatewayReceipt; translates its assertion errors into
+  // structured hold kinds while preserving the underlying failure detail. Returns { receipt, hold } where hold is null on success or
+  // a recoveryHold object describing why the receipt could not be accepted.
+  // Does NOT assert receipt.status — supports both success and reverted.
+  async function getCanonicalFinalizedReceipt(txHash, replacementHash) {
+    try {
+      const receipt = await finalizedGatewayReceipt(clients, txHash);
+      return { receipt, hold: null };
+    } catch (err) {
+      const msg = String(err?.message ?? err);
+      if (/not finalized/i.test(msg)) {
+        return {
+          receipt: null,
+          hold: { recoveryHold: "finality-uncertain", replacementHash, detail: msg },
+        };
+      }
+      // Noncanonical block, RPC disagreement on logs/status, unavailable receipt.
+      return {
+        receipt: null,
+        hold: { recoveryHold: "conflicting-observations", replacementHash, detail: msg },
+      };
+    }
+  }
+
+  // ── Replacement / cancellation check ─────────────────────────────────────
+  //
+  // Returns a recoveryHold object (hold) or a confirmed AttestationUsed
+  // evidence object (success). Never returns null.
+  async function checkReplacementMint(state, record, suppliedHash) {
+    // Step 1: establish canonical original tx identity from both clients.
+    // Validates from/to/input/value on both clients and asserts agreement.
+    let originalIdentity;
+    try {
+      originalIdentity = await observeOriginalTx(state);
+    } catch (err) {
+      return {
+        recoveryHold: "conflicting-observations",
+        replacementHash: suppliedHash,
+        detail: String(err?.message ?? err),
+      };
+    }
+
+    // Step 2: fetch and fully validate the replacement tx from both clients.
+    // Check that both clients agree on from/to/input/value/nonce.
+    let repIdentity;
+    try {
+      repIdentity = await observeTxBothClients(suppliedHash);
+    } catch (err) {
+      return {
+        recoveryHold: "conflicting-observations",
+        replacementHash: suppliedHash,
+        detail: `Replacement tx: ${String(err?.message ?? err)}`,
+      };
+    }
+
+    // Step 3: replacement must come from the same sender at the same nonce as
+    // the independently observed original transaction. Proposed nonce NOT used.
+    if (
+      !same(repIdentity.from, originalIdentity.from) ||
+      repIdentity.nonce !== originalIdentity.nonce
+    ) {
+      return {
+        recoveryHold: "wrong-sender-nonce",
+        replacementHash: suppliedHash,
+        detail: `Replacement from=${repIdentity.from} nonce=${repIdentity.nonce} does not match observed original from=${originalIdentity.from} nonce=${originalIdentity.nonce}`,
+      };
+    }
+
+    // Step 4: classify as mint call or cancellation.
+    // A mint call must address the minter with the saved calldata and value=0.
+    const isMintCall =
+      same(repIdentity.to, g.minter) &&
+      repIdentity.input === state.request.data &&
+      repIdentity.value === 0n;
+
+    // Step 5: obtain a canonical finalized receipt from both clients for ALL
+    // outcomes — cancellation AND mint call. A pending or unfinalized receipt
+    // must retain uncertainty; do not classify without a canonical receipt.
+    const { receipt, hold } = await getCanonicalFinalizedReceipt(suppliedHash, suppliedHash);
+    if (hold) return hold;
+
+    if (!isMintCall) {
+      // Finalized cancellation (same nonce, not a gatewayMint call).
+      // Attestation consumed/expired/revoked status is unknown.
+      return {
+        recoveryHold: "cancellation-observed",
+        replacementHash: suppliedHash,
+        replacementNonce: repIdentity.nonce,
+        replacementBlockHash: receipt.blockHash,
+        replacementBlockNumber: String(receipt.blockNumber),
+      };
+    }
+
+    // Step 6: reverted replacement — attestation may still be live.
+    if (receipt.status !== "success") {
+      return {
+        recoveryHold: "replacement-reverted",
+        replacementHash: suppliedHash,
+        replacementBlockHash: receipt.blockHash,
+        replacementBlockNumber: String(receipt.blockNumber),
+      };
+    }
+
+    // Step 7: successful replacement mint — full canonical verification
+    // including exact AttestationUsed event and transferSpecHash.
+    // verifyGatewayEvent throws (propagates to caller) on any mismatch.
+    return verifyGatewayEvent({
+      receipt,
+      hash: suppliedHash,
+      kind: "mint",
+      intent: record.intent,
+      sponsor: account,
+    });
+  }
+
+  // ── Primary mint check ────────────────────────────────────────────────────
+  //
+  // When isReplacement: delegates to checkReplacementMint and writes any hold
+  // into step.reconciliations[] via journal, then returns null so runGatewayStep
+  // leaves the step unknown. Returns the AttestationUsed object on success.
+  //
+  // When NOT isReplacement: verifies the original submitted hash using the
+  // saved canonical request identity (including nonce), unchanged.
   async function checkMint(state, record, suppliedHash) {
     if (state.response?.notSubmitted === true) return { notSubmitted: true };
-    const hash =
+
+    const savedHash = state.response?.hash;
+    const isReplacement =
+      Boolean(suppliedHash) &&
+      Boolean(savedHash) &&
+      suppliedHash.toLowerCase() !== savedHash.toLowerCase();
+
+    if (isReplacement) {
+      assert.match(suppliedHash, hashPattern, "Enter a valid transaction hash");
+      const outcome = await checkReplacementMint(state, record, suppliedHash);
+      if (outcome.recoveryHold) {
+        // Append bounded hold evidence to the step without confirming it.
+        await journal.appendReconciliation(record.operation, outcome);
+        return null; // keep step unknown
+      }
+      // Successful replacement AttestationUsed — return for runGatewayStep to confirm.
+      return outcome;
+    }
+
+    // Original-hash path: checks against saved canonical request identity
+    // (to, data, nonce, value). Valid because we are confirming the exact
+    // transaction that was submitted, whose nonce was observed at submission.
+    const h =
       suppliedHash ??
       (state.evidence?.event === "AttestationUsed"
         ? state.evidence.hash
-        : state.response?.hash);
-    if (!hash) return null;
-    assert.match(hash, hashPattern, "Enter the original transaction hash");
-    const receipt = await finalizedGatewayReceipt(clients, hash);
-    const tx = await clients[0].getTransaction({ hash });
+        : savedHash);
+    if (!h) return null;
+    assert.match(h, hashPattern, "Enter the original transaction hash");
+    const receipt = await finalizedGatewayReceipt(clients, h);
+    const tx = await clients[0].getTransaction({ hash: h });
     assert(
       same(tx.from, account) &&
         same(tx.to, g.minter) &&
@@ -241,12 +498,13 @@ export function createGatewayBrowserFunding({
     );
     return verifyGatewayEvent({
       receipt,
-      hash,
+      hash: h,
       kind: "mint",
       intent: record.intent,
       sponsor: account,
     });
   }
+
   async function mint() {
     await identity();
     let record = load();
@@ -349,6 +607,7 @@ export function createGatewayBrowserFunding({
       reconcile: (state) => checkMint(state, record),
     });
   }
+
   async function recover(suppliedHash) {
     const record = load();
     assert(record, "No saved Gateway funding operation");
@@ -386,17 +645,82 @@ export function createGatewayBrowserFunding({
         "No confirmed mint yet. Keep the original Gateway operation; a missing response does not prove it failed.",
     };
   }
+
+  // Re-verify the confirmed mint before archive. Uses the hash from confirmed
+  // evidence (which may be a replacement hash) and the independently observed
+  // original nonce, not the saved proposed nonce.
+  async function revalidateForArchive(record) {
+    const step = record.steps.mint;
+    assert(gatewayMintConfirmed(step), "Original Gateway mint must be verified before archive");
+    const evidenceHash = step.evidence.hash;
+    const savedHash = step.response?.hash;
+    const isReplacement =
+      savedHash &&
+      evidenceHash.toLowerCase() !== savedHash.toLowerCase();
+
+    if (isReplacement) {
+      // Re-establish original identity using both clients to verify nonce match.
+      // This uses the live RPC, not state.request.nonce.
+      const originalIdentity = await observeOriginalTx(step);
+      const repIdentity = await observeTxBothClients(evidenceHash, {
+        expectedFrom: account,
+        expectedTo: g.minter,
+        expectedInput: step.request.data,
+        expectedValue: 0n,
+      });
+      assert(
+        repIdentity.nonce === originalIdentity.nonce,
+        "Replacement nonce does not match the observed original transaction nonce",
+      );
+      const receipt = await finalizedGatewayReceipt(clients, evidenceHash);
+      assert.equal(receipt.status, "success", "Replacement receipt is not successful");
+      const event = verifyGatewayEvent({
+        receipt,
+        hash: evidenceHash,
+        kind: "mint",
+        intent: record.intent,
+        sponsor: account,
+      });
+      assert.equal(event?.event, "AttestationUsed", "Original Gateway mint must be verified before archive");
+      return event;
+    }
+
+    // Original hash path: re-verify with the saved request identity.
+    const receipt = await finalizedGatewayReceipt(clients, evidenceHash);
+    const tx = await clients[0].getTransaction({ hash: evidenceHash });
+    assert(
+      same(tx.from, account) &&
+        same(tx.to, g.minter) &&
+        tx.input === step.request.data &&
+        String(tx.nonce) === step.request.nonce &&
+        tx.value === 0n,
+      "This is not the saved Gateway mint transaction",
+    );
+    return verifyGatewayEvent({
+      receipt,
+      hash: evidenceHash,
+      kind: "mint",
+      intent: record.intent,
+      sponsor: account,
+    });
+  }
+
   async function archive() {
     const record = load();
     assert(record?.steps.mint, "No saved Gateway withdrawal");
-    // Recheck the original exact receipt before clearing the active operation.
-    const evidence = await checkMint(record.steps.mint, record);
+    assert(
+      gatewayMintConfirmed(record.steps.mint),
+      "Original Gateway mint must be verified before archive",
+    );
+    // Live re-verify before clearing the active operation.
+    const event = await revalidateForArchive(record);
     assert.equal(
-      evidence?.event,
+      event?.event,
       "AttestationUsed",
       "Original Gateway mint must be verified before archive",
     );
     await journal.archiveMint();
   }
+
   return { load, quote, authorize, mint, recover, archive };
 }

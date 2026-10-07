@@ -5,6 +5,9 @@ const phases = new Set(['approve-deposit', 'deposit', 'attestation', 'mint', 'ap
 const hex32 = /^0x[0-9a-fA-F]{64}$/;
 const copy = value => JSON.parse(JSON.stringify(value));
 
+// Maximum reconciliation entries kept per step (bounded; oldest evicted).
+const MAX_RECONCILIATIONS = 20;
+
 // A stored event label alone never releases the wallet nonce guard.
 export function gatewayMintConfirmed(step) {
   const evidence = step?.evidence;
@@ -39,6 +42,10 @@ export function createGatewayBrowserJournal({ account, storage = globalThis.loca
       assert(step && ['unknown', 'confirmed'].includes(step.status) && typeof step.createdAt === 'string' && Number.isFinite(Date.parse(step.createdAt)), 'Invalid saved Gateway step state');
       assert(Object.hasOwn(step, 'request') && step.request !== null && typeof step.request === 'object', 'Missing saved Gateway request');
       assert(step.status !== 'confirmed' || (step.evidence !== null && typeof step.evidence === 'object'), 'Missing Gateway confirmation evidence');
+      // reconciliations is an optional bounded array on unknown steps.
+      if (Object.hasOwn(step, 'reconciliations')) {
+        assert(Array.isArray(step.reconciliations) && step.reconciliations.length <= MAX_RECONCILIATIONS, 'Invalid Gateway step reconciliations');
+      }
     }
     return record;
   }
@@ -83,6 +90,29 @@ export function createGatewayBrowserJournal({ account, storage = globalThis.loca
         storage.removeItem(key);
         assert.equal(storage.getItem(key), null, 'Gateway active record was not cleared');
       });
+    },
+    // Append bounded recovery hold evidence to an unknown mint step.
+    // REQUIRES: the caller already holds the sponsor tab lock (i.e. this must
+    // be called from within a withLock callback or from runGatewayStep's locked
+    // reconcile function). Uses the same locked write path as put().
+    // The step status stays 'unknown' — a hold never confirms the step.
+    // This preserves the nonce guard and all journal invariants.
+    // Holds are immutable once appended; older entries are evicted when the
+    // cap is reached. A confirmed step cannot receive a reconciliation.
+    appendReconciliation(operation, reconciliation) {
+      assert(locked, 'Gateway writes require the sponsor tab lock');
+      const record = load();
+      assert(record, 'No saved Gateway operation for reconciliation');
+      assert(record.operation === operation, 'Reconciliation does not match saved operation');
+      const step = record.steps.mint;
+      assert(step, 'No mint step to reconcile');
+      assert(step.status === 'unknown', 'A confirmed Gateway mint step cannot receive a reconciliation hold');
+      assert(reconciliation && typeof reconciliation.recoveryHold === 'string', 'Invalid reconciliation: recoveryHold required');
+      const existing = step.reconciliations ?? [];
+      // Evict oldest entries when cap is reached; append new entry.
+      const next = [...existing.slice(-(MAX_RECONCILIATIONS - 1)), copy(reconciliation)];
+      record.steps.mint = { ...step, reconciliations: next };
+      save(record);
     },
     async retryUnsentMint() {
       return withLock('retry', async () => {
