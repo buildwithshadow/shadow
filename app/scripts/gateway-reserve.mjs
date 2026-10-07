@@ -120,10 +120,13 @@ export async function finalizedGatewayReceipt(clients,hash) {
   const receipts=await Promise.all(clients.map(async c=>{
     assert.equal(await c.getChainId(),GATEWAY_TESTNET.chainId);
     const receipt=await c.getTransactionReceipt({hash});
+    assert.equal(typeof receipt?.transactionHash,'string','Receipt is missing transactionHash');
+    assert.equal(receipt.transactionHash.toLowerCase(),hash.toLowerCase(),'Receipt transactionHash does not match the requested hash');
     const [block,finalized]=await Promise.all([c.getBlock({blockNumber:receipt.blockNumber}),c.getBlock({blockTag:'finalized'})]);
     assert.equal(block.hash,receipt.blockHash,'Noncanonical receipt');
     assert(finalized.number>=receipt.blockNumber,'Receipt not finalized');return receipt;
   }));
+  assert.equal(receipts[0].transactionHash.toLowerCase(),receipts[1].transactionHash.toLowerCase(),'Clients disagree on receipt transactionHash');
   assert.equal(receipts[0].blockHash,receipts[1].blockHash);
   assert.equal(receipts[0].status,receipts[1].status);
   assert.deepEqual(receipts[0].logs,receipts[1].logs,'RPC event disagreement');

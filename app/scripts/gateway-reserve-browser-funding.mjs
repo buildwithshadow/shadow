@@ -278,8 +278,13 @@ export function createGatewayBrowserFunding({
       clients[0].getTransaction({ hash: txHash }),
       clients[1].getTransaction({ hash: txHash }),
     ]);
-    // Validate each observation independently against saved expectations.
+    // Validate each observation independently: hash binding and saved expectations.
     for (const [tx, label] of [[tx0, "client-0"], [tx1, "client-1"]]) {
+      // Each client must return the exact hash that was requested.
+      assert(
+        typeof tx?.hash === "string" && same(tx.hash, txHash),
+        `${label}: returned transaction hash does not match requested hash ${txHash}`,
+      );
       if (expectedFrom !== undefined)
         assert(same(tx.from, expectedFrom),
           `${label}: transaction sender mismatch for ${txHash}`);
@@ -293,14 +298,15 @@ export function createGatewayBrowserFunding({
         assert(tx.value === expectedValue,
           `${label}: transaction value mismatch for ${txHash}`);
     }
-    // Assert both clients agree on every canonical field.
+    // Assert both clients agree on every canonical field including the hash.
     assert(
+      same(tx0.hash, tx1.hash) &&
       same(tx0.from, tx1.from) &&
       same(tx0.to, tx1.to) &&
       tx0.input === tx1.input &&
       tx0.value === tx1.value &&
       String(tx0.nonce) === String(tx1.nonce),
-      `Independent clients disagree on transaction ${txHash} (from/to/input/value/nonce)`,
+      `Independent clients disagree on transaction ${txHash} (hash/from/to/input/value/nonce)`,
     );
     return {
       from: tx0.from.toLowerCase(),
@@ -360,9 +366,14 @@ export function createGatewayBrowserFunding({
   //
   // Returns a recoveryHold object (hold) or a confirmed AttestationUsed
   // evidence object (success). Never returns null.
+  //
+  // On success, the returned evidence includes originalIdentity so that
+  // archive can validate the replacement nonce without re-querying the
+  // (possibly evicted) original transaction.
   async function checkReplacementMint(state, record, suppliedHash) {
     // Step 1: establish canonical original tx identity from both clients.
     // Validates from/to/input/value on both clients and asserts agreement.
+    // Also validates that each client's returned hash matches the requested hash.
     let originalIdentity;
     try {
       originalIdentity = await observeOriginalTx(state);
@@ -375,7 +386,7 @@ export function createGatewayBrowserFunding({
     }
 
     // Step 2: fetch and fully validate the replacement tx from both clients.
-    // Check that both clients agree on from/to/input/value/nonce.
+    // Check that both clients return the exact requested hash and agree on all fields.
     let repIdentity;
     try {
       repIdentity = await observeTxBothClients(suppliedHash);
@@ -410,6 +421,9 @@ export function createGatewayBrowserFunding({
     // Step 5: obtain a canonical finalized receipt from both clients for ALL
     // outcomes — cancellation AND mint call. A pending or unfinalized receipt
     // must retain uncertainty; do not classify without a canonical receipt.
+    // Both receipt.transactionHash fields are now validated against suppliedHash
+    // inside finalizedGatewayReceipt, so a stale or wrong-hash receipt is caught
+    // before any classification.
     const { receipt, hold } = await getCanonicalFinalizedReceipt(suppliedHash, suppliedHash);
     if (hold) return hold;
 
@@ -438,13 +452,30 @@ export function createGatewayBrowserFunding({
     // Step 7: successful replacement mint — full canonical verification
     // including exact AttestationUsed event and transferSpecHash.
     // verifyGatewayEvent throws (propagates to caller) on any mismatch.
-    return verifyGatewayEvent({
+    const event = verifyGatewayEvent({
       receipt,
       hash: suppliedHash,
       kind: "mint",
       intent: record.intent,
       sponsor: account,
     });
+
+    // Persist the independently observed original identity alongside the
+    // AttestationUsed evidence so that archive can verify the replacement
+    // nonce without re-querying the (possibly evicted) original transaction.
+    // originalIdentity carries: { from, nonce } (and implicitly the original
+    // hash is state.response.hash, validated as part of observeOriginalTx).
+    return {
+      ...event,
+      originalIdentity: {
+        originalHash: state.response.hash,
+        from: originalIdentity.from,
+        nonce: originalIdentity.nonce,
+        to: originalIdentity.to,
+        input: originalIdentity.input,
+        value: String(originalIdentity.value),
+      },
+    };
   }
 
   // ── Primary mint check ────────────────────────────────────────────────────
@@ -477,8 +508,8 @@ export function createGatewayBrowserFunding({
     }
 
     // Original-hash path: checks against saved canonical request identity
-    // (to, data, nonce, value). Valid because we are confirming the exact
-    // transaction that was submitted, whose nonce was observed at submission.
+    // (to, data, nonce, value) using both clients. observeTxBothClients now
+    // enforces that each client's returned tx.hash equals the requested hash.
     const h =
       suppliedHash ??
       (state.evidence?.event === "AttestationUsed"
@@ -486,16 +517,17 @@ export function createGatewayBrowserFunding({
         : savedHash);
     if (!h) return null;
     assert.match(h, hashPattern, "Enter the original transaction hash");
-    const receipt = await finalizedGatewayReceipt(clients, h);
-    const tx = await clients[0].getTransaction({ hash: h });
+    const txIdentity = await observeTxBothClients(h, {
+      expectedFrom: account,
+      expectedTo: g.minter,
+      expectedInput: state.request.data,
+      expectedValue: 0n,
+    });
     assert(
-      same(tx.from, account) &&
-        same(tx.to, g.minter) &&
-        tx.input === state.request.data &&
-        String(tx.nonce) === state.request.nonce &&
-        tx.value === 0n,
+      String(txIdentity.nonce) === state.request.nonce,
       "This is not the saved Gateway mint transaction",
     );
+    const receipt = await finalizedGatewayReceipt(clients, h);
     return verifyGatewayEvent({
       receipt,
       hash: h,
@@ -647,8 +679,16 @@ export function createGatewayBrowserFunding({
   }
 
   // Re-verify the confirmed mint before archive. Uses the hash from confirmed
-  // evidence (which may be a replacement hash) and the independently observed
-  // original nonce, not the saved proposed nonce.
+  // evidence (which may be a replacement hash).
+  //
+  // For replacements: uses the persisted evidence.originalIdentity rather than
+  // re-querying the (possibly evicted) original transaction. A legacy confirmed
+  // replacement step without a saved originalIdentity cannot be archived — it
+  // is treated as a hold.
+  //
+  // For original-hash confirmations: verifies via both clients using
+  // observeTxBothClients (which now enforces tx.hash binding) and the saved
+  // request identity including nonce.
   async function revalidateForArchive(record) {
     const step = record.steps.mint;
     assert(gatewayMintConfirmed(step), "Original Gateway mint must be verified before archive");
@@ -659,18 +699,40 @@ export function createGatewayBrowserFunding({
       evidenceHash.toLowerCase() !== savedHash.toLowerCase();
 
     if (isReplacement) {
-      // Re-establish original identity using both clients to verify nonce match.
-      // This uses the live RPC, not state.request.nonce.
-      const originalIdentity = await observeOriginalTx(step);
+      // Use the originalIdentity persisted at recovery time. If it is absent
+      // (a legacy confirmed step from before this fix), refuse to archive —
+      // the original transaction may be evicted and cannot be reconstructed
+      // safely from the journal alone.
+      const savedOriginal = step.evidence.originalIdentity;
+      assert(
+        savedOriginal &&
+          typeof savedOriginal.originalHash === "string" &&
+          hashPattern.test(savedOriginal.originalHash) &&
+          typeof savedOriginal.from === "string" &&
+          typeof savedOriginal.nonce === "string" &&
+          savedOriginal.originalHash.toLowerCase() === savedHash.toLowerCase(),
+        "Confirmed replacement evidence is missing a verifiable original observation; cannot archive safely",
+      );
+      // Cross-check saved originalIdentity against the saved request fields.
+      assert(
+        same(savedOriginal.from, account) &&
+          same(savedOriginal.to, g.minter) &&
+          savedOriginal.input === step.request.data &&
+          savedOriginal.value === "0",
+        "Saved original identity does not match the saved Gateway mint request",
+      );
+      // Re-verify the replacement itself with both clients. This does not require
+      // the original to be queryable.
       const repIdentity = await observeTxBothClients(evidenceHash, {
         expectedFrom: account,
         expectedTo: g.minter,
         expectedInput: step.request.data,
         expectedValue: 0n,
       });
+      // Verify nonce match using the saved original nonce (not proposed nonce).
       assert(
-        repIdentity.nonce === originalIdentity.nonce,
-        "Replacement nonce does not match the observed original transaction nonce",
+        repIdentity.nonce === savedOriginal.nonce,
+        "Replacement nonce does not match the saved original transaction nonce",
       );
       const receipt = await finalizedGatewayReceipt(clients, evidenceHash);
       assert.equal(receipt.status, "success", "Replacement receipt is not successful");
@@ -685,17 +747,19 @@ export function createGatewayBrowserFunding({
       return event;
     }
 
-    // Original hash path: re-verify with the saved request identity.
-    const receipt = await finalizedGatewayReceipt(clients, evidenceHash);
-    const tx = await clients[0].getTransaction({ hash: evidenceHash });
+    // Original hash path: re-verify with the saved request identity using both
+    // clients (observeTxBothClients enforces tx.hash binding on each peer).
+    const txIdentity = await observeTxBothClients(evidenceHash, {
+      expectedFrom: account,
+      expectedTo: g.minter,
+      expectedInput: step.request.data,
+      expectedValue: 0n,
+    });
     assert(
-      same(tx.from, account) &&
-        same(tx.to, g.minter) &&
-        tx.input === step.request.data &&
-        String(tx.nonce) === step.request.nonce &&
-        tx.value === 0n,
+      String(txIdentity.nonce) === step.request.nonce,
       "This is not the saved Gateway mint transaction",
     );
+    const receipt = await finalizedGatewayReceipt(clients, evidenceHash);
     return verifyGatewayEvent({
       receipt,
       hash: evidenceHash,

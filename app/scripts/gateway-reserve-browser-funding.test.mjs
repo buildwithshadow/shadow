@@ -91,7 +91,8 @@ function fixture() {
     getBlockNumber: async () => state.head,
     simulateContract: async () => ({}),
     getBlock: async () => ({ number: 200n, hash: blockHash }),
-    getTransaction: async () => ({
+    getTransaction: async ({ hash: h }) => ({
+      hash: h,
       from: signer.address,
       to: g.minter,
       input: state.tx.data,
@@ -296,13 +297,15 @@ test("expired attestation and mismatched original transaction cannot be accepted
   x.state.head = 200n;
   x.state.loseMint = true;
   await assert.rejects(x.engine.mint());
-  x.client.getTransaction = async () => ({
+  x.client.getTransaction = async ({ hash: h }) => ({
+    hash: h,
     from: signer.address,
     to: g.minter,
     input: x.state.tx.data,
     nonce: 5,
     value: 0n,
   });
+  x.options.clients[1].getTransaction = x.client.getTransaction;
   await assert.rejects(x.engine.recover(hash), /not the saved/);
   assert.equal(x.state.sends, 1);
 });
@@ -383,8 +386,10 @@ test("replacement hash with changed calldata is rejected without resending", asy
   await assert.rejects(x.engine.mint());
   // state.tx is set (send ran before throw) but no response.hash in journal.
   const originalTx = x.client.getTransaction;
+  // Override client-0 to return wrong calldata; client-1 is left with correct calldata.
+  // observeTxBothClients will detect the mismatch (per-client check or cross-client disagree).
   x.client.getTransaction = async (args) => ({ ...await originalTx(args), input: "0x1234" });
-  await assert.rejects(x.engine.recover("0x" + "ef".repeat(32)), /not the saved/);
+  await assert.rejects(x.engine.recover("0x" + "ef".repeat(32)), /calldata mismatch|not the saved/);
   assert.equal(x.journal.load().steps.mint.status, "unknown");
   assert.equal(x.state.sends, 1);
 });
@@ -434,7 +439,7 @@ test("R01: valid replacement same-nonce speedup mint is accepted on both clients
   x.client.getTransaction = async (args) => {
     if (args.hash === replacement) {
       const orig = await origGetTx({ hash: hash });
-      return { ...orig }; // same from, to, input, nonce, value
+      return { ...orig, hash: replacement }; // same from, to, input, nonce, value; correct hash
     }
     return origGetTx(args);
   };
@@ -478,7 +483,7 @@ test("R03: finalized cancellation (same nonce, wrong to/calldata) produces recov
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === cancelHash)
-      return { from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
+      return { hash: cancelHash, from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -507,7 +512,7 @@ test("R04: wrong sender on replacement produces recoveryHold wrong-sender-nonce,
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === wrongHash)
-      return { from: wrongSender, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+      return { hash: wrongHash, from: wrongSender, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -531,9 +536,9 @@ test("R05: proposed nonce differing from observed original nonce yields wrong-se
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === hash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 5, value: 0n };
+      return { hash: hash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 5, value: 0n };
     if (args.hash === repHash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -555,12 +560,12 @@ test("R06: conflicting original transaction observations (nonce disagreement) pr
   const origGetTx = x.client.getTransaction;
   x.options.clients[0].getTransaction = async (args) => {
     if (args.hash === hash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+      return { hash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = async (args) => {
     if (args.hash === hash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 5, value: 0n };
+      return { hash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 5, value: 0n };
     return origGetTx(args);
   };
   const result = await x.engine.recover(repHash);
@@ -580,7 +585,7 @@ test("R07: reverted replacement produces recoveryHold replacement-reverted, atte
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === repHash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -613,7 +618,7 @@ test("R08: wrong AttestationUsed event on valid replacement throws, does not con
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === repHash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -641,7 +646,7 @@ test("R09: uncertain replacement finality produces recoveryHold finality-uncerta
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === repHash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -676,7 +681,7 @@ test("R10: repeated recovery with same cancellation hash appends bounded reconci
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === cancelHash)
-      return { from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
+      return { hash: cancelHash, from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -710,7 +715,7 @@ test("R11: cancellation does not allow archive, reset, or fresh authorization", 
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === cancelHash)
-      return { from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
+      return { hash: cancelHash, from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -757,14 +762,12 @@ test("R13: conflicting original tx identities across peers (calldata mismatch) p
   await setupLostMint(x);
   const repHash = "0x" + "13".repeat(32);
   x.options.clients[0].getTransaction = async (args) => {
-    if (args.hash === hash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
-    return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return { hash: args.hash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
   };
   x.options.clients[1].getTransaction = async (args) => {
     if (args.hash === hash)
-      return { from: x.state.account, to: g.minter, input: "0xdeadbeef", nonce: 4, value: 0n };
-    return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+      return { hash: hash, from: x.state.account, to: g.minter, input: "0xdeadbeef", nonce: 4, value: 0n };
+    return { hash: args.hash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
   };
   const result = await x.engine.recover(repHash);
   assert.equal(result.status, "unknown");
@@ -781,13 +784,13 @@ test("R14: replacement peers differing in calldata produce conflicting-observati
   const repHash = "0x" + "14".repeat(32);
   const origGetTx = x.client.getTransaction;
   x.options.clients[0].getTransaction = async (args) => {
-    if (args.hash === hash) return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
-    if (args.hash === repHash) return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    if (args.hash === hash) return { hash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    if (args.hash === repHash) return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = async (args) => {
-    if (args.hash === hash) return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
-    if (args.hash === repHash) return { from: x.state.account, to: g.minter, input: "0xdifferent", nonce: 4, value: 0n };
+    if (args.hash === hash) return { hash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    if (args.hash === repHash) return { hash: repHash, from: x.state.account, to: g.minter, input: "0xdifferent", nonce: 4, value: 0n };
     return origGetTx(args);
   };
   const result = await x.engine.recover(repHash);
@@ -806,7 +809,7 @@ test("R15: replacement with nonzero native value but otherwise correct identity 
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === repHash)
-      return { from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 1n };
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 1n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -826,7 +829,7 @@ test("R16: unfinalized cancellation remains held, does not release nonce guard",
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === cancelHash)
-      return { from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
+      return { hash: cancelHash, from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -859,7 +862,7 @@ test("R17: successful replacement can be rechecked and archived after journal re
   const replacement = "0x" + "17".repeat(32);
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
-    if (args.hash === replacement) return { ...await origGetTx({ hash: hash }) };
+    if (args.hash === replacement) return { ...await origGetTx({ hash: hash }), hash: replacement };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -894,7 +897,7 @@ test("R18: a different supplied hash does not clear a previous uncertainty or pe
   const origGetTx = x.client.getTransaction;
   x.client.getTransaction = async (args) => {
     if (args.hash === cancelHash1 || args.hash === cancelHash2)
-      return { from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
+      return { hash: args.hash, from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
     return origGetTx(args);
   };
   x.options.clients[1].getTransaction = x.client.getTransaction;
@@ -917,6 +920,352 @@ test("R18: a different supplied hash does not clear a previous uncertainty or pe
   await assert.rejects(x.journal.archiveMint(), /verified/);
   // No clearMintHold API exists.
   assert.equal(typeof x.journal.clearMintHold, "undefined");
+});
+
+// ── P1a: originalIdentity persistence and archive safety ────────────────────
+
+test("P1a-1: archive after replacement succeeds even when both RPCs refuse the original hash", async () => {
+  // Confirms replacement, reloads engine, makes BOTH RPCs refuse getTransaction
+  // for the original hash, then successfully rechecks and archives the
+  // replacement without sending anything new. The saved evidence.originalIdentity
+  // is used instead of a live query.
+  const x = fixture();
+  await setupLostMint(x);
+  const replacement = "0x" + "1a".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => {
+    if (args.hash === replacement)
+      return { hash: replacement, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = x.client.getTransaction;
+  const origReceipt = x.client.getTransactionReceipt;
+  x.client.getTransactionReceipt = async (args) => {
+    if (args.hash === replacement)
+      return { ...await origReceipt({ hash: replacement }), transactionHash: replacement };
+    return origReceipt(args);
+  };
+  x.options.clients[1].getTransactionReceipt = x.client.getTransactionReceipt;
+  // Confirm the replacement.
+  const result = await x.engine.recover(replacement);
+  assert.equal(result.status, "confirmed");
+  assert.equal(result.evidence.event, "AttestationUsed");
+  assert.equal(result.evidence.hash, replacement);
+  // originalIdentity must be saved in evidence.
+  const saved = result.evidence.originalIdentity;
+  assert(saved, "evidence.originalIdentity must be persisted");
+  assert.equal(saved.originalHash.toLowerCase(), hash.toLowerCase());
+  assert.equal(saved.from.toLowerCase(), x.state.account.toLowerCase());
+  assert.equal(saved.nonce, "4");
+  // Reload the engine and make BOTH peers refuse the original hash.
+  const reloaded = createGatewayBrowserFunding(x.options);
+  x.options.clients[0].getTransaction = async (args) => {
+    if (args.hash === hash) throw Error("original tx evicted");
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = async (args) => {
+    if (args.hash === hash) throw Error("original tx evicted");
+    if (args.hash === replacement)
+      return { hash: replacement, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  // Archive must succeed using saved originalIdentity; no new sends.
+  await reloaded.archive();
+  assert.equal(reloaded.load(), null);
+  assert.equal(x.state.sends, 1);
+});
+
+test("P1a-2: changed or incomplete saved original identity prevents archive", async () => {
+  const x = fixture();
+  await setupLostMint(x);
+  const replacement = "0x" + "1b".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => {
+    if (args.hash === replacement)
+      return { hash: replacement, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = x.client.getTransaction;
+  const origReceipt = x.client.getTransactionReceipt;
+  x.client.getTransactionReceipt = async (args) => {
+    if (args.hash === replacement)
+      return { ...await origReceipt({ hash: replacement }), transactionHash: replacement };
+    return origReceipt(args);
+  };
+  x.options.clients[1].getTransactionReceipt = x.client.getTransactionReceipt;
+  await x.engine.recover(replacement);
+  // Mutated durable observations must never suffice to release the guard.
+  const rec = x.journal.load();
+  for (const [field, value] of [
+    ["from", "0x" + "aa".repeat(20)],
+    ["to", "0x" + "aa".repeat(20)],
+    ["input", "0xdead"],
+    ["value", "1"],
+    ["value", undefined],
+    ["originalHash", "0x" + "aa".repeat(32)],
+  ]) {
+    const changed = structuredClone(rec);
+    changed.steps.mint.evidence.originalIdentity[field] = value;
+    x.storage.setItem(x.journal.key, JSON.stringify(changed));
+    await assert.rejects(x.engine.archive(), /saved original identity|original.*request|verifiable original/i);
+  }
+  assert.equal(x.state.sends, 1);
+});
+
+test("P1a-3: tampered saved originalIdentity (wrong nonce) prevents archive", async () => {
+  // Confirm replacement, then tamper the saved nonce. Archive must reject.
+  const x = fixture();
+  await setupLostMint(x);
+  const replacement = "0x" + "1c".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => {
+    if (args.hash === replacement)
+      return { hash: replacement, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = x.client.getTransaction;
+  const origReceipt = x.client.getTransactionReceipt;
+  x.client.getTransactionReceipt = async (args) => {
+    if (args.hash === replacement)
+      return { ...await origReceipt({ hash: replacement }), transactionHash: replacement };
+    return origReceipt(args);
+  };
+  x.options.clients[1].getTransactionReceipt = x.client.getTransactionReceipt;
+  await x.engine.recover(replacement);
+  // Tamper: overwrite nonce in storage.
+  const rec = x.journal.load();
+  rec.steps.mint.evidence.originalIdentity.nonce = "99";
+  x.storage.setItem(x.journal.key, JSON.stringify(rec));
+  // revalidateForArchive: repIdentity.nonce ("4") !== savedOriginal.nonce ("99").
+  await assert.rejects(x.engine.archive(), /nonce/i);
+  assert.equal(x.state.sends, 1);
+});
+
+test("P1a-4: legacy confirmed replacement without originalIdentity cannot archive", async () => {
+  // Simulate a legacy confirmed replacement step (from before this fix) that
+  // is missing evidence.originalIdentity. Archive must refuse rather than
+  // silently proceed without verifying the original.
+  const x = fixture();
+  await setupLostMint(x);
+  const replacement = "0x" + "1d".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => {
+    if (args.hash === replacement)
+      return { hash: replacement, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = x.client.getTransaction;
+  const origReceipt = x.client.getTransactionReceipt;
+  x.client.getTransactionReceipt = async (args) => {
+    if (args.hash === replacement)
+      return { ...await origReceipt({ hash: replacement }), transactionHash: replacement };
+    return origReceipt(args);
+  };
+  x.options.clients[1].getTransactionReceipt = x.client.getTransactionReceipt;
+  await x.engine.recover(replacement);
+  // Remove originalIdentity from evidence to simulate a legacy step.
+  const rec = x.journal.load();
+  delete rec.steps.mint.evidence.originalIdentity;
+  x.storage.setItem(x.journal.key, JSON.stringify(rec));
+  await assert.rejects(x.engine.archive(), /missing a verifiable original observation/i);
+  assert.equal(x.state.sends, 1);
+});
+
+// ── P1b: tx.hash binding in observeTxBothClients ───────────────────────────
+
+test("P1b-1: client-0 returns wrong tx.hash for original request produces conflicting-observations hold", async () => {
+  // client-0 returns a tx whose hash does not match the requested original hash.
+  // All other fields (from, to, input, nonce, value) are correct.
+  // The hash-binding check must catch this before the cross-client comparison.
+  const x = fixture();
+  await setupLostMint(x);
+  const repHash = "0x" + "1e".repeat(32);
+  const wrongOrigHash = "0x" + "de".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.options.clients[0].getTransaction = async (args) => {
+    if (args.hash === hash)
+      // Return the correct tx data but with the wrong hash field.
+      return { hash: wrongOrigHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  // client-1 returns the correct hash.
+  x.options.clients[1].getTransaction = async (args) => origGetTx(args);
+  const result = await x.engine.recover(repHash);
+  assert.equal(result.status, "unknown");
+  const hold = lastReconciliation(x);
+  assert.equal(hold.recoveryHold, "conflicting-observations");
+  assert(/hash/.test(hold.detail), "Hold detail should mention hash mismatch");
+  await assert.rejects(x.engine.archive(), /verified/);
+});
+
+test("P1b-2: client-1 returns wrong tx.hash for original request produces conflicting-observations hold", async () => {
+  const x = fixture();
+  await setupLostMint(x);
+  const repHash = "0x" + "1f".repeat(32);
+  const wrongOrigHash = "0x" + "ef".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  // client-0 correct; client-1 returns wrong hash for original.
+  x.options.clients[0].getTransaction = async (args) => origGetTx(args);
+  x.options.clients[1].getTransaction = async (args) => {
+    if (args.hash === hash)
+      return { hash: wrongOrigHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  const result = await x.engine.recover(repHash);
+  assert.equal(result.status, "unknown");
+  const hold = lastReconciliation(x);
+  assert.equal(hold.recoveryHold, "conflicting-observations");
+  await assert.rejects(x.engine.archive(), /verified/);
+});
+
+test("P1b-3: client-0 returns wrong tx.hash for replacement request produces conflicting-observations hold", async () => {
+  const x = fixture();
+  await setupLostMint(x);
+  const repHash = "0x" + "b0".repeat(32);
+  const wrongRepHash = "0x" + "b1".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  // Original is correct on both clients.
+  // client-0 returns wrong hash for the replacement.
+  x.options.clients[0].getTransaction = async (args) => {
+    if (args.hash === repHash)
+      return { hash: wrongRepHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = async (args) => {
+    if (args.hash === repHash)
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  const result = await x.engine.recover(repHash);
+  assert.equal(result.status, "unknown");
+  const hold = lastReconciliation(x);
+  assert.equal(hold.recoveryHold, "conflicting-observations");
+  await assert.rejects(x.engine.archive(), /verified/);
+});
+
+test("P1b-4: client-1 returns wrong tx.hash for replacement request produces conflicting-observations hold", async () => {
+  const x = fixture();
+  await setupLostMint(x);
+  const repHash = "0x" + "b2".repeat(32);
+  const wrongRepHash = "0x" + "b3".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.options.clients[0].getTransaction = async (args) => {
+    if (args.hash === repHash)
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = async (args) => {
+    if (args.hash === repHash)
+      return { hash: wrongRepHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  const result = await x.engine.recover(repHash);
+  assert.equal(result.status, "unknown");
+  const hold = lastReconciliation(x);
+  assert.equal(hold.recoveryHold, "conflicting-observations");
+  await assert.rejects(x.engine.archive(), /verified/);
+});
+
+// ── P2: receipt.transactionHash binding in finalizedGatewayReceipt ──────────
+
+test("P2-1: receipt with wrong transactionHash on client-0 for cancellation produces hold, not cancellation-observed", async () => {
+  // finalizedGatewayReceipt now validates receipt.transactionHash on each client.
+  // A receipt whose transactionHash differs from the requested hash must not be
+  // classified as a finalized cancellation; it must remain unresolved.
+  const x = fixture();
+  await setupLostMint(x);
+  const cancelHash = "0x" + "c3".repeat(32);
+  const staleHash  = "0x" + "c4".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => {
+    if (args.hash === cancelHash)
+      return { hash: cancelHash, from: x.state.account, to: x.state.account, input: "0x", nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = x.client.getTransaction;
+  const origReceipt = x.client.getTransactionReceipt;
+  // client-0 returns a receipt with a stale/wrong transactionHash.
+  x.options.clients[0].getTransactionReceipt = async (args) => {
+    if (args.hash === cancelHash)
+      return { ...await origReceipt({ hash: cancelHash }), transactionHash: staleHash };
+    return origReceipt(args);
+  };
+  // client-1 returns a receipt with the correct transactionHash.
+  x.options.clients[1].getTransactionReceipt = async (args) => {
+    if (args.hash === cancelHash)
+      return { ...await origReceipt({ hash: cancelHash }), transactionHash: cancelHash };
+    return origReceipt(args);
+  };
+  const result = await x.engine.recover(cancelHash);
+  assert.equal(result.status, "unknown");
+  const hold = lastReconciliation(x);
+  // Must NOT be cancellation-observed; must be conflicting-observations or finality-uncertain.
+  assert.notEqual(hold.recoveryHold, "cancellation-observed",
+    "A wrong-hash receipt must not be classified as finalized cancellation");
+  assert(/conflicting|uncertain/.test(hold.recoveryHold));
+  await assert.rejects(x.engine.archive(), /verified/);
+});
+
+test("P2-2: receipt with wrong transactionHash on client-1 for reverted replacement produces hold, not replacement-reverted", async () => {
+  const x = fixture();
+  await setupLostMint(x);
+  const repHash = "0x" + "c5".repeat(32);
+  const staleHash = "0x" + "c6".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => {
+    if (args.hash === repHash)
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = x.client.getTransaction;
+  const origReceipt = x.client.getTransactionReceipt;
+  // client-0 returns the correct hash; client-1 returns the wrong hash.
+  x.options.clients[0].getTransactionReceipt = async (args) => {
+    if (args.hash === repHash)
+      return { ...await origReceipt({ hash: repHash }), transactionHash: repHash, status: "reverted" };
+    return origReceipt(args);
+  };
+  x.options.clients[1].getTransactionReceipt = async (args) => {
+    if (args.hash === repHash)
+      return { ...await origReceipt({ hash: repHash }), transactionHash: staleHash, status: "reverted" };
+    return origReceipt(args);
+  };
+  const result = await x.engine.recover(repHash);
+  assert.equal(result.status, "unknown");
+  const hold = lastReconciliation(x);
+  assert.notEqual(hold.recoveryHold, "replacement-reverted",
+    "A wrong-hash receipt must not be classified as finalized revert");
+  assert(/conflicting|uncertain/.test(hold.recoveryHold));
+  await assert.rejects(x.engine.archive(), /verified/);
+});
+
+test("P2-3: receipt missing transactionHash entirely remains unresolved for both peers", async () => {
+  // Both clients return a receipt without a transactionHash field.
+  // This should not be classified as any finalized outcome.
+  const x = fixture();
+  await setupLostMint(x);
+  const repHash = "0x" + "c7".repeat(32);
+  const origGetTx = x.client.getTransaction;
+  x.client.getTransaction = async (args) => {
+    if (args.hash === repHash)
+      return { hash: repHash, from: x.state.account, to: g.minter, input: x.state.tx.data, nonce: 4, value: 0n };
+    return origGetTx(args);
+  };
+  x.options.clients[1].getTransaction = x.client.getTransaction;
+  const origReceipt = x.client.getTransactionReceipt;
+  const receiptWithoutHash = async (args) => {
+    const r = await origReceipt(args);
+    const { transactionHash: _, ...rest } = r;
+    return rest; // no transactionHash field
+  };
+  x.options.clients[0].getTransactionReceipt = receiptWithoutHash;
+  x.options.clients[1].getTransactionReceipt = receiptWithoutHash;
+  const result = await x.engine.recover(repHash);
+  assert.equal(result.status, "unknown");
+  const hold = lastReconciliation(x);
+  assert(/conflicting|uncertain/.test(hold.recoveryHold),
+    `Expected conflicting or uncertain, got ${hold.recoveryHold}`);
+  await assert.rejects(x.engine.archive(), /verified/);
 });
 
 test("account guard blocks unresolved Gateway state independently of funding route or feature flag", async () => {
