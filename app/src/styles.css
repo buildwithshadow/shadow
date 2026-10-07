@@ -3351,6 +3351,7 @@ input:focus-visible {
   gap: 10px;
   letter-spacing: -0.02em;
   text-decoration: none;
+  min-height: 44px;
   min-width: 0;
 }
 
@@ -3384,10 +3385,14 @@ input:focus-visible {
 
 .navLinks a,
 .navLinks .navLink {
+  align-items: center;
   color: var(--ink-soft);
+  display: inline-flex;
   font-size: 13.5px;
   font-weight: 500;
   letter-spacing: -0.005em;
+  min-height: 44px;
+  min-width: 44px;
   position: relative;
   text-decoration: none;
   transition: color 140ms ease;
@@ -3423,6 +3428,8 @@ input:focus-visible {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.005em;
+  min-height: 44px;
+  min-width: 44px;
   padding: 9px 14px;
   text-decoration: none;
   transition: background 140ms ease, border-color 140ms ease;
@@ -3447,6 +3454,8 @@ input:focus-visible {
   font-weight: 500;
   gap: 8px;
   letter-spacing: 0.04em;
+  min-height: 44px;
+  min-width: 44px;
   padding: 8px 14px;
 }
 
@@ -3477,6 +3486,27 @@ input:focus-visible {
 
 .routePage {
   --route-inset: clamp(18px, 2.2vw, 30px);
+}
+
+.evidenceGroup {
+  margin-left: var(--route-inset);
+  margin-right: var(--route-inset);
+  scroll-margin-top: 92px;
+}
+
+#shadow-float,
+#v2-activity,
+#desk-journal {
+  scroll-margin-top: 92px;
+}
+
+@media (min-width: 721px) and (max-width: 880px) {
+  .evidenceGroup,
+  #shadow-float,
+  #v2-activity,
+  #desk-journal {
+    scroll-margin-top: 184px;
+  }
 }
 
 .pageHead {
@@ -3553,6 +3583,13 @@ input:focus-visible {
 @media (max-width: 720px) {
   .routePage {
     --route-inset: 0px;
+  }
+
+  .evidenceGroup,
+  #shadow-float,
+  #v2-activity,
+  #desk-journal {
+    scroll-margin-top: 40px;
   }
 
   .pageHead {
@@ -4598,7 +4635,7 @@ input:focus-visible {
   min-width: 0;
 }
 
-.treasuryHeroCopy h1 {
+.treasuryHeroCopy h2 {
   color: var(--ink);
   font-size: 58px;
   font-weight: 650;
@@ -5838,7 +5875,7 @@ input:focus-visible {
     padding: 24px 18px 18px;
   }
 
-  .treasuryHeroCopy h1 {
+  .treasuryHeroCopy h2 {
     font-size: 38px;
     line-height: 1.06;
   }
@@ -10209,7 +10246,7 @@ body {
 .floatHeroCopy h1,
 .floatHeroCopy h2,
 .pageHead .pageTitle,
-.treasuryHeroCopy h1 {
+.treasuryHeroCopy h2 {
   font-weight: 800;
   text-wrap: balance;
 }
@@ -10920,7 +10957,7 @@ body {
 
   .floatHeroCopy h1,
   .floatHeroCopy h2,
-  .treasuryHeroCopy h1,
+  .treasuryHeroCopy h2,
   .pageHead .pageTitle {
     font-size: 34px;
     line-height: 1.08;
@@ -11128,7 +11165,7 @@ body {
   .hero h1,
   .floatHeroCopy h1,
   .floatHeroCopy h2,
-  .treasuryHeroCopy h1 {
+  .treasuryHeroCopy h2 {
     overflow-wrap: break-word;
     hyphens: auto;
   }
@@ -11717,7 +11754,7 @@ body {
 .pageHead .pageTitle,
 .floatHeroCopy h1,
 .floatHeroCopy h2,
-.treasuryHeroCopy h1 {
+.treasuryHeroCopy h2 {
   color: #f7fbff;
   font-weight: 760;
 }

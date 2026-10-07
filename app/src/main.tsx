@@ -1757,18 +1757,23 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
 
 const HOME_TITLE = document.title;
 const ROUTE_TITLES: Record<string, string> = {
-  "/float": "Float | Shadow",
-  "/records": "Records | Shadow",
+  "/evidence": "Evidence | Shadow",
   "/builders": "Builders | Shadow",
   "/start": "Fund an agent | Shadow",
   "/funding": "Earlier candidate | Shadow",
   "/roadmap": "Roadmap | Shadow",
 };
 
+function EvidenceRedirect({ fallbackHash = "" }: { fallbackHash?: string }) {
+  const hash = useLocation().hash;
+  return <Navigate to={`/evidence${hash || fallbackHash}`} replace />;
+}
+
 function App() {
   const { pathname } = useLocation();
   const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
-  const isRecordsRoute = route === "/records";
+  const isEvidenceRoute = route === "/evidence";
+  const usesFloatV2State = isEvidenceRoute || route === "/builders" || route === "/builders/v2";
   const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
   const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet";
   const [state, setState] = useState<ShadowState | null>(null);
@@ -1822,7 +1827,7 @@ function App() {
   }, [route]);
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     let cancelled = false;
     async function load() {
       try {
@@ -1839,7 +1844,7 @@ function App() {
       cancelled = true;
       stopPolling();
     };
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refresh() {
     setLoading(true);
@@ -1853,9 +1858,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refresh, 5 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refreshLepton() {
     setLeptonLoading(true);
@@ -1870,9 +1875,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshLepton, 10 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refreshFloat() {
     setFloatLoading(true);
@@ -1892,9 +1897,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshFloat, 10 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   async function refreshFloatV2() {
     setFloatV2Loading(true);
@@ -1911,8 +1916,9 @@ function App() {
   }
 
   useEffect(() => {
+    if (!usesFloatV2State) return;
     return startVisiblePolling(refreshFloatV2, 5 * 60_000);
-  }, []);
+  }, [usesFloatV2State]);
 
   async function refreshFloatDesk() {
     setFloatDeskLoading(true);
@@ -1927,8 +1933,9 @@ function App() {
   }
 
   useEffect(() => {
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshFloatDesk, 5 * 60_000);
-  }, []);
+  }, [isEvidenceRoute]);
 
   async function refreshTreasury() {
     setTreasuryLoading(true);
@@ -1948,9 +1955,9 @@ function App() {
   }
 
   useEffect(() => {
-    if (!isRecordsRoute) return;
+    if (!isEvidenceRoute) return;
     return startVisiblePolling(refreshTreasury, 10 * 60_000);
-  }, [isRecordsRoute]);
+  }, [isEvidenceRoute]);
 
   useEffect(() => {
     if (state?.sources?.length && !selectedSource) {
@@ -2444,20 +2451,18 @@ function App() {
     navigate("/follow");
   };
 
-  const treasuryPage = (
-    <>
-      <TreasuryHero treasuryState={treasuryState} />
-      <TreasuryEvidenceStrip treasuryState={treasuryState} />
-      <ForumFeeRouterCanaryProof />
-      <TreasuryRailSplit leptonState={leptonState} />
-      <TreasuryLiveVerifierPanel state={treasuryState} loading={treasuryLoading} error={treasuryError} />
-      <TreasuryOnchainLinks />
-      <TreasuryValidationPanel />
-    </>
-  );
-
-  const floatPage = (
-    <>
+  const evidencePage = (
+    <div className="routePage">
+      <section className="pageHead">
+        <p className="pageEyebrow">public records</p>
+        <h1 className="pageTitle">Evidence</h1>
+        <p className="pageLede">This page brings the Float board and supporting records together.</p>
+      </section>
+      <section className="evidenceGroup" id="float" aria-labelledby="evidenceFloatTitle">
+        <div className="treasurySectionHeader">
+          <h2 id="evidenceFloatTitle">Float activity</h2>
+          <p>The Float activity panel shows the current board and desk journal.</p>
+        </div>
       <FloatV2CurrentPanel
         state={floatV2State}
         loading={floatV2Loading}
@@ -2466,7 +2471,21 @@ function App() {
         deskLoading={floatDeskLoading}
         deskError={floatDeskError}
       />
-    </>
+      </section>
+      <section className="evidenceGroup" id="records" aria-labelledby="evidenceRecordsTitle">
+        <div className="treasurySectionHeader">
+          <h2 id="evidenceRecordsTitle">Supporting records</h2>
+          <p>These panels show mandate checks, settlement records, and linked onchain evidence.</p>
+        </div>
+        <TreasuryHero treasuryState={treasuryState} />
+        <TreasuryEvidenceStrip treasuryState={treasuryState} />
+        <ForumFeeRouterCanaryProof />
+        <TreasuryRailSplit leptonState={leptonState} />
+        <TreasuryLiveVerifierPanel state={treasuryState} loading={treasuryLoading} error={treasuryError} />
+        <TreasuryOnchainLinks />
+        <TreasuryValidationPanel />
+      </section>
+    </div>
   );
 
   const buildersPage = (
@@ -2548,7 +2567,7 @@ function App() {
     <div className="routePage">
       <section className="pageHead">
         <p className="pageEyebrow">product status</p>
-        <h1 className="pageTitle">What is live on Arc, and what comes next.</h1>
+        <h1 className="pageTitle">Public testnet flow and what comes next.</h1>
         <p className="pageLede">
           Shadow Float now covers the full testnet loop: sponsor reserve, signed authorization, provider payment, debt,
           repayment, automated scoring, external sponsors, and labeled open debt. The roadmap below keeps the Float path
@@ -2599,7 +2618,7 @@ function App() {
           <p>Give sponsors clearer dashboards for daily limits, provider mandates, reserve reclaim, defaults, and risk exposure.</p>
         </article>
         <article className="roadmapCard">
-          <span>mainnet</span>
+          <span>controlled mainnet rehearsal is paused</span>
           <strong>Treasury reserve model</strong>
           <p>Define reserve providers, fee policy, and default handling for larger spending lines without weakening the reserve floor.</p>
         </article>
@@ -2615,23 +2634,14 @@ function App() {
           <span>Shadow</span>
         </Link>
         <div className="navLinks">
-          <NavLink end to="/" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Home
-          </NavLink>
-          <NavLink to="/float" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Float
-          </NavLink>
-          <NavLink to="/records" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Records
+          <Link to="/#how" className="navLink">
+            How it works
+          </Link>
+          <NavLink to="/evidence" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
+            Evidence
           </NavLink>
           <NavLink to="/builders" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Builders
-          </NavLink>
-          <NavLink to={isGuardedMainnetRoute ? "/mainnet" : "/start"} className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Funding
-          </NavLink>
-          <NavLink to="/roadmap" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
-            Roadmap
           </NavLink>
         </div>
         <div className="navActions">
@@ -2654,24 +2664,25 @@ function App() {
 
       <Routes>
         <Route path="/" element={<HomePage />} />
-        <Route path="/agents" element={<Navigate to="/float" replace />} />
+        <Route path="/evidence" element={evidencePage} />
+        <Route path="/agents" element={<EvidenceRedirect />} />
         <Route path="/follow" element={<Navigate to="/builders" replace />} />
-        <Route path="/receipts" element={<Navigate to="/float" replace />} />
-        <Route path="/lepton" element={<Navigate to="/records" replace />} />
-        <Route path="/treasury" element={<Navigate to="/records" replace />} />
-        <Route path="/records" element={treasuryPage} />
-        <Route path="/float" element={floatPage} />
-        <Route path="/proof" element={<Navigate to="/float" replace />} />
+        <Route path="/receipts" element={<EvidenceRedirect />} />
+        <Route path="/lepton" element={<EvidenceRedirect fallbackHash="#records" />} />
+        <Route path="/treasury" element={<EvidenceRedirect fallbackHash="#records" />} />
+        <Route path="/records" element={<EvidenceRedirect fallbackHash="#records" />} />
+        <Route path="/float" element={<EvidenceRedirect />} />
+        <Route path="/proof" element={<EvidenceRedirect />} />
         <Route path="/builders" element={buildersPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
         {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="guarded-mainnet" deployment={GUARDED_MAINNET} service={GUARDED_MAINNET_SERVICE} />} />}
         <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
-        <Route path="/archive" element={<Navigate to="/float" replace />} />
+        <Route path="/archive" element={<EvidenceRedirect />} />
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
-      <SiteFooter mainnetCandidate={isGuardedMainnetRoute} />
+      <SiteFooter />
     </main>
   );
 }
@@ -3635,7 +3646,7 @@ function errorMessage(error: unknown): string {
 }
 
 function RouteScroll() {
-  const { pathname, hash } = useLocation();
+  const { pathname, hash, key } = useLocation();
   useEffect(() => {
     if (hash) {
       const id = hash.slice(1);
@@ -3647,17 +3658,20 @@ function RouteScroll() {
     } else {
       window.scrollTo({ top: 0, behavior: "auto" });
     }
-  }, [pathname, hash]);
+  }, [pathname, hash, key]);
   return null;
 }
 
 function TreasuryHero({ treasuryState }: {
   treasuryState: TreasuryState | null;
 }) {
+  const currentV4WriteReady = treasuryState?.currentV4?.writeReady;
+  const currentV4Action =
+    currentV4WriteReady === undefined ? "not verified" : currentV4WriteReady ? "write-ready" : "inactive";
   const railStats = [
     { label: "V2 provider paid", value: "0.01 USDC", tone: "allow" },
     { label: "vault allocated", value: `${formatFloatUSDC(TREASURY_PROOF.amountAllocatedUSDC)} USDC`, tone: "allow" },
-    { label: "blocked first", value: `${formatFloatUSDC(TREASURY_PROOF.amountBlockedUSDC)} USDC`, tone: "block" },
+    { label: "blocked attempt", value: `${formatFloatUSDC(TREASURY_PROOF.amountBlockedUSDC)} USDC`, tone: "block" },
     { label: "external V2 lifecycle", value: "Crux repaid", tone: "neutral" },
   ];
   const verifierLabel = treasuryState
@@ -3670,14 +3684,14 @@ function TreasuryHero({ treasuryState }: {
     <section className="treasuryHero" aria-label="Shadow supporting records overview">
       <div className="treasuryHeroCopy">
         <p className="eyebrow">supporting records</p>
-        <h1>Mandate checks and settlement records sit behind the Float product.</h1>
+        <h2>Mandate checks and settlement records sit behind the Float product.</h2>
         <p>
           This page keeps the supporting records visible without making them the main story: approved-adapter checks,
           settlement records, and over-limit blocks that complement Float V2.
         </p>
         <div className="treasuryHeroActions">
-          <Link className="treasuryHeroPrimary" to="/float">
-            Open Float V2
+          <Link className="treasuryHeroPrimary" to="/evidence#float">
+            View Float activity
           </Link>
           <a className="treasuryHeroSecondary" href={FLOAT_V2_PROOF.sourcify} target="_blank" rel="noreferrer">
             View V2 source
@@ -3686,7 +3700,7 @@ function TreasuryHero({ treasuryState }: {
         <div className="treasuryHeroBoundary" aria-label="Verified receipt scope">
           <span>External Float usage live</span>
           <span>mandate adapter record</span>
-          <span>current V4 wallet action {treasuryState?.currentV4?.writeReady ? "write-ready" : "inactive"}</span>
+          <span>current V4 wallet action {currentV4Action}</span>
           <span>{verifierLabel}</span>
         </div>
       </div>
@@ -3738,6 +3752,9 @@ function TreasuryHero({ treasuryState }: {
 function TreasuryEvidenceStrip({ treasuryState }: { treasuryState: TreasuryState | null }) {
   const passed = treasuryState?.checks?.filter((check) => check.ok).length;
   const total = treasuryState?.checks?.length;
+  const currentV4WriteReady = treasuryState?.currentV4?.writeReady;
+  const currentV4Action =
+    currentV4WriteReady === undefined ? "not verified" : currentV4WriteReady ? "write-ready" : "inactive";
   const contractLinks = [
     { label: "Float V2", value: FLOAT_V2_CONTRACT, href: `https://testnet.arcscan.app/address/${FLOAT_V2_CONTRACT}` },
     {
@@ -3787,7 +3804,7 @@ function TreasuryEvidenceStrip({ treasuryState }: { treasuryState: TreasuryState
         <p>
           Current V4 reads use <code>{shortAddress(LEPTON_M1_DEPLOYMENTS.currentRead.v4StyleAdapter)}</code>. The June 19
           passkey proof used <code>{shortAddress(LEPTON_M1_DEPLOYMENTS.historicalProofs.circlePasskey.v4StyleAdapter)}</code>.
-          The current wallet action is inactive; no wallet request will be made.
+          The current wallet action is {currentV4Action}.
         </p>
       </div>
       <div className="treasuryEvidenceGroup" aria-label="Record contracts">
@@ -3822,18 +3839,18 @@ function TreasuryRailSplit({
   const railCards = [
     {
       eyebrow: "payment path",
-      title: "Float pays before the agent is funded",
+      title: "Float pays the provider from reserved capacity",
       body: "Signed agents authorize a spend, Float pays the approved provider from reserved capacity, debt opens, and repayment restores capacity.",
       stat: "V2 signed intent live",
-      href: "/float",
-      cta: "Open Float",
+      href: "/evidence#float",
+      cta: "View Float activity",
     },
     {
       eyebrow: "allocation path",
       title: "Mandate adapters gate approved movement",
       body: "The approved adapter authenticates the account, reads the bonded enforcer's ALLOW or BLOCK decision, and only moves vault-style USDC on ALLOW. This guarantee is scoped to approved adapters.",
       stat: leptonState?.morphoDepositedUSDC !== undefined ? `${formatUSDC(leptonState.morphoDepositedUSDC)} USDC allocated` : "0.1 USDC allocated",
-      href: "/records",
+      href: "/evidence#records",
       cta: "View records",
     },
     {
@@ -3941,7 +3958,7 @@ function TreasuryProofPanel({
           <h2>One execution wallet paid, allocated, and was stopped on the third action.</h2>
           <p>
             The sequence below is deliberately concrete: one provider payment, one vault allocation, one blocked over-limit
-            allocation, and one read-only check. It shows the scoped M1 adapter path that is live on Arc testnet.
+            allocation, and one read-only check. It shows the scoped M1 adapter path on Arc Testnet.
           </p>
         </div>
         <div className={`treasuryProofStatus ${treasuryState?.ok === false ? "fail" : ""}`}>
@@ -4125,10 +4142,10 @@ function TreasuryLiveVerifierPanel({
       <div className="treasuryLiveVerifierHeader">
         <div>
           <p className="eyebrow">live verifier · no private keys</p>
-          <h2>The Records page reads the same onchain checks as the CLI.</h2>
+          <h2>This panel reads the live records checks; the CLI provides a reproducible check.</h2>
           <p>
             This endpoint verifies the mandate adapter path from live Arc state. The current Float V2 payment anchors are
-            shown on the Float page.
+            shown in the Float activity section.
           </p>
         </div>
         <a href="/api/treasury" target="_blank" rel="noreferrer" className={`treasuryVerifierBadge ${state?.ok ? "pass" : error ? "fail" : ""}`}>
@@ -4180,7 +4197,7 @@ function TreasuryLiveVerifierPanel({
 
 function TreasuryOnchainLinks() {
   const links = [
-    { label: "V2 live verifier", value: "npm run float:v2-verify-live", href: "https://github.com/buildwithshadow/shadow" },
+    { label: "Source repository", value: "github.com/buildwithshadow/shadow", href: "https://github.com/buildwithshadow/shadow" },
     { label: "V2 provider payment", value: shortAddress(FLOAT_V2_PROOF.directSpendTx), href: txUrl(FLOAT_V2_PROOF.directSpendTx) },
     { label: "V2 blocked spend", value: shortAddress(FLOAT_V2_PROOF.blockedSpendTx), href: txUrl(FLOAT_V2_PROOF.blockedSpendTx) },
     { label: "Vault allocation", value: shortAddress(TREASURY_PROOF.txs.allocation), href: txUrl(TREASURY_PROOF.txs.allocation) },
@@ -4224,7 +4241,7 @@ function ForumFeeRouterCanaryProof() {
       <div className="forumCanaryHeader">
         <div>
           <p className="eyebrow">external integration · isolated Arc testnet canary</p>
-          <h2>One outside agent routed one fee. Every atomic unit reconciled.</h2>
+          <h2>Forum published one intent; Shadow routed one mirror fee. Every atomic unit reconciled.</h2>
           <p>
             Forum published a single intent from its own wallet. Shadow's isolated canary copied it, routed the mirror fee
             through Forum's FeeRouter, and returned routing to disabled before either recipient claimed.
@@ -4315,7 +4332,7 @@ function ForumFeeRouterCanaryProof() {
 
       <p className="forumCanaryBoundary">
         Bounded external-builder integration pilot. The canary used isolated contracts and dust-sized Arc testnet USDC;
-        it is not production routing, organic revenue, or independent security validation. Final state: split allocation
+        it is not production routing or independent security validation. Final state: split allocation
         7 / 3, outstanding 0 / 0, fallback 0 / 0, temporary allowances 0 / 0, routing disabled.
       </p>
     </section>
@@ -4327,17 +4344,17 @@ function TreasuryValidationPanel() {
     {
       label: "Obol",
       status: "verified Float draw",
-      detail: "Buyer-side agent signed a current-contract spend intent and returned the bind plus repayment flow.",
+      detail: "Buyer-side agent signed a current-contract spend intent; the verified snapshot shows an open debt awaiting repayment.",
     },
     {
       label: "Argus",
-      status: "signed security-agent intent",
-      detail: "Agent Alpha signed a Float intent for paid security data before producing a verdict.",
+      status: "V2 intents recorded",
+      detail: "Agent Alpha signed Float V2 intents, including a paid CitePay query.",
     },
     {
       label: "CitePay",
       status: "provider and sponsor receipts",
-      detail: "CitePay appears on the V2 proof path as a provider paid by Float and as a non-operator sponsor reserve.",
+      detail: "CitePay appears on the V2 proof path as a provider paid by Float and as the non-operator sponsor of lines whose reserves have been reclaimed.",
     },
     {
       label: "Forum",
@@ -4361,7 +4378,7 @@ function TreasuryValidationPanel() {
             External agents can authorize a bounded Float spend without pre funding the provider payment first. The contract
             verifies the signature and pays the provider from sponsor reserve.
           </p>
-          <Link to="/float">Open Float →</Link>
+          <Link to="/evidence#float">View Float activity →</Link>
         </article>
 
         <article className="treasuryValidationCard treasuryValidationCardValidated">
@@ -4383,7 +4400,7 @@ function TreasuryValidationPanel() {
             Forum, CitePay, Obol, Crux, and Argus-style agents are the relevant surface now: bounded intents, provider
             payment, debt, repayment, and overrun blocks on V2.
           </p>
-          <Link to="/float">Open Float →</Link>
+          <Link to="/evidence#float">View Float activity →</Link>
         </article>
       </div>
 
@@ -4802,8 +4819,8 @@ function FloatV2CurrentPanel({
     <section className="floatPanel floatPanelV2" id="shadow-float" aria-label="Shadow Float V2 current product">
       <div className="floatHeroShell">
         <div className="floatHeroCopy">
-          <p className="eyebrow">Shadow Float V2 · live on Arc</p>
-          <h1>Let agents pay providers without pre funding every wallet.</h1>
+          <p className="eyebrow">Shadow Float V2 · Arc Testnet · chain 5042002</p>
+          <h2>Let agents pay providers without pre funding every wallet.</h2>
           <p className="floatLede">
             Shadow Float lets a sponsor reserve Arc USDC for an agent. The agent signs a bounded spend intent, the contract
             pays the named provider from that reserve, and the line is restored when the agent repays.
@@ -4954,13 +4971,13 @@ function FloatV2SponsorCapitalPanel({ state }: { state: FloatV2ActivityState | n
   const stateByAgent = new Map((state?.agents || []).map((agent) => [agent.agent.toLowerCase(), agent]));
   const sponsorPresentation = (agent: string) => {
     const sponsorState = stateByAgent.get(agent.toLowerCase())?.sponsorState;
-    if (sponsorState === "active-reserve") return { status: "live reserve", tone: "live" };
+    if (sponsorState === "active-reserve") return { status: "unexpired reserve", tone: "live" };
     if (sponsorState === "expired-debt-open") return { status: "expired · debt open", tone: "expired" };
     if (sponsorState === "expired-reserve-reclaimable") return { status: "expired · reclaimable", tone: "expired" };
     if (sponsorState === "closed-reserve-reclaimed") return { status: "reserve reclaimed", tone: "reclaimed" };
     return { status: "state unavailable", tone: "" };
   };
-  const spendableReserveCount = [...stateByAgent.values()].filter(
+  const unexpiredReserveCount = [...stateByAgent.values()].filter(
     (agent) => floatV2SponsorProvenance(agent) === "verified-external" && agent.sponsorState === "active-reserve",
   ).length;
   const citePayAgent = "0x236652EAd43fbb0948173fC4dDF23BC0971B274d";
@@ -4991,7 +5008,7 @@ function FloatV2SponsorCapitalPanel({ state }: { state: FloatV2ActivityState | n
       agent: forumAgent,
       reserve: "0.05 USDC",
       proofHref: null,
-      body: "Forum Tollgate proved sponsor, spend, repay, reserve reclaim, and reopen. Current spendability is read from the line expiry above.",
+      body: "Forum Tollgate proved sponsor, spend, repay, reserve reclaim, and reopen. Current reserve status is classified from the recorded reserve and line expiry.",
       steps: [
         { label: "openSponsoredLine", tx: FLOAT_V2_PROOF.forumSponsorOpenTx },
         { label: "spend", tx: FLOAT_V2_PROOF.forumSponsorSpendTx },
@@ -5010,15 +5027,18 @@ function FloatV2SponsorCapitalPanel({ state }: { state: FloatV2ActivityState | n
       </div>
       <div className="floatSponsorCapitalIntro">
         <div>
-          <strong>Outside wallets can back agent capacity, then reclaim reserve after debt is clear.</strong>
+          <strong>
+            Outside wallets can back agent capacity; sponsors can reclaim a debt-free line or only the reserve remainder after default.
+          </strong>
           <p>
-            These sponsor runs were sent by non-operator wallets. Each reserve is bound to one agent line and one provider
-            mandate. closeSponsoredLine only succeeds after active debt is repaid.
+            These records show non-operator wallets backing agent capacity. Each reserve is bound to one agent line and one
+            provider mandate. closeSponsoredLine requires zero active debt; defaultSponsoredLine lets the sponsor write off
+            debt and recover only the reserve remainder.
           </p>
         </div>
         <div className="floatSponsorCapitalStats">
-          <FloatFact label="sponsor runs" value="2" />
-          <FloatFact label="spendable reserves" value={String(spendableReserveCount)} />
+          <FloatFact label="sponsor records" value={String(sponsorRuns.length)} />
+          <FloatFact label="unexpired reserve lines" value={String(unexpiredReserveCount)} />
           <FloatFact label="reclaim proof" value="Forum" />
           <FloatFact label="reserve held on V2" value={totalSponsoredReserve} />
         </div>
@@ -5232,11 +5252,20 @@ function FloatV2ActivityBoard({
             const href = agent.latestTxHash || agent.repayTx || agent.spendTx;
             const lifecycle = classifyFloatV2Lifecycle(agent);
             const reserveReclaimed = lifecycle.detail.includes("reserve reclaimed");
+            const signerProvenance = agent.agentProvenance ?? FLOAT_V2_TRACKED_AGENTS.find(
+              (trackedAgent) => trackedAgent.agent.toLowerCase() === agent.agent.toLowerCase(),
+            )?.agentProvenance;
+            const signerLabel =
+              signerProvenance === "verified-external-signer"
+                ? "verified external signer"
+                : signerProvenance === "shadow-controlled-signer"
+                  ? "Shadow-controlled system signer"
+                  : "unverified signer";
             const row = (
               <>
                 <div className="floatV2ActivityIdentity">
                   <strong>{agent.label}</strong>
-                  <small>owner {shortAddress(agent.agentOwner || agent.agent)} · verified external signer</small>
+                  <small>agent wallet {shortAddress(agent.agentOwner || agent.agent)} · {signerLabel}</small>
                   <small>{floatV2SponsorProvenanceLabel(agent)} · {shortAddress(agent.sponsor)}</small>
                 </div>
                 <div className="floatV2ActivityMetric">
@@ -7220,7 +7249,7 @@ function Shadow2ProofStrip({
       unit: "agent-loop cycles",
       title: "Behavior becomes spending power",
       body: "A verified agent receives bounded USDC capacity, buys approved provider resources, opens debt, and gets blocked when it overreaches.",
-      to: "/float",
+      to: "/evidence",
       tone: "float",
     },
     {
@@ -7275,14 +7304,14 @@ function ShadowMark() {
   );
 }
 
-function SiteFooter({mainnetCandidate = false}: {mainnetCandidate?: boolean}) {
+function SiteFooter() {
   const sections: Array<{ title: string; links: Array<{ label: string; href: string }> }> = [
     {
       title: "Product",
       links: [
         { label: "Home", href: "/" },
-        { label: "Shadow Float", href: "/float" },
-        { label: "Records", href: "/records" },
+        { label: "Evidence", href: "/evidence" },
+        { label: "Records", href: "/evidence#records" },
         { label: "Roadmap", href: "/roadmap" },
       ],
     },
@@ -7318,7 +7347,7 @@ function SiteFooter({mainnetCandidate = false}: {mainnetCandidate?: boolean}) {
           </p>
           <div className="siteFooterBadge">
             <span className="heroBadgeDot" />
-            {mainnetCandidate ? "controlled Arc mainnet candidate · chain 5042" : "live on arc testnet · chain 5042002"}
+            Public flow: Arc Testnet, chain 5042002. Controlled mainnet rehearsal is paused, chain 5042.
           </div>
         </div>
         <div className="siteFooterColumns">
@@ -7344,7 +7373,7 @@ function SiteFooter({mainnetCandidate = false}: {mainnetCandidate?: boolean}) {
         </div>
       </div>
       <div className="siteFooterBottom">
-        <span>Built on Arc {mainnetCandidate ? "mainnet" : "testnet"} with Circle USDC · 2026</span>
+        <span>Shadow Float and Circle USDC · 2026</span>
         <span>Shadow Float · spending lines, controls, and receipts on Arc</span>
       </div>
     </footer>
