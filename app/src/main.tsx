@@ -2599,7 +2599,7 @@ function App() {
       <Routes>
         <Route path="/" element={<HomePage />} />
         <Route path="/agents" element={<Navigate to="/float" replace />} />
-        <Route path="/follow" element={<Navigate to="/builders" replace />} />
+        <Route path="/follow" element={<Navigate to="/builders/v2" replace />} />
         <Route path="/receipts" element={<Navigate to="/float" replace />} />
         <Route path="/lepton" element={<Navigate to="/records" replace />} />
         <Route path="/treasury" element={<Navigate to="/records" replace />} />
@@ -4757,7 +4757,7 @@ function FloatV2CurrentPanel({
             <a className="floatPrimaryAction" href="#v2-activity">
               View activity
             </a>
-            <Link className="floatSecondaryAction" to="/builders">
+            <Link className="floatSecondaryAction" to="/builders/v2">
               Add an agent
             </Link>
           </div>
