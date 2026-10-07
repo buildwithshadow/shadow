@@ -10792,6 +10792,14 @@ body {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.routePage .builderPrimaryAction,
+.routePage .builderLegacyTools {
+  align-items: center;
+  display: inline-flex;
+  min-height: 44px;
+  min-width: 44px;
+}
+
 .builderFlowCard,
 .builderReferenceCard {
   min-height: 190px;

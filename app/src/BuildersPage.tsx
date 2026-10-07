@@ -13,7 +13,7 @@ export function BuildersPage() {
           purchase, then the sponsor closes the line and reclaims the remaining reserve.
         </p>
         <div className="floatHeroActions">
-          <Link className="floatPrimaryAction" to="/start">
+          <Link className="floatPrimaryAction builderPrimaryAction" to="/start">
             Fund an agent
           </Link>
         </div>
@@ -168,7 +168,7 @@ export function BuildersPage() {
           <p>Specification only; no discovery endpoint or indexer is deployed.</p>
         </a>
       </section>
-      <p><small><Link to="/builders/v2">Float V2 tools (earlier contract)</Link></small></p>
+      <p><small><Link className="builderLegacyTools" to="/builders/v2">Float V2 tools (earlier contract)</Link></small></p>
     </div>
   );
 }
