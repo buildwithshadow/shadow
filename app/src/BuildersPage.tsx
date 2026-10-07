@@ -9,8 +9,8 @@ export function BuildersPage() {
         <p className="pageEyebrow">builders · self-service</p>
         <h1 className="pageTitle">Build with Shadow's self-service flow.</h1>
         <p className="pageLede">
-          Start at /start for the public Arc testnet browser path. Sponsors fund a line; agents use their own wallet to
-          make a purchase. The contract checks line limits and records debt.
+          The public browser flow starts at /start on Arc testnet: a sponsor funds a line, an agent submits and repays a
+          purchase, then the sponsor closes the line and reclaims the remaining reserve.
         </p>
         <div className="floatHeroActions">
           <Link className="floatPrimaryAction" to="/start">
@@ -22,47 +22,77 @@ export function BuildersPage() {
       <section className="builderFlowGrid" aria-label="Sponsor steps">
         <article className="builderFlowCard">
           <span>1</span>
-          <strong>Sponsor: Connect and register</strong>
+          <strong>Connect and register</strong>
           <p>
-            At /start, connect the sponsor wallet and call <code>registerSponsor()</code> on Arc testnet. No operator
-            collects a wallet address or sends an enrollment token.
+            Connect the sponsor wallet at /start on Arc testnet and call <code>registerSponsor()</code>. This free
+            self-registration call moves or approves no tokens; testnet gas still applies. No operator collects an
+            address or sends an enrollment token.
           </p>
         </article>
         <article className="builderFlowCard">
           <span>2</span>
-          <strong>Approve the reserve</strong>
-          <p>Approve the exact USDC amount, then open a line for the agent and set its provider limits.</p>
+          <strong>Approve, then open the line</strong>
+          <p>
+            Have test USDC for the reserve and gas. Approve the exact reserve amount; this wallet approval lets the
+            contract take that amount but does not open the line. Then separately confirm opening: the contract moves
+            reserve into the line and applies the agent and provider limits. Money spent on purchases is unsecured
+            credit to the agent operator. If nobody repays, the sponsor cannot reclaim that spent principal; only
+            unused reserve and whatever is repaid can be reclaimed.
+          </p>
         </article>
         <article className="builderFlowCard">
           <span>3</span>
-          <strong>Share and close</strong>
+          <strong>Share the line link</strong>
           <p>
-            Send the agent a <code>/start?line=LINE_ID</code> link. Once debt is zero, close the line and reclaim unused
-            reserve.
+            After the line opens, share its <code>/start?line=LINE_ID</code> link with the agent. The link selects a
+            known line; it does not grant spending rights.
           </p>
         </article>
       </section>
 
-      <section className="builderFlowGrid" aria-label="Agent steps">
+      <section className="builderFlowGrid" aria-label="Complete the first cycle">
         <article className="builderFlowCard">
-          <span>1</span>
-          <strong>Agent: Connect the agent wallet</strong>
+          <span>4</span>
+          <strong>Connect the agent wallet</strong>
           <p>
-            Use the wallet the agent controls and select its funded line. A <code>/start?line=LINE_ID</code> link selects
-            a known line; it does not grant spending rights.
+            Connect the agent's signing wallet and open the sponsor's line link. The link selects a known line but does
+            not grant spending rights; loading it checks the line onchain. The agent needs testnet gas to submit a
+            purchase.
           </p>
         </article>
         <article className="builderFlowCard">
-          <span>2</span>
+          <span>5</span>
           <strong>Review and sign</strong>
-          <p>Check the price, provider, sponsor, agent, and due time, then sign the purchase intent in the agent wallet.</p>
+          <p>
+            Check the price, provider, sponsor, agent, and due time, then sign the purchase intent in the agent wallet.
+            The signature authorizes those reviewed terms; it does not submit the transaction. Next, submit that request.
+          </p>
         </article>
         <article className="builderFlowCard">
-          <span>3</span>
+          <span>6</span>
           <strong>Submit and recover</strong>
           <p>
             The agent wallet submits the transaction and pays Arc testnet gas. If the outcome is unknown, recover the
-            original purchase instead of sending another.
+            original purchase instead of submitting another; recovery checks the original payment and retrieves its
+            result.
+          </p>
+        </article>
+        <article className="builderFlowCard">
+          <span>7</span>
+          <strong>Repay the purchase</strong>
+          <p>
+            Repay the full purchase debt from any wallet's own test USDC. The line's reserve cannot repay its own debt,
+            so the paying wallet needs separate test USDC. If needed, its approval authorizes the exact repayment
+            amount; then confirm repayment. Repayment restores reserve but does not reset the total purchase limit.
+          </p>
+        </article>
+        <article className="builderFlowCard">
+          <span>8</span>
+          <strong>Sponsor: close and reclaim</strong>
+          <p>
+            Once debt is zero, the sponsor connects its wallet, closes the line, and reclaims the remaining reserve.
+            If debt becomes overdue and remains unpaid, spent principal remains a loss. Declaring a default is not an
+            action in the app today.
           </p>
         </article>
       </section>
@@ -81,8 +111,7 @@ export function BuildersPage() {
           <strong>Where limits come from</strong>
           <p>
             The onchain line holds the reserve and provider limits. The contract checks purchases against that line and
-            records debt, but cannot force repayment. Any wallet can repay a debt from its own USDC; only the sponsor's
-            reclaim of unused reserve is enforced.
+            records debt, but cannot force repayment. Any wallet can repay a debt from its own USDC.
           </p>
         </article>
       </section>
@@ -139,6 +168,7 @@ export function BuildersPage() {
           <p>Specification only; no discovery endpoint or indexer is deployed.</p>
         </a>
       </section>
+      <p><small><Link to="/builders/v2">Float V2 tools (earlier contract)</Link></small></p>
     </div>
   );
 }

@@ -1762,6 +1762,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/float": "Float | Shadow",
   "/records": "Records | Shadow",
   "/builders": "Builders | Shadow",
+  "/builders/v2": "Float V2 tools | Shadow",
   "/start": "Fund an agent | Shadow",
   "/funding": "Earlier candidate | Shadow",
   "/roadmap": "Roadmap | Shadow",
@@ -2472,6 +2473,83 @@ function App() {
   );
 
   const buildersPage = <BuildersPage />;
+  const floatV2ToolsPage = (
+    <div className="routePage">
+      <section className="pageHead">
+        <p className="pageEyebrow">builders · agent access</p>
+        <h1 className="pageTitle">Give your agent sponsor-backed capacity without pre-funding it first.</h1>
+        <p className="pageLede">
+          These tools are for the earlier Float V2 contract; the current public testnet browser flow starts at /start.
+        </p>
+        <p className="pageLede">
+          Shadow Float is for buyer agents that need paid data, compute, or API calls under strict policy. The agent signs
+          a bounded intent; V2 verifies it onchain, pays the named provider from sponsor reserve, and records the debt trail.
+        </p>
+      </section>
+      <FloatBuilderPilot
+        account={account}
+        state={floatV2State}
+        loading={floatV2Loading}
+        onAccountChange={setAccount}
+        onRefresh={refreshFloatV2}
+      />
+      <FloatPilotOperations state={floatV2State} loading={floatV2Loading} />
+      <section className="builderFlowGrid" aria-label="Builder integration flow">
+        <article className="builderFlowCard">
+          <span>1</span>
+          <strong>Request a line</strong>
+          <p>Share the Arc testnet wallet your agent actually controls. A sponsor reserves bounded USDC capacity for that signer.</p>
+        </article>
+        <article className="builderFlowCard">
+          <span>2</span>
+          <strong>Sign an intent</strong>
+          <p>Sign typed data locally. The key stays on your machine; only the intent JSON and signature are shared.</p>
+        </article>
+        <article className="builderFlowCard">
+          <span>3</span>
+          <strong>Contract pays provider</strong>
+          <p>ShadowFloat verifies the intent onchain, pays the named provider from sponsor reserve, and opens debt against the line.</p>
+        </article>
+        <article className="builderFlowCard">
+          <span>4</span>
+          <strong>Repay when ready</strong>
+          <p>Your agent can repay from its own wallet to close the spend, debt, and repayment loop.</p>
+        </article>
+      </section>
+      <section className="builderReferenceGrid" aria-label="Builder references">
+        <article className="builderReferenceCard">
+          <span>line state lookup</span>
+          <code>/api/float-tools?action=agent&amp;address=0x...</code>
+          <p>Read the current line limit, available capacity, active debt, and status for a registered agent.</p>
+        </article>
+        <article className="builderReferenceCard">
+          <span>typed-data intent</span>
+          <code>/api/float-tools?action=intent&amp;agent=0x...&amp;reason=...</code>
+          <p>Returns the exact EIP-712 payload a builder can sign with their own wallet tooling. No Shadow script or secret env is required.</p>
+        </article>
+        <article className="builderReferenceCard">
+          <span>intent verifier</span>
+          <code>/api/float-tools?action=verify&amp;hash=0x...</code>
+          <p>Verify signer, request hash, onchain receipt, V2 direct provider payment, and nonce use.</p>
+        </article>
+        <article className="builderReferenceCard">
+          <span>local scripts</span>
+          <code>float-builder-sign.mjs · float-builder-repay.mjs</code>
+          <p>Reference helpers for local signing and repayment. Builders can also construct calls with their own signer.</p>
+        </article>
+        <a
+          className="builderReferenceCard"
+          href="https://github.com/buildwithshadow/shadow/blob/main/docs/PILOT_RECRUITMENT.md"
+          target="_blank"
+          rel="noreferrer noopener"
+        >
+          <span>pilot handoff</span>
+          <strong>Run three unassisted cycles</strong>
+          <p>Participant roles, safe defaults, proof requirements, repeat-use target, and reserve-reclaim finish line.</p>
+        </a>
+      </section>
+    </div>
+  );
   const roadmapPage = <RoadmapPage />;
   return (
     <main className={isFundingDeskRoute ? "shell candidateShell" : "shell"}>
@@ -2529,6 +2607,7 @@ function App() {
         <Route path="/float" element={floatPage} />
         <Route path="/proof" element={<Navigate to="/float" replace />} />
         <Route path="/builders" element={buildersPage} />
+        <Route path="/builders/v2" element={floatV2ToolsPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
         {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="guarded-mainnet" deployment={GUARDED_MAINNET} service={GUARDED_MAINNET_SERVICE} />} />}
         <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
