@@ -15,13 +15,17 @@ pnpm --dir app install --frozen-lockfile
 Install the tested Circle runtime in a dedicated directory, separate from any global CLI:
 
 ```sh
-shadow_runtime="$HOME/.local/share/shadow/circle-runtime"
-mkdir -p "$shadow_runtime"
-cp tooling/circle-cli-runtime/package.json tooling/circle-cli-runtime/package-lock.json "$shadow_runtime/"
-npm ci --prefix "$shadow_runtime" --ignore-scripts
+(
+  set -eu
+  shadow_runtime="$HOME/.local/share/shadow/circle-runtime-1.2.0"
+  mkdir -p "$(dirname "$shadow_runtime")"
+  mkdir "$shadow_runtime"
+  cp tooling/circle-cli-runtime/package.json tooling/circle-cli-runtime/package-lock.json "$shadow_runtime/"
+  npx --yes --package=npm@11.19.0 npm ci --prefix "$shadow_runtime" --ignore-scripts
+)
 ```
 
-For an existing runtime or unresolved operation, preserve the old installation and journal. Prepare a new directory and pass its path with `--runtime`; do not run `npm ci` inside an active installation.
+The install stops if that versioned directory already exists. Both launchers default to the new 1.2.0 directory; the journal location stays unchanged. For an existing runtime or unresolved operation, preserve the old installation and journal. Prepare a new directory and pass its path with `--runtime`; do not run `npm ci` inside an active installation.
 
 Check the saved session first with `node app/scripts/circle-cli-verified.mjs wallet status --type agent --output json`. Reuse a valid session; do not request another OTP unnecessarily.
 
@@ -107,7 +111,7 @@ State defaults to `~/.local/share/shadow/agent-testnet`. Keep it private: purcha
 
 Circle CLI 1.2.0 does not expose the raw-calldata option needed for Shadow's tuple call. Shadow checks the SHA-256 of the tested release and writes a separate, narrowly scoped compatibility copy inside the dedicated runtime. The original CLI file is unchanged. Authentication, Circle policies and version checks are preserved. This is **Shadow compatibility code, not an official Circle browser integration**.
 
-The launcher validates the vendor entrypoint and the complete dependency closure before authentication. The committed approval contains separate reference digests for macOS ARM64 and Linux x64, produced from the exact lockfile with install scripts disabled. Installation paths do not affect the digest. Changed dependency bytes or metadata are refused before a new executable cache is created. Inspection does not approve an installation; a different platform or supplier update needs a maintainer review and a new committed approval.
+The launcher validates the vendor entrypoint and the complete dependency closure before authentication. The committed approval contains separate reference digests for macOS ARM64 and Linux x64, produced from the exact lockfile with npm 11.19.0 and install scripts disabled. Use the pinned installer shown above: npm 10 includes an extraneous optional package from this vendor lockfile on Linux, producing an unapproved closure. Installation paths do not affect the digest. Changed dependency bytes or metadata are refused before a new executable cache is created. Inspection does not approve an installation; a different platform or supplier update needs a maintainer review and a new committed approval.
 
 Authentication and inspection run from the frozen directory with a restricted environment. Remove `NODE_OPTIONS`, `NODE_PATH` and `CIRCLE_PROXY_URL` before use. Native keyring variables and an absolute `CIRCLE_CLI_HOME` remain supported. The verified launcher accepts explicit terms consent, login and inspection only; use the bounded Shadow runner for signatures and transactions. The byte approval is not a vulnerability audit. A fresh stock 1.2.0 audit still reports dependency advisory matches; updating the CLI does not clear those advisories.
 

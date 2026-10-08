@@ -2,9 +2,11 @@ import { realpath, mkdtemp, mkdir, writeFile, readFile, lstat, symlink, rename, 
 import { dirname, join, resolve, relative } from 'node:path';
 import { createHash } from 'node:crypto';
 import { createRequire, isBuiltin } from 'node:module';
+import { homedir } from 'node:os';
 import { requirePrivateState } from './circle-agent-private-state.mjs';
 
 import approval from './circle-cli-dependency-approval.json' with { type: 'json' };
+export const DEFAULT_CIRCLE_RUNTIME = join(homedir(), `.local/share/shadow/circle-runtime-${approval.circleVersion}`);
 export const APPROVED_CIRCLE_DEPENDENCY_DIGEST = approval.runtimes?.find(record=>record.platform===process.platform && record.arch===process.arch)?.dependencyDigest;
 
 const hashBytes = value => createHash('sha256').update(value).digest('hex');

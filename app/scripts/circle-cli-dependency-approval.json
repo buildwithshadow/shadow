@@ -4,7 +4,7 @@
   "lockfileSha256": "75de59fc281afd072614a6621555c6cb83f63fbcee1e7701864e381c873094f6",
   "cliEntrypointSha256": "feb24e3d404b41bfda54ff69b397c892a3c007487f7831904c2617d036afd9b9",
   "approvedInput": "tooling/circle-cli-runtime/package-lock.json",
-  "install": "npm ci --ignore-scripts",
+  "install": "npx --yes --package=npm@11.19.0 npm ci --ignore-scripts",
   "runtimes": [
     {
       "platform": "darwin",
@@ -14,7 +14,7 @@
     {
       "platform": "linux",
       "arch": "x64",
-      "dependencyDigest": "df1fff165539f434447984f69aa4121b501a15946d33f99f058a89c2073a1a4b"
+      "dependencyDigest": "55c73058c2da768a50598ec43faca27b1cada50dbd4f4ea07252cc903b129b04"
     }
   ]
 }
