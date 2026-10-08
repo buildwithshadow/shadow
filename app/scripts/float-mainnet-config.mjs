@@ -17,7 +17,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { errorMessage, redactUrl, stableStringify } from "./float-mainnet-preflight.mjs";
 import { createRpcReadTransport } from "./rpc-read-transport.mjs";
-import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
+import { arcRpcUrlForChain } from "../arcTestnetNetwork.mjs";
 
 // Shared configuration for the ShadowFloatMainnet candidate participant tools.
 // Kept apart from every V2 module: the candidate has its own domain, intent
@@ -138,7 +138,7 @@ export function readDeployment(env = process.env, { manifest } = {}) {
     throw new Error("FLOAT_MAINNET_ADDRESS and the manifest's contract.address differ");
   }
   return {
-    rpcUrl: chainRaw === "5042002" ? arcTestnetRpcUrl(rpcUrl) : rpcUrl,
+    rpcUrl: arcRpcUrlForChain(rpcUrl, chainRaw),
     ...(spacingRaw !== undefined ? { readSpacingMs: Number(spacingRaw) } : {}),
     expectedChainId: BigInt(chainRaw),
     address: getAddress(raw),
@@ -150,6 +150,7 @@ export function readDeployment(env = process.env, { manifest } = {}) {
 // Connects and proves the address is this contract generation on this chain,
 // using the contract's own public domain and type constants.
 export async function connectCandidate(deployment, { readOnly = false } = {}) {
+  deployment = { ...deployment, rpcUrl: arcRpcUrlForChain(deployment.rpcUrl, deployment.expectedChainId) };
   const chain = defineChain({
     id: Number(deployment.expectedChainId),
     name: `chain ${deployment.expectedChainId}`,

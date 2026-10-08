@@ -23,6 +23,12 @@ export function arcTestnetRpcUrl(configured) {
   return value;
 }
 
+export function arcRpcUrlForChain(configured, chainId) {
+  return String(chainId) === String(ARC_TESTNET_CHAIN_ID)
+    && typeof configured === 'string' && configured.trim()
+    ? arcTestnetRpcUrl(configured) : configured;
+}
+
 export function arcTestnetWalletParameters() {
   return {
     chainId: '0x4cef52', chainName: 'Arc Testnet',

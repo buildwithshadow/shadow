@@ -4,7 +4,7 @@ import { mkdtempSync, copyFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
-import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_RPC_URL, arcTestnetRpcUrl, arcTestnetWalletParameters, arcTestnetConnectionHelp } from '../arcTestnetNetwork.mjs';
+import { ARC_TESTNET_CHAIN_ID, ARC_TESTNET_RPC_URL, arcTestnetRpcUrl, arcRpcUrlForChain, arcTestnetWalletParameters, arcTestnetConnectionHelp } from '../arcTestnetNetwork.mjs';
 
 test('fresh wallet setup supplies Arc testnet with public endpoints and native gas decimals', () => {
   const params = arcTestnetWalletParameters();
@@ -36,6 +36,14 @@ test('nested wallet HTTP403 gets recovery guidance without echoing the server re
   assert.doesNotMatch(help, /private server details|<html>/);
   const loop = { message: cause.message }; loop.cause = loop;
   assert.equal(arcTestnetConnectionHelp(loop), help);
+});
+
+test('shared deployment readers normalize only testnet and keep absent required configuration absent', () => {
+  const legacy = 'https://rpc.testnet.arc.network';
+  assert.equal(arcRpcUrlForChain(legacy, 5042002n), ARC_TESTNET_RPC_URL);
+  assert.equal(arcRpcUrlForChain(legacy, 5042n), legacy);
+  assert.equal(arcRpcUrlForChain('', '5042002'), '');
+  assert.equal(arcRpcUrlForChain(undefined, '5042002'), undefined);
 });
 
 test('a declined wallet request or an unrelated provider error does not get misdiagnosed as an RPC outage', () => {

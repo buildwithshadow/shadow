@@ -1,8 +1,9 @@
 import { useEffect, useRef, useState } from "react";
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { createPublicClient, http, isAddress, parseAbi, type Hex } from "viem";
 import { toWebAuthnAccount } from "viem/account-abstraction";
 import { toCircleSmartAccount, toPasskeyTransport, toWebAuthnCredential, WebAuthnMode } from "@circle-fin/modular-wallets-core";
-import { arcTestnet, PUBLIC_ARC_RPC_URL } from "./chain";
+import { arcTestnet } from "./chain";
 import {
   assertDiagnosticContext, assertDiagnosticSignature, diagnosticDigest, diagnosticJson,
   DIAGNOSTIC_CHAIN_ID, DIAGNOSTIC_RP_ID, DIAGNOSTIC_WALLET, WALLET_DIAGNOSTIC,
@@ -33,7 +34,7 @@ const candidateAddress = (import.meta.env.VITE_SHADOW_FLOAT_MAINNET_CANDIDATE ||
 const candidatePayload = isAddress(candidateAddress) ? candidateProbe(candidateAddress) : null;
 const client = createPublicClient({
   chain: arcTestnet,
-  transport: http(import.meta.env.VITE_ARC_RPC_URL || PUBLIC_ARC_RPC_URL, { timeout: 12000, retryCount: 1 }),
+  transport: http(arcTestnetRpcUrl(import.meta.env.VITE_ARC_RPC_URL), { timeout: 12000, retryCount: 1 }),
 });
 
 export function CircleWalletDiagnostic() {

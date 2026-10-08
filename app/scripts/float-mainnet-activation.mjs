@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { arcRpcUrlForChain } from "../arcTestnetNetwork.mjs";
 import { readFileSync } from "node:fs";
 import { createPublicClient, decodeEventLog, erc20Abi, getAddress, isAddress, keccak256, parseAbi, stringToBytes, zeroAddress } from "viem";
 import { floatEventAbi } from "./float-mainnet-config.mjs";
@@ -237,7 +238,7 @@ async function checkPhase(values) {
   if (fileHash(manifestBytes) !== values["manifest-sha256"]) throw new Error("manifest changed from the reviewed SHA256");
   if (manifest.ok !== true || String(manifest.chainId) !== plan.chainId || !equal(manifest.contract?.address, plan.address) || !equal(manifest.bytecode?.onchainRuntimeKeccak256, plan.runtimeHash) || String(manifest.deployment?.blockNumber) !== plan.deploymentBlock || !equal(manifest.deployment?.deployer, plan.deployer))
     throw new Error("passing release manifest must match the plan's chain, address, runtime and deployment block");
-  const urls = [process.env.ARC_RPC_URL, process.env.ARC_RPC_URL_2];
+  const urls = [process.env.ARC_RPC_URL, process.env.ARC_RPC_URL_2].map(url => url ? arcRpcUrlForChain(url, plan.chainId) : url);
   if (urls.some((u) => !u || !URL.canParse(u)) || new URL(urls[0]).origin === new URL(urls[1]).origin) throw new Error("two different RPC origins required in ARC_RPC_URL and ARC_RPC_URL_2");
   const clients = urls.map((url) => createPublicClient({ transport: createRpcReadTransport(url) }));
   const heads = [];

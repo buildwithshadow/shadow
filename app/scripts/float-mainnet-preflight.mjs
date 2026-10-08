@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { arcRpcUrlForChain } from "../arcTestnetNetwork.mjs";
 import { createHash } from "node:crypto";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
 import { resolve } from "node:path";
@@ -156,6 +157,7 @@ export function parseConfig(env, { requireDeployer = false } = {}) {
     errors.push("FLOAT_MAINNET_MAX_REPAYMENT_WINDOW must be >= FLOAT_MAINNET_MIN_REPAYMENT_WINDOW");
   }
   if (config.governanceDelay === 0n) errors.push("FLOAT_MAINNET_GOVERNANCE_DELAY must be nonzero");
+  config.rpcUrls = config.rpcUrls.map((url) => url ? arcRpcUrlForChain(url, config.expectedChainId) : url);
   const [primaryRpc, secondaryRpc] = config.rpcUrls;
   if (primaryRpc && secondaryRpc && new URL(primaryRpc).hostname === new URL(secondaryRpc).hostname) {
     errors.push("ARC_RPC_URL and ARC_RPC_URL_2 must be on two distinct hosts");

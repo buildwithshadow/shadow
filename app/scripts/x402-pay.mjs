@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 // Live x402 payer: signs an Arc testnet USDC EIP-3009 authorization with the
 // cat agent key and calls the gated reasoning endpoint.
 import { readFileSync } from "node:fs";
@@ -12,7 +13,8 @@ const env = Object.fromEntries(
   }),
 );
 
-const RPC = env.ARC_RPC_URL || env.VITE_ARC_RPC_URL;
+const RPC_RAW = env.ARC_RPC_URL || env.VITE_ARC_RPC_URL;
+const RPC = RPC_RAW ? arcTestnetRpcUrl(RPC_RAW) : RPC_RAW;
 const KEY = env.CAT_AGENT_PRIVATE_KEY;
 if (!RPC || !KEY) throw new Error("missing rpc or key in env file");
 
