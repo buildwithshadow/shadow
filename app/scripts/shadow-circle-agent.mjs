@@ -10,6 +10,7 @@ import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 import { createCircleRunnerState } from './circle-agent-runner-state.mjs';
 import { setupCircleAgentWallet } from './circle-agent-setup.mjs';
 import { createCircleCliTransport } from './circle-agent-cli-transport.mjs';
+import { DEFAULT_CIRCLE_RUNTIME } from './circle-agent-cli-runtime.mjs';
 import { createRpcReadTransport } from './rpc-read-transport.mjs';
 import { createCandidateFundingKit, CANDIDATE_FUNDING, candidateFundingChain } from '../src/candidateFunding.ts';
 import { createSelfServicePurchase } from '../src/selfServicePurchase.mjs';
@@ -35,7 +36,7 @@ export function parseAgentArgs(args) {
   const line=flags['--line']?.trim().toLowerCase();
   if(!['doctor','setup'].includes(command))must(/^0x[0-9a-fA-F]{64}$/.test(line),'A valid funding line ID is required.');
   must(!flags['--confirm'] || ['purchase','repay','setup'].includes(command),'This command is read-only; --confirm is not allowed.');
-  return {command,agent,line,confirm:flags['--confirm']===true,state:resolve(flags['--state']??join(homedir(),'.local/share/shadow/agent-testnet')),runtime:resolve(flags['--runtime']??join(homedir(),'.local/share/shadow/circle-runtime'))};
+  return {command,agent,line,confirm:flags['--confirm']===true,state:resolve(flags['--state']??join(homedir(),'.local/share/shadow/agent-testnet')),runtime:resolve(flags['--runtime']??DEFAULT_CIRCLE_RUNTIME)};
 }
 export async function recoverAgentPurchase({executor,state,engine,client,save}) {
   const operations={};

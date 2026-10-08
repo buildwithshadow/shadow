@@ -3,6 +3,19 @@ import { test } from 'node:test';
 import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 import { parseVerifiedCliArgs, runVerifiedCli } from './circle-cli-verified.mjs';
 import { EventEmitter } from 'node:events';
+import { parseAgentArgs } from './shadow-circle-agent.mjs';
+import { homedir } from 'node:os';
+import { join } from 'node:path';
+
+test('the launcher and runner select a new versioned installation without relocating the existing journal',()=>{
+ const launcher=parseVerifiedCliArgs(['wallet','status','--type','agent']);
+ const runner=parseAgentArgs(['setup','--agent',`0x${'11'.repeat(20)}`]);
+ assert.equal(launcher.runtime,join(homedir(),'.local/share/shadow/circle-runtime-1.2.0'));
+ assert.equal(runner.runtime,launcher.runtime);
+ assert.equal(runner.state,join(homedir(),'.local/share/shadow/agent-testnet'));
+ assert.equal(parseVerifiedCliArgs(['--runtime','/preserved/runtime','--version']).runtime,'/preserved/runtime');
+ assert.equal(parseAgentArgs(['setup','--agent',runner.agent,'--runtime','/preserved/runtime']).runtime,'/preserved/runtime');
+});
 
 test('Circle subprocesses retain profile and keyring access without project or proxy environment',()=>{
  const input={HOME:'/user',PATH:'/untrusted/bin',CIRCLE_CLI_HOME:'/private/profiles',DBUS_SESSION_BUS_ADDRESS:'unix:path=/run/user/bus',LANG:'C.UTF-8',DEBUG:'*',CIRCLE_API_KEY:'not-forwarded',HTTP_PROXY:'not-forwarded'};

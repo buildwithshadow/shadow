@@ -5,11 +5,11 @@ import { homedir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { CIRCLE_CLI_SHA256 } from './circle-agent-cli-transport.mjs';
-import { freezeCircleCliSource } from './circle-agent-cli-runtime.mjs';
+import { freezeCircleCliSource, DEFAULT_CIRCLE_RUNTIME } from './circle-agent-cli-runtime.mjs';
 import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 
 export function parseVerifiedCliArgs(argv) {
-  const options={runtime:join(homedir(),'.local/share/shadow/circle-runtime'),cache:join(homedir(),'.local/share/shadow/verified-circle-cli')};
+  const options={runtime:DEFAULT_CIRCLE_RUNTIME,cache:join(homedir(),'.local/share/shadow/verified-circle-cli')};
   const args=[],seen=new Set();
   for(let i=0;i<argv.length;i++) {
     const key=argv[i];
