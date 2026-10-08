@@ -17,6 +17,7 @@ import {
 import { privateKeyToAccount } from "viem/accounts";
 import { errorMessage, redactUrl, stableStringify } from "./float-mainnet-preflight.mjs";
 import { createRpcReadTransport } from "./rpc-read-transport.mjs";
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 
 // Shared configuration for the ShadowFloatMainnet candidate participant tools.
 // Kept apart from every V2 module: the candidate has its own domain, intent
@@ -137,7 +138,7 @@ export function readDeployment(env = process.env, { manifest } = {}) {
     throw new Error("FLOAT_MAINNET_ADDRESS and the manifest's contract.address differ");
   }
   return {
-    rpcUrl,
+    rpcUrl: chainRaw === "5042002" ? arcTestnetRpcUrl(rpcUrl) : rpcUrl,
     ...(spacingRaw !== undefined ? { readSpacingMs: Number(spacingRaw) } : {}),
     expectedChainId: BigInt(chainRaw),
     address: getAddress(raw),
