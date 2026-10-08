@@ -8,7 +8,7 @@ Type=oneshot
 User=shadow-observer
 Group=shadow-observer
 WorkingDirectory=/opt/shadow-observer/current
-Environment=ARC_RPC_URL=https://rpc.testnet.arc.network
+Environment=ARC_RPC_URL=https://rpc.testnet.arc.io
 ExecStart=/usr/bin/node app/scripts/public-testnet-observer.mjs --manifest contracts/deployments/public-testnet/arc-testnet.manifest.json --state-dir /var/lib/shadow-observer
 StateDirectory=shadow-observer
 StateDirectoryMode=0750

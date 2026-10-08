@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import {
   createPublicClient,
   createWalletClient,
@@ -174,7 +175,7 @@ export default async function handler(
 }
 
 async function runVerify(): Promise<VerifyOutcome> {
-  const rpcUrl = requireEnv("ARC_RPC_URL");
+  const rpcUrl = arcTestnetRpcUrl(requireEnv("ARC_RPC_URL"));
   const router = requireEnv("SHADOW_ROUTER") as `0x${string}`;
   const arceth = requireEnv("SHADOW_ARCETH") as `0x${string}`;
   const amm = requireEnv("SHADOW_AMM") as `0x${string}`;

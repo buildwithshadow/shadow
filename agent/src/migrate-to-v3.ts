@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../../app/arcTestnetNetwork.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +20,7 @@ const arcTestnet = defineChain({
   id: 5_042_002,
   name: "Arc Testnet",
   nativeCurrency: { decimals: 18, name: "USDC", symbol: "USDC" },
-  rpcUrls: { default: { http: [requiredEnv("ARC_RPC_URL")] } },
+  rpcUrls: { default: { http: [arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"))] } },
 });
 
 const erc20Abi = parseAbi([
@@ -45,7 +46,7 @@ const SPOTLIGHT_MIN_OUT_ARCETH = parseUnits("0.034", 18);
 await main();
 
 async function main() {
-  const rpcUrl = requiredEnv("ARC_RPC_URL");
+  const rpcUrl = arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"));
   const transport = http(rpcUrl);
   const publicClient = createPublicClient({ chain: arcTestnet, transport });
 

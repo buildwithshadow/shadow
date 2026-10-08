@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl, arcTestnetWalletParameters } from "../arcTestnetNetwork.mjs";
 import { useEffect, useMemo, useState } from "react";
 import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
 import { GUARDED_MAINNET, GUARDED_MAINNET_SERVICE } from "./guardedMainnet";
@@ -1049,7 +1050,7 @@ async function fetchFloatDeskJournal(): Promise<FloatDeskState> {
 async function fetchFloatV2ActivityFromRpc(): Promise<FloatV2ActivityState> {
   const client = createClient({
     chain: arcTestnet,
-    transport: http(import.meta.env.VITE_ARC_RPC_URL || "https://rpc.testnet.arc.network"),
+    transport: http(arcTestnetRpcUrl(import.meta.env.VITE_ARC_RPC_URL)),
   });
   const latestBlock = BigInt(await client.getBlockNumber());
   const float = getAddress(FLOAT_V2_CONTRACT);
@@ -4196,13 +4197,7 @@ function shortHash(value?: string | null): string {
 
 async function switchToArc() {
   if (!window.ethereum) return;
-  const arcTestnetParams = {
-    chainId: "0x4cef52",
-    chainName: "Arc Testnet",
-    nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
-    rpcUrls: ["https://rpc.testnet.arc.network"],
-    blockExplorerUrls: ["https://testnet.arcscan.app"],
-  };
+  const arcTestnetParams = arcTestnetWalletParameters();
   try {
     await window.ethereum.request({
       method: "wallet_switchEthereumChain",

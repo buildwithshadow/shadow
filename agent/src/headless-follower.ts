@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../../app/arcTestnetNetwork.mjs";
 // Headless follower agent. Proves Shadow runs end to end with no browser:
 // fund + approve + deposit + followSource + watch receipts + closePosition.
 //
@@ -35,7 +36,7 @@ const arcTestnet = defineChain({
   id: 5_042_002,
   name: "Arc Testnet",
   nativeCurrency: { decimals: 18, name: "USDC", symbol: "USDC" },
-  rpcUrls: { default: { http: [requiredEnv("ARC_RPC_URL")] } },
+  rpcUrls: { default: { http: [arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"))] } },
 });
 
 const erc20Abi = parseAbi([
@@ -86,7 +87,7 @@ const WATCH_SECONDS = Number(process.env.HEADLESS_WATCH_SECONDS || 600);
 await main();
 
 async function main() {
-  const transport = http(requiredEnv("ARC_RPC_URL"));
+  const transport = http(arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL")));
   const publicClient = createPublicClient({ chain: arcTestnet, transport });
   const usdc = requiredEnv("ARC_USDC") as Address;
   const router = requiredEnv("SHADOW_ROUTER") as Address;

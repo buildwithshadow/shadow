@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import { GatewayClient } from "@circle-fin/x402-batching/client";
@@ -41,7 +42,7 @@ if (!payerKey) {
 const client = new GatewayClient({
   chain: "arcTestnet",
   privateKey: normalizePrivateKey(payerKey),
-  rpcUrl: env.ARC_RPC_URL || env.VITE_ARC_RPC_URL,
+  rpcUrl: (env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) ? arcTestnetRpcUrl(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) : undefined,
 });
 
 let settled = 0;

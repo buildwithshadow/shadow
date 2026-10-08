@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../../app/arcTestnetNetwork.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -27,7 +28,7 @@ const arcTestnet = defineChain({
   id: 5_042_002,
   name: "Arc Testnet",
   nativeCurrency: { decimals: 18, name: "USDC", symbol: "USDC" },
-  rpcUrls: { default: { http: [requiredEnv("ARC_RPC_URL")] } },
+  rpcUrls: { default: { http: [arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"))] } },
 });
 
 const routerAbi = parseAbi([
@@ -43,7 +44,7 @@ const ammAbi = parseAbi([
 await main();
 
 async function main() {
-  const rpcUrl = requiredEnv("ARC_RPC_URL");
+  const rpcUrl = arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"));
   const router = requiredEnv("SHADOW_ROUTER") as `0x${string}`;
   const arceth = requiredEnv("SHADOW_ARCETH") as `0x${string}`;
   const amm = requiredEnv("SHADOW_AMM") as `0x${string}`;
@@ -58,7 +59,7 @@ async function main() {
 
   const account = privateKeyToAccount(publisherKey);
   const transport = http(rpcUrl);
-  const readTransport = http(process.env.ARC_PUBLIC_RPC_URL || rpcUrl);
+  const readTransport = http(arcTestnetRpcUrl(process.env.ARC_PUBLIC_RPC_URL || rpcUrl));
   const publicClient = createPublicClient({ chain: arcTestnet, transport: readTransport });
   const walletClient = createWalletClient({ account, chain: arcTestnet, transport });
 

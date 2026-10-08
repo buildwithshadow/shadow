@@ -107,3 +107,7 @@
 .fundingDesk [hidden] { display: none !important; }
 
 .candidateShell :is(.fundingFoot, .siteFooter) a { display: inline-flex; align-items: center; min-height: 44px; min-width: 44px; }
+
+.fundingDesk .fundingNetworkHelp { margin: 0 0 24px; }
+.fundingNetworkHelp p { color: var(--ink-soft); font-size: 14px; line-height: 1.6; max-width: 720px; }
+.fundingNetworkHelp a { display: inline-flex; align-items: center; min-height: 44px; }

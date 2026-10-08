@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { homedir } from 'node:os';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -63,7 +64,7 @@ export async function runAgent(options) {
   if(options.command==='help')return {help:'Node 22.18+ required. Commands: doctor|setup --agent 0x…; inspect|purchase|recover|repay --agent 0x… --line 0x…. setup, purchase and repay only send with --confirm. setup checks/activates the agent wallet with a zero-value self-transfer; testnet gas still applies. Install the isolated Circle runtime using docs/circle-agent-onboarding.md. All operations are Arc testnet only.'};
   must(manifest.ok && manifest.chainId==='5042002' && manifest.contract.name==='ShadowFloatPublicTestnet','Invalid deployment manifest.');
   const {agent,line,command}=options;
-  const client=createPublicClient({chain:candidateFundingChain,transport:createRpcReadTransport('https://rpc.testnet.arc.network',{expectedChainId:5042002,fallbackUrls:['https://rpc.blockdaemon.testnet.arc.network','https://rpc.drpc.testnet.arc.network'],timeout:15000,queueOptions:{maxAttempts:3,spacingMs:150,baseDelayMs:750,maxDelayMs:3000}})});
+  const client=createPublicClient({chain:candidateFundingChain,transport:createRpcReadTransport(ARC_TESTNET_RPC_URL,{expectedChainId:5042002,fallbackUrls:['https://rpc.blockdaemon.testnet.arc.io','https://rpc.drpc.testnet.arc.io'],timeout:15000,queueOptions:{maxAttempts:3,spacingMs:150,baseDelayMs:750,maxDelayMs:3000}})});
   const kit=createCandidateFundingKit({...CANDIDATE_FUNDING,address:CONTRACT,runtimeHash:manifest.bytecode.onchainRuntimeKeccak256,selfRegistration:true});
   await kit.verifyCandidate(client);
   const journal=await createCircleAgentJournal(options.state);

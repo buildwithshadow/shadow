@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { createPublicClient, defineChain, getAddress, hashTypedData, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -27,7 +28,7 @@ const ENDPOINT_HASH = clean(process.env.FLOAT_ENDPOINT_HASH) || "0x54f180bcd31ab
 const AMOUNT = BigInt(clean(process.env.FLOAT_SPEND_ATOMIC) || "10000"); // 0.01 USDC (6 decimals)
 const TTL_SECONDS = BigInt(clean(process.env.FLOAT_INTENT_TTL) || `${7 * 24 * 3600}`);
 const EXECUTOR = clean(process.env.FLOAT_INTENT_EXECUTOR);
-const RPC = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const RPC = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
 
 const KEY = normalizeKey(clean(process.env.BUILDER_PRIVATE_KEY));
 const EXPECTED_AGENT = clean(process.env.EXPECTED_AGENT);

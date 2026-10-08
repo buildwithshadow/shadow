@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { resolveShadowProvider } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -22,7 +23,8 @@ const env = {
 };
 
 const CHAIN_ID = 5_042_002;
-const RPC = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL);
+const RPC_RAW = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL);
+const RPC = RPC_RAW ? arcTestnetRpcUrl(RPC_RAW) : RPC_RAW;
 const FLOAT = clean(env.SHADOW_FLOAT || env.VITE_SHADOW_FLOAT);
 const LEGACY_FLOAT = getAddress("0xf305647ba0ff7f1e2d4be5f37f2ef9f930531057");
 const USDC = clean(env.ARC_USDC || env.VITE_ARC_USDC || "0x3600000000000000000000000000000000000000");

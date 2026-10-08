@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL, arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -19,7 +20,7 @@ const env = {
 };
 
 const CHAIN_ID = 5_042_002;
-const DEFAULT_RPC = "https://rpc.testnet.arc.network";
+const DEFAULT_RPC = ARC_TESTNET_RPC_URL;
 const DEFAULT_API = "https://www.shadowbuild.xyz/api/float";
 const DEFAULT_USDC = "0x3600000000000000000000000000000000000000";
 const DEFAULT_FLOAT = "0xF305647bA0ff7f1E2d4bE5f37F2EF9f930531057";
@@ -45,7 +46,7 @@ const DEFAULT_PROOF = {
   feeUSDC: 10n,
 };
 
-const rpcUrl = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
+const rpcUrl = arcTestnetRpcUrl(clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL));
 const apiUrl = migrateShadowUrl(clean(env.TREASURY_VERIFY_FLOAT_API_URL || env.FLOAT_API_URL) || DEFAULT_API);
 const USDC = getAddress(clean(env.ARC_USDC || env.VITE_ARC_USDC) || DEFAULT_USDC);
 const FLOAT = getAddress(clean(env.SHADOW_FLOAT || env.VITE_SHADOW_FLOAT) || DEFAULT_FLOAT);

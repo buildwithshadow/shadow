@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { BatchFacilitatorClient } from "@circle-fin/x402-batching/server";
 import {
   createPublicClient,
@@ -372,7 +373,7 @@ function settlementConfigFromEnv(): SettlementConfig | null {
   const gatewayWalletRaw = cleanEnv(process.env.GATEWAY_WALLET_ADDRESS) || DEFAULT_GATEWAY_WALLET;
   if (!isAddress(usdcRaw) || !isAddress(gatewayWalletRaw)) return null;
   return {
-    rpcUrl: cleanEnv(process.env.ARC_RPC_URL) || "https://rpc.testnet.arc.network",
+    rpcUrl: arcTestnetRpcUrl(cleanEnv(process.env.ARC_RPC_URL)),
     router: getAddress(routerRaw),
     usdc: getAddress(usdcRaw),
     payTo: getAddress(payToRaw),

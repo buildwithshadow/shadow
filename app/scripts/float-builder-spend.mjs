@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import {
   createPublicClient,
   createWalletClient,
@@ -28,7 +29,7 @@ import { privateKeyToAccount } from "viem/accounts";
 //   RATIONALE="one true sentence: what your agent uses the paid call for"
 //   node app/scripts/float-builder-spend.mjs
 
-const RPC = clean(process.env.ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const RPC = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL));
 const CHAIN_ID = 5_042_002;
 const LEGACY_FLOAT = getAddress("0xf305647ba0ff7f1e2d4be5f37f2ef9f930531057");
 const FLOAT_RAW = clean(process.env.SHADOW_FLOAT);

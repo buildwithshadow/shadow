@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL, arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { resolveShadowProvider } from "../shadowUrls.js";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import {
@@ -25,7 +26,7 @@ const env = {
 };
 
 const CHAIN_ID = 5_042_002;
-const DEFAULT_RPC = "https://rpc.testnet.arc.network";
+const DEFAULT_RPC = ARC_TESTNET_RPC_URL;
 const DEFAULT_USDC = "0x3600000000000000000000000000000000000000";
 const DEFAULT_FLOAT = "0xF305647bA0ff7f1E2d4bE5f37F2EF9f930531057";
 const DEFAULT_REGISTRY = "0xe3cf1a4d54f627f599255142cef4bf9b8c361a4c";
@@ -34,7 +35,7 @@ const DEFAULT_ENFORCER = "0x1825f447c0aa8e64dd2d290cdce85d82993d0e1e";
 const DEFAULT_MORPHO_ADAPTER = "0xba9f134f7b13dadd45dcf16b09c5121a7555e2c5";
 const DEFAULT_MORPHO_SINK = "0x110f79c5617797b199d3d6e2abb855c34fbc5e58";
 
-const RPC = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
+const RPC = arcTestnetRpcUrl(clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL));
 const USDC = getAddress(clean(env.ARC_USDC || env.VITE_ARC_USDC) || DEFAULT_USDC);
 const FLOAT = getAddress(clean(env.SHADOW_FLOAT || env.VITE_SHADOW_FLOAT) || DEFAULT_FLOAT);
 const REGISTRY = getAddress(clean(env.LEPTON_REGISTRY || env.VITE_SHADOW_MANDATE_REGISTRY) || DEFAULT_REGISTRY);

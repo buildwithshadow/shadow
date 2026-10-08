@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL, arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 import {
   createPublicClient,
@@ -26,7 +27,7 @@ const HISTORICAL_PROOF_BUDGET_MS = 8_000;
 type ReadBudget = { deadlineAt: number; signal: AbortSignal };
 
 const CHAIN_ID = 5_042_002;
-const DEFAULT_RPC = "https://rpc.testnet.arc.network";
+const DEFAULT_RPC = ARC_TESTNET_RPC_URL;
 const DEFAULT_API = "https://www.shadowbuild.xyz/api/float";
 const DEFAULT_EXPLORER_API = "https://testnet.arcscan.app/api/v2";
 const DEFAULT_USDC = "0x3600000000000000000000000000000000000000";
@@ -145,8 +146,8 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
 }
 
 async function runTreasuryChecks(budget: ReadBudget) {
-  const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
-  const canonicalRpcUrl = clean(process.env.ARC_PUBLIC_RPC_URL) || DEFAULT_RPC;
+  const rpcUrl = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
+  const canonicalRpcUrl = arcTestnetRpcUrl(clean(process.env.ARC_PUBLIC_RPC_URL));
   const apiUrl = migrateShadowUrl(clean(process.env.TREASURY_VERIFY_FLOAT_API_URL || process.env.FLOAT_API_URL) || DEFAULT_API);
   const USDC = getAddress(clean(process.env.ARC_USDC || process.env.VITE_ARC_USDC) || DEFAULT_USDC);
   const FLOAT = getAddress(clean(process.env.SHADOW_FLOAT || process.env.VITE_SHADOW_FLOAT) || DEFAULT_FLOAT);

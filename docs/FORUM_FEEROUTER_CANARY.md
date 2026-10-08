@@ -19,7 +19,7 @@ The deploy script creates a separate mock asset, AMM, source registry, splitter,
 Use testnet-only keys supplied outside Git. Never print or commit them.
 
 ```bash
-export ARC_RPC_URL=https://rpc.testnet.arc.network
+export ARC_RPC_URL=https://rpc.testnet.arc.io
 export ARC_USDC=0x3600000000000000000000000000000000000000
 export FORUM_FEE_ROUTER=0xeff9bc359e8f2a5eabce55af3f1bb24f98eabf59
 export FORUM_SOURCE=0x13585c6004fbA9D7D49219a6435B68348fD30770

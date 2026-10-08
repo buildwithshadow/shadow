@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../../app/arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../../app/shadowUrls.js";
 // End-to-end Pilot execution from CLI: fetches a plan from /api/pilot,
 // then runs the same attest -> approve -> deposit -> followSource loop the
@@ -37,7 +38,7 @@ const arcTestnet = defineChain({
   id: 5_042_002,
   name: "Arc Testnet",
   nativeCurrency: { decimals: 18, name: "USDC", symbol: "USDC" },
-  rpcUrls: { default: { http: [requiredEnv("ARC_RPC_URL")] } },
+  rpcUrls: { default: { http: [arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"))] } },
 });
 
 const routerAbi = parseAbi([
@@ -112,8 +113,8 @@ async function main() {
   );
   const follower = privateKeyToAccount(followerKey);
 
-  const publicClient = createPublicClient({ chain: arcTestnet, transport: http(requiredEnv("ARC_RPC_URL")) });
-  const wallet = createWalletClient({ account: follower, chain: arcTestnet, transport: http(requiredEnv("ARC_RPC_URL")) });
+  const publicClient = createPublicClient({ chain: arcTestnet, transport: http(arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"))) });
+  const wallet = createWalletClient({ account: follower, chain: arcTestnet, transport: http(arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"))) });
 
   console.log("=".repeat(60));
   console.log("Shadow Pilot end-to-end test");

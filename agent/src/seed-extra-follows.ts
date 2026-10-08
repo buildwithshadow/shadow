@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../../app/arcTestnetNetwork.mjs";
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +20,7 @@ const arcTestnet = defineChain({
   id: 5_042_002,
   name: "Arc Testnet",
   nativeCurrency: { decimals: 18, name: "USDC", symbol: "USDC" },
-  rpcUrls: { default: { http: [requiredEnv("ARC_RPC_URL")] } },
+  rpcUrls: { default: { http: [arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"))] } },
 });
 
 const routerAbi = parseAbi([
@@ -40,7 +41,7 @@ type FollowConfig = {
 await main();
 
 async function main() {
-  const rpcUrl = requiredEnv("ARC_RPC_URL");
+  const rpcUrl = arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"));
   const router = requiredEnv("SHADOW_ROUTER") as Address;
   const arceth = requiredEnv("SHADOW_ARCETH") as Address;
 

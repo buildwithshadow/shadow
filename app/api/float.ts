@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import {
   createPublicClient,
   defineChain,
@@ -618,7 +619,7 @@ async function handleFloatV2(res: VercelLikeResponse) {
   res.setHeader("Cache-Control", "public, s-maxage=45, stale-while-revalidate=300");
   try {
     const deadlineAt = Date.now() + FLOAT_V2_LIVE_BUDGET_MS;
-    const rpcUrl = cleanEnv(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+    const rpcUrl = arcTestnetRpcUrl(cleanEnv(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
     const client = createPublicClient({
       chain: arcTestnet(rpcUrl),
       transport: http(rpcUrl, FLOAT_V2_RPC_TRANSPORT_OPTIONS),
@@ -1211,7 +1212,7 @@ async function handleFloatDesk(res: VercelLikeResponse, req: VercelLikeRequest) 
     const entries = entriesRaw.map((entry) => redactDeskSecrets(entry)).slice(-limit).reverse();
     let labLine: Record<string, unknown> | null = null;
     try {
-      const rpcUrl = cleanEnv(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+      const rpcUrl = arcTestnetRpcUrl(cleanEnv(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
       const client = createPublicClient({ chain: arcTestnet(rpcUrl), transport: http(rpcUrl, RPC_TRANSPORT_OPTIONS) });
       const agent = getAddress(cleanEnv(process.env.DESK_AGENT_ADDRESS) || "0x43553CaeE153496200d37644cE28775B2b2b522E");
       const [line, sponsor, score] = (await Promise.all([
@@ -2078,7 +2079,7 @@ function floatConfigFromEnv(): FloatConfig | null {
     "0xf100000000000000000000000000000000000003";
   if (!isAddress(usdcRaw) || !isAddress(alphaRaw) || !isAddress(betaRaw) || !isAddress(providerRaw)) return null;
   return {
-    rpcUrl: cleanEnv(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network",
+    rpcUrl: arcTestnetRpcUrl(cleanEnv(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL)),
     float: getAddress(floatRaw),
     usdc: getAddress(usdcRaw),
     alpha: getAddress(alphaRaw),

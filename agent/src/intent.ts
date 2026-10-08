@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../../app/arcTestnetNetwork.mjs";
 import { createPublicClient, createWalletClient, encodePacked, http, keccak256, parseAbi, parseUnits } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { defineChain } from "viem";
@@ -12,7 +13,7 @@ const arcTestnet = defineChain({
   },
   rpcUrls: {
     default: {
-      http: [requiredEnv("ARC_RPC_URL", false) || "http://127.0.0.1:8545"],
+      http: [arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL", false) || "http://127.0.0.1:8545")],
     },
   },
 });
@@ -49,7 +50,7 @@ if (process.argv.includes("--publish")) {
 }
 
 async function publishIntent(shadowIntent: ShadowIntent) {
-  const rpcUrl = requiredEnv("ARC_RPC_URL", true);
+  const rpcUrl = arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL", true));
   const router = requiredEnv("SHADOW_ROUTER", true) as `0x${string}`;
   const arceth = requiredEnv("SHADOW_ARCETH", true) as `0x${string}`;
   const privateKey = normalizePrivateKey(requiredEnv("CAT_AGENT_PRIVATE_KEY", true));

@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 // Settle recent Float Desk PAY cycle amounts through Circle Gateway batching.
 //
@@ -21,7 +22,7 @@ const LIVE = clean(env.GATEWAY_DESK_LIVE) === "1";
 const baseUrl = migrateShadowUrl(clean(env.SHADOW_APP_URL) || "https://www.shadowbuild.xyz").replace(/\/$/, "");
 const limit = boundedInt(clean(env.GATEWAY_DESK_LIMIT), 1, 8, 3);
 const payerKey = clean(env.GATEWAY_PAYER_PRIVATE_KEY) || clean(env.CAT_AGENT_PRIVATE_KEY) || clean(env.BUYER_PRIVATE_KEY);
-const rpcUrl = clean(env.ARC_RPC_URL) || clean(env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const rpcUrl = arcTestnetRpcUrl(clean(env.ARC_RPC_URL) || clean(env.VITE_ARC_RPC_URL));
 
 const desk = await getJson(`${baseUrl}/api/float?mode=desk&limit=20&gatewayTs=${Date.now()}`);
 const existing = await getJson(`${baseUrl}/api/settlements`).catch(() => ({ deskRecords: [] }));

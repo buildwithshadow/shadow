@@ -78,6 +78,14 @@ function errorsFor(overrides) {
   return parseConfig({ ...PINNED_ENV, ...overrides }).errors;
 }
 
+test('testnet public alias migration cannot turn one operator into two preflight peers', () => {
+  const same = parseConfig({ ...PINNED_ENV, ARC_RPC_URL:'https://rpc.testnet.arc.network', ARC_RPC_URL_2:'https://rpc.testnet.arc.io' });
+  assert.ok(same.errors.some(value => value.includes('two distinct hosts')));
+  const independent = parseConfig({ ...PINNED_ENV, ARC_RPC_URL:'https://rpc.testnet.arc.network', ARC_RPC_URL_2:'https://rpc.drpc.testnet.arc.network' });
+  assert.deepEqual(independent.errors, []);
+  assert.deepEqual(independent.config.rpcUrls, ['https://rpc.testnet.arc.io', 'https://rpc.drpc.testnet.arc.io']);
+});
+
 // Test fixture only: fills immutable slots in ascending astId order, which is
 // declaration order for this contract. The manifest itself never relies on it.
 function runtimeWith(values) {

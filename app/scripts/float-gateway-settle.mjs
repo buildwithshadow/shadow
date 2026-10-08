@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 // Add 1 of the Float differentiator stack: settle Float's take-rate fee through
 // Circle Gateway as a batched sub-cent nanopayment, the Lepton headline rail.
@@ -60,7 +61,7 @@ if (!payerKey) {
 const client = new GatewayClient({
   chain: "arcTestnet",
   privateKey: normalizePrivateKey(payerKey),
-  rpcUrl: env.ARC_RPC_URL || env.VITE_ARC_RPC_URL,
+  rpcUrl: (env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) ? arcTestnetRpcUrl(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) : undefined,
 });
 
 try {

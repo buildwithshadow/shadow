@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL, ARC_TESTNET_EXPLORER_URL, arcTestnetConnectionHelp } from "../arcTestnetNetwork.mjs";
 import { TransactionReceiptNotFoundError, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, isAddress, isAddressEqual, keccak256, parseUnits, stringToHex, zeroAddress, zeroHash, defineChain, type Abi, type Address, type Hash, type Hex, type PublicClient, type WalletClient } from 'viem'
 import candidateAbiJson from '../scripts/float-mainnet-abi.json' with { type: 'json' }
 import { parseAbi } from 'viem'
@@ -17,7 +18,7 @@ export const CANDIDATE_FUNDING = {
   maxPerSpend: 1_000_000n,
 } as const
 export const candidateFundingAbi = candidateAbiJson as Abi
-export const candidateFundingChain = defineChain({ id: CANDIDATE_FUNDING.chainId, name: 'Arc Testnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.testnet.arc.network'] } }, blockExplorers: { default: { name: 'Arc testnet explorer', url: 'https://testnet.arcscan.app' } }, testnet: true })
+export const candidateFundingChain = defineChain({ id: CANDIDATE_FUNDING.chainId, name: 'Arc Testnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, rpcUrls: { default: { http: [ARC_TESTNET_RPC_URL] } }, blockExplorers: { default: { name: 'Arc testnet explorer', url: ARC_TESTNET_EXPLORER_URL } }, testnet: true })
 export type CandidateReadClient = Pick<PublicClient, 'getChainId' | 'getCode' | 'readContract' | 'getBlock' | 'simulateContract' | 'getTransaction' | 'getTransactionReceipt'>
 export type CandidateWalletClient = Pick<WalletClient, 'getAddresses' | 'getChainId' | 'sendTransaction' | 'request'>
 export interface CandidateOpenInput {
@@ -127,6 +128,8 @@ function tokenRead(client: CandidateReadClient, functionName: string, args: read
   return client.readContract({ address: CANDIDATE_FUNDING.usdc, abi: erc20Abi, functionName: functionName as any, args: args as any, blockNumber })
 }
 function candidateErrorMessage(error: unknown): string {
+  const help = !mainnet && arcTestnetConnectionHelp(error)
+  if (help) return help
   if (error instanceof Error) return error.message.split('\n')[0]
   return 'The request could not be completed. Check the connection and try refreshing.'
 }

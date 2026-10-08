@@ -18,7 +18,7 @@ The private key stays on the builder's machine. The signing step sends no transa
 | Chain | Arc Testnet, chain id `5042002` |
 | `ShadowFloat` V2 | `0x20dcA96B0C487D94De885c726c956ffaF38b12C2` |
 | Arc USDC | `0x3600000000000000000000000000000000000000` |
-| Public RPC | `https://rpc.testnet.arc.network` |
+| Public RPC | `https://rpc.testnet.arc.io` |
 
 ## Install
 
@@ -47,7 +47,7 @@ FLOAT_PROVIDER=0x8ddf06fE8985988d3e0883F945E891BD57084937
 FLOAT_ENDPOINT_HASH=0x54f180bcd31ab4c3401b23bc78cb3eeb89f85d42a3b43e3d06a692b91d941160
 FLOAT_EXECUTOR=0x...
 FLOAT_INTENT_TTL_SECONDS=3600
-ARC_RPC_URL=https://rpc.testnet.arc.network
+ARC_RPC_URL=https://rpc.testnet.arc.io
 ```
 
 Output shape:

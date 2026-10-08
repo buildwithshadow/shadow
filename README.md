@@ -85,7 +85,7 @@ Anyone can inspect the scoring path:
 cast call 0x20dcA96B0C487D94De885c726c956ffaF38b12C2 \
   "autonomousLineScore(address)(uint16,uint256,uint256)" \
   0x5c0b33b209f510868E07792Edc46c3792B0b92EC \
-  --rpc-url https://rpc.testnet.arc.network
+  --rpc-url https://rpc.testnet.arc.io
 ```
 
 `refreshSponsoredLineFromBehavior(address,bytes32)` is also public, and normal spend and repay paths call the same refresh logic automatically. The Argus Alpha repay tx [`0x0f50d4...ff3699`](https://testnet.arcscan.app/tx/0x0f50d4c2b6eac8b2cdee64ac484eaf425453f9db13ad92c2db19e2a867ff3699) contains a live `DeterministicFloatScored` event. Argus Alpha reached score `9000` after two paid and two repaid actions. One external line still shows open debt until it repays. Owner scoring functions such as `grantFloatFromScore`, `reduceLimit`, and `revoke` revert on sponsored lines, so these external lines are not silently edited by the V1 owner underwriter path.
@@ -102,7 +102,7 @@ The desk line is underwritten by the contract like every sponsored line. After t
 cast call 0x20dcA96B0C487D94De885c726c956ffaF38b12C2 \
   "autonomousLineScore(address)(uint16,uint256,uint256)" \
   0x43553CaeE153496200d37644cE28775B2b2b522E \
-  --rpc-url https://rpc.testnet.arc.network
+  --rpc-url https://rpc.testnet.arc.io
 ```
 
 Useful commands:

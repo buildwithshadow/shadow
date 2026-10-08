@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL, arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 import { readFileSync } from "node:fs";
 import {
@@ -12,9 +13,9 @@ import {
 
 const CHAIN_ID = 5_042_002;
 const DEFAULT_API = "https://www.shadowbuild.xyz/api/float";
-const DEFAULT_RPC = "https://rpc.testnet.arc.network";
+const DEFAULT_RPC = ARC_TESTNET_RPC_URL;
 const apiUrl = migrateShadowUrl(clean(process.env.FLOAT_API_URL) || DEFAULT_API);
-const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
+const rpcUrl = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
 
 const chain = defineChain({
   id: CHAIN_ID,

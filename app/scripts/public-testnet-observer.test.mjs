@@ -59,6 +59,17 @@ test('operator pacing only slows reads and rejects invalid configuration', () =>
   assert.equal(readDeployment(env,options).readSpacingMs,undefined);
   for (const value of ['0','349','5001','NaN','']) assert.throws(()=>readDeployment({...env,SHADOW_RPC_READ_SPACING_MS:value},options));
 });
+test('an installed observer using its legacy public RPC is migrated before constructing the transport', () => {
+  const env = { ARC_RPC_URL:'https://rpc.testnet.arc.network', FLOAT_MAINNET_EXPECTED_CHAIN_ID:'5042002' };
+  const options = {manifest:fileURL()};
+  assert.equal(readDeployment(env,options).rpcUrl,'https://rpc.testnet.arc.io');
+  assert.equal(readDeployment({...env,ARC_RPC_URL:'https://rpc.drpc.testnet.arc.network/'},options).rpcUrl,'https://rpc.drpc.testnet.arc.io');
+  assert.equal(readDeployment({...env,ARC_RPC_URL:'http://localhost:8545'},options).rpcUrl,'http://localhost:8545');
+  assert.throws(()=>readDeployment({...env,ARC_RPC_URL:''},options),/ARC_RPC_URL is required/);
+  const unit=readFileSync(new URL('../../ops/public-testnet-observer/shadow-observer-testnet.service',import.meta.url),'utf8');
+  const installedRpc=unit.match(/^Environment=ARC_RPC_URL=(.+)$/m)[1];
+  assert.equal(readDeployment({...env,ARC_RPC_URL:installedRpc},options).rpcUrl,'https://rpc.testnet.arc.io');
+});
 function fileURL(){return new URL('../../contracts/deployments/public-testnet/arc-testnet.manifest.json',import.meta.url);}
 test('deployed symlink entry point emits an unhealthy status for missing state', () => {
   const dir = mkdtempSync(join(tmpdir(),'shadow-observer-link-'));

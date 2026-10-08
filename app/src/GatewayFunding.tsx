@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
   createPublicClient,
@@ -24,7 +25,7 @@ import { createGatewayBrowserJournal, gatewayMintConfirmed } from "../scripts/ga
 
 const primary = createPublicClient({
   chain: candidateFundingChain,
-  transport: http("https://rpc.testnet.arc.network", {
+  transport: http(ARC_TESTNET_RPC_URL, {
     retryCount: 0,
     timeout: 15000,
   }),
