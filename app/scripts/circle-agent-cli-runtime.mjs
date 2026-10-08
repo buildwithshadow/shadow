@@ -16,7 +16,7 @@ const packageName = name => /^(?:@[a-zA-Z0-9._-]+\/)?[a-zA-Z0-9._-]+$/.test(name
 async function snapshotCircleCliSource(source, originalEntrypoint) {
   const original = resolve(originalEntrypoint);
   const metadata = JSON.parse(await readFile(join(dirname(original),'..','package.json'),'utf8'));
-  if (metadata.version !== '1.1.4' || metadata.type !== 'module') throw new Error('Unexpected Circle runtime package metadata.');
+  if (metadata.version !== approval.circleVersion || metadata.type !== 'module') throw new Error('Unexpected Circle runtime package metadata.');
   const packages = new Map(), packageRoots = new Map(); let byteCount = 0;
   async function dependenciesFor(pkg, entrypoint) {
     const links = [], lookup = createRequire(entrypoint);

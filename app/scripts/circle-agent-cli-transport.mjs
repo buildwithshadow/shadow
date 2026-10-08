@@ -9,7 +9,8 @@ import { getAddress } from 'viem';
 import abi from './float-mainnet-abi.json' with { type: 'json' };
 
 const runFile = promisify(execFile);
-export const CIRCLE_CLI_SHA256 = '89f8610b586ca929c3419779405b59618c60be10836bc4428d21c75a7c18f6a4';
+import approval from './circle-cli-dependency-approval.json' with { type: 'json' };
+export const CIRCLE_CLI_SHA256 = approval.cliEntrypointSha256;
 const USDC = '0x3600000000000000000000000000000000000000';
 const CONTRACT = '0xb31d9e17410b10a619b66df0c31f59acbb33b553';
 const requireThat = (ok, message) => { if (!ok) throw new Error(message); };
@@ -18,7 +19,7 @@ const requireThat = (ok, message) => { if (!ok) throw new Error(message); };
 // Authentication, policy enforcement and version checks are unchanged.
 // Install this pinned runtime separately; never point it at a shared/global install.
 export function rawCalldataCompatibility(source) {
-  requireThat(createHash('sha256').update(source).digest('hex') === CIRCLE_CLI_SHA256, 'Circle CLI source differs from the tested 1.1.4 release. Do not patch an unknown version.');
+  requireThat(createHash('sha256').update(source).digest('hex') === CIRCLE_CLI_SHA256, `Circle CLI source differs from the tested ${approval.circleVersion} release. Do not patch an unknown version.`);
   const start = source.indexOf('async function handleAgentExecute(');
   const end = source.indexOf('async function handleLocalExecuteEstimate', start);
   requireThat(start >= 0 && end > start, 'Circle CLI execution boundary not found.');

@@ -1,20 +1,20 @@
 {
   "schema": 1,
-  "circleVersion": "1.1.4",
-  "lockfileSha256": "0252017a24812ba3c1f23694815dc8b46bb20856a48c59869038f8d07c5fc803",
-  "cliEntrypointSha256": "89f8610b586ca929c3419779405b59618c60be10836bc4428d21c75a7c18f6a4",
+  "circleVersion": "1.2.0",
+  "lockfileSha256": "75de59fc281afd072614a6621555c6cb83f63fbcee1e7701864e381c873094f6",
+  "cliEntrypointSha256": "feb24e3d404b41bfda54ff69b397c892a3c007487f7831904c2617d036afd9b9",
   "approvedInput": "tooling/circle-cli-runtime/package-lock.json",
   "install": "npm ci --ignore-scripts",
   "runtimes": [
     {
       "platform": "darwin",
       "arch": "arm64",
-      "dependencyDigest": "a82eccf20d8b7cf86912c655b7103f95529daec8ae88f0e9708870eb04e64d79"
+      "dependencyDigest": "d78abe1991095d6b3e3d352af1c95e506fc9d5a4ae0adde260477d9b078cf5cd"
     },
     {
       "platform": "linux",
       "arch": "x64",
-      "dependencyDigest": "7b53aab087ba19d38234296cc165b5a4e0d2ae703283f926949153456e332103"
+      "dependencyDigest": "df1fff165539f434447984f69aa4121b501a15946d33f99f058a89c2073a1a4b"
     }
   ]
 }

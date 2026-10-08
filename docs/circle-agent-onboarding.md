@@ -105,11 +105,11 @@ State defaults to `~/.local/share/shadow/agent-testnet`. Keep it private: purcha
 
 ## Circle CLI compatibility
 
-Circle CLI 1.1.4 does not expose the raw-calldata option needed for Shadow's tuple call. Shadow checks the SHA-256 of the tested release and writes a separate, narrowly scoped compatibility copy inside the dedicated runtime. The original CLI file is unchanged. Authentication, Circle policies and version checks are preserved. This is **Shadow compatibility code, not an official Circle browser integration**.
+Circle CLI 1.2.0 does not expose the raw-calldata option needed for Shadow's tuple call. Shadow checks the SHA-256 of the tested release and writes a separate, narrowly scoped compatibility copy inside the dedicated runtime. The original CLI file is unchanged. Authentication, Circle policies and version checks are preserved. This is **Shadow compatibility code, not an official Circle browser integration**.
 
 The launcher validates the vendor entrypoint and the complete dependency closure before authentication. The committed approval contains separate reference digests for macOS ARM64 and Linux x64, produced from the exact lockfile with install scripts disabled. Installation paths do not affect the digest. Changed dependency bytes or metadata are refused before a new executable cache is created. Inspection does not approve an installation; a different platform or supplier update needs a maintainer review and a new committed approval.
 
-Authentication and inspection run from the frozen directory with a restricted environment. Remove `NODE_OPTIONS`, `NODE_PATH` and `CIRCLE_PROXY_URL` before use. Native keyring variables and an absolute `CIRCLE_CLI_HOME` remain supported. The verified launcher accepts explicit terms consent, login and inspection only; use the bounded Shadow runner for signatures and transactions. The byte approval is not a vulnerability audit.
+Authentication and inspection run from the frozen directory with a restricted environment. Remove `NODE_OPTIONS`, `NODE_PATH` and `CIRCLE_PROXY_URL` before use. Native keyring variables and an absolute `CIRCLE_CLI_HOME` remain supported. The verified launcher accepts explicit terms consent, login and inspection only; use the bounded Shadow runner for signatures and transactions. The byte approval is not a vulnerability audit. A fresh stock 1.2.0 audit still reports dependency advisory matches; updating the CLI does not clear those advisories.
 
 An unknown CLI source/version is refused. Do not bypass the hash check or a required Circle update. A supported-version change needs a new compatibility review. A failed command does not imply a transaction failed; use recovery.
 
