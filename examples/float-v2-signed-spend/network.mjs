@@ -18,4 +18,3 @@ export function arcTestnetRpcUrl(configured) {
   } catch { /* Preserve explicitly configured endpoints for the transport to validate. */ }
   return value;
 }
-
