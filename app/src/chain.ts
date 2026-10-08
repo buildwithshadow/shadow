@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL, ARC_TESTNET_EXPLORER_URL, arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import {
   createPublicClient,
   formatUnits,
@@ -19,7 +20,7 @@ import {
   type RecentWindowTotals,
 } from "./lifetimeSnapshot";
 
-export const PUBLIC_ARC_RPC_URL = "https://rpc.testnet.arc.network";
+export const PUBLIC_ARC_RPC_URL = ARC_TESTNET_RPC_URL;
 
 export const arcTestnet = defineChain({
   id: 5_042_002,
@@ -31,7 +32,7 @@ export const arcTestnet = defineChain({
   },
   rpcUrls: {
     default: {
-      http: [import.meta.env.VITE_ARC_RPC_URL || PUBLIC_ARC_RPC_URL],
+      http: [arcTestnetRpcUrl(import.meta.env.VITE_ARC_RPC_URL)],
     },
   },
 });
@@ -55,7 +56,7 @@ export const leptonAddresses = {
 
 export const startBlock = BigInt(import.meta.env.VITE_SHADOW_START_BLOCK || 0);
 
-export const arcExplorerUrl = "https://testnet.arcscan.app";
+export const arcExplorerUrl = ARC_TESTNET_EXPLORER_URL;
 
 export function txUrl(hash: `0x${string}`): string {
   return `${arcExplorerUrl}/tx/${hash}`;
@@ -72,7 +73,7 @@ export const isLeptonConfigured = Boolean(
 
 export const publicClient = createPublicClient({
   chain: arcTestnet,
-  transport: http(import.meta.env.VITE_ARC_RPC_URL || PUBLIC_ARC_RPC_URL),
+  transport: http(arcTestnetRpcUrl(import.meta.env.VITE_ARC_RPC_URL)),
 });
 
 export const registryAbi = parseAbi([

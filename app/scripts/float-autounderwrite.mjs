@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 
 import { existsSync, readFileSync } from "node:fs";
@@ -36,7 +37,7 @@ const ZERO_HASH = `0x${"0".repeat(64)}`;
 const CHAIN_ID = 5_042_002;
 const DEFAULT_BASE_URL = "https://www.shadowbuild.xyz";
 const BASE_URL = migrateShadowUrl(clean(env.SHADOW_APP_URL || env.FLOAT_APP_URL || env.VITE_APP_URL) || DEFAULT_BASE_URL).replace(/\/$/, "");
-const RPC = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const RPC = arcTestnetRpcUrl(clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL));
 const FLOAT = getAddress(clean(env.SHADOW_FLOAT || env.VITE_SHADOW_FLOAT) || "0xf305647ba0ff7f1e2d4be5f37f2ef9f930531057");
 const APPLY = clean(env.FLOAT_AUTOUNDERWRITE_APPLY) === "1";
 const AUTO_FUND = clean(env.FLOAT_AUTOUNDERWRITE_AUTO_FUND) === "1";

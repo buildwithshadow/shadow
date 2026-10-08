@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import {
   createPublicClient,
   decodeEventLog,
@@ -278,7 +279,7 @@ async function handleAgent(req: Req, res: Res) {
   }
 
   const float = currentFloatAddress();
-  const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+  const rpcUrl = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
 
   try {
     const client = createPublicClient({ chain: arcTestnet(rpcUrl), transport: http(rpcUrl) });
@@ -411,7 +412,7 @@ async function handleVerify(req: Req, res: Res) {
 
   try {
     const digest = hashTypedData({ domain, types: typesForDigest, primaryType: "FloatSpendIntent", message });
-    const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+    const rpcUrl = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
     const client = createPublicClient({ chain: arcTestnet(rpcUrl), transport: http(rpcUrl) }) as unknown as FloatToolsClient;
     const signature = match.signature as `0x${string}`;
     let recovered = ZERO;
@@ -709,7 +710,7 @@ async function handleScore(req: Req, res: Res) {
   }
 
   const float = currentFloatAddress();
-  const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+  const rpcUrl = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
   const agent = getAddress(address);
 
   try {
@@ -882,7 +883,7 @@ async function handleIntent(req: Req, res: Res) {
   let activeDebtUSDC = 0n;
   let activeDebtRead = false;
   if (!maxDebtRaw) {
-    const rpcUrl = clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+    const rpcUrl = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL || process.env.VITE_ARC_RPC_URL));
     try {
       const client = createPublicClient({ chain: arcTestnet(rpcUrl), transport: http(rpcUrl) }) as unknown as FloatToolsClient;
       const line = (await client.readContract({ address: float, abi: floatAbi, functionName: "lines", args: [agent] })) as readonly unknown[];

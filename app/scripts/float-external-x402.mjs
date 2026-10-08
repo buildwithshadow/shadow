@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 import { existsSync, readFileSync } from "node:fs";
 import {
@@ -37,7 +38,7 @@ const env = {
 };
 
 const CHAIN_ID = 5_042_002;
-const RPC = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const RPC = arcTestnetRpcUrl(clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL));
 const LEGACY_FLOAT = getAddress("0xf305647ba0ff7f1e2d4be5f37f2ef9f930531057");
 const FLOAT_RAW = clean(env.SHADOW_FLOAT || env.VITE_SHADOW_FLOAT);
 if (!FLOAT_RAW) throw new Error("set SHADOW_FLOAT to the deployed V2 ShadowFloat address before binding signed spends");

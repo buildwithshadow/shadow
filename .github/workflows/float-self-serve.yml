@@ -20,6 +20,8 @@ on:
       - "app/leptonM1Config.js"
       - "app/historicalReads.d.ts"
       - "app/historicalReads.js"
+      - "app/arcTestnetNetwork.*"
+      - "app/scripts/arc-testnet-network.test.mjs"
       - "app/package.json"
       - "app/pnpm-lock.yaml"
       - "app/src/main.tsx"
@@ -159,6 +161,8 @@ jobs:
         run: node --test app/scripts/treasury-verify-live.test.mjs
       - name: Test domain migration and mandate identity compatibility
         run: node --test app/scripts/shadow-url-migration.test.mjs
+      - name: Test public Arc testnet wallet settings and RPC repair guidance
+        run: node --test app/scripts/arc-testnet-network.test.mjs
       - name: Test Circle wallet diagnostic and bounded candidate signing payloads
         run: node --test app/scripts/circle-wallet-diagnostic.test.ts app/scripts/circle-candidate-probe.test.mjs app/scripts/circle-payable-intent.test.mjs
       - name: Test Gateway reserve intent and recovery boundaries

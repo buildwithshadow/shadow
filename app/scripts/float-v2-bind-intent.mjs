@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -47,7 +48,7 @@ const env = {
 
 const CHAIN_ID = 5_042_002;
 const LEGACY_FLOAT = getAddress("0xf305647ba0ff7f1e2d4be5f37f2ef9f930531057");
-const RPC = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const RPC = arcTestnetRpcUrl(clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL));
 const USDC = getAddress(clean(env.ARC_USDC || env.VITE_ARC_USDC) || "0x3600000000000000000000000000000000000000");
 const KEY = normalizeKey(
   clean(env.FLOAT_EXECUTOR_PRIVATE_KEY || env.FLOAT_SPONSOR_PRIVATE_KEY || env.FLOAT_FUNDER_PRIVATE_KEY || env.PRIVATE_KEY || env.FLOAT_ADMIN_PRIVATE_KEY),

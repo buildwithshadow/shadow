@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { migrateShadowUrl } from "../shadowUrls.js";
 import {
   createPublicClient,
@@ -321,7 +322,7 @@ function x402ConfigFromEnv(): X402Config | null {
   const usdc = process.env.X402_USDC || process.env.ARC_USDC || DEFAULT_USDC;
   if (!isAddress(usdc)) return null;
   return {
-    rpcUrl: process.env.ARC_RPC_URL || "https://rpc.testnet.arc.network",
+    rpcUrl: arcTestnetRpcUrl(process.env.ARC_RPC_URL),
     usdc: getAddress(usdc),
     payTo: getAddress(payTo),
     priceAtomic: BigInt(process.env.X402_REASONING_PRICE_ATOMIC || DEFAULT_PRICE_ATOMIC),

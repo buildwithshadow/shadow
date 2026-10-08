@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL, arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import { existsSync, readFileSync } from "node:fs";
 import {
   createPublicClient,
@@ -18,7 +19,7 @@ const env = {
 };
 
 const CHAIN_ID = 5_042_002;
-const DEFAULT_RPC = "https://rpc.testnet.arc.network";
+const DEFAULT_RPC = ARC_TESTNET_RPC_URL;
 const DEFAULT_USDC = "0x3600000000000000000000000000000000000000";
 // Canonical judge command permits the one intentional labeled open-debt exhibit
 // (Obol) with headroom above its 0.01 USDC balance. FLOAT_V2_VERIFY_STRICT_CLOSED=1
@@ -47,7 +48,7 @@ const DEFAULT_PROOF = {
   blockedAmountUSDC: 100_000n,
 };
 
-const rpcUrl = clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL) || DEFAULT_RPC;
+const rpcUrl = arcTestnetRpcUrl(clean(env.ARC_RPC_URL || env.VITE_ARC_RPC_URL));
 const proof = {
   float: addressEnv("FLOAT_V2_VERIFY_FLOAT", DEFAULT_PROOF.float),
   usdc: addressEnv("FLOAT_V2_VERIFY_USDC", clean(env.ARC_USDC || env.VITE_ARC_USDC) || DEFAULT_PROOF.usdc),

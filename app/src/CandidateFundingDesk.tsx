@@ -1,3 +1,4 @@
+import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hex } from "viem";
@@ -14,7 +15,7 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 
-const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport("https://rpc.testnet.arc.network", {
+const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
 }) });
 const initialForm: CandidateOpenInput = {
@@ -58,7 +59,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
   }) }) : deployment.selfRegistration ? createPublicClient({ chain: candidateFundingChain,
     transport: createRpcReadTransport("https://rpc.drpc.testnet.arc.io", { timeout: 15_000,
-      fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", "https://rpc.testnet.arc.network"], expectedChainId: deployment.chainId,
+      fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", ARC_TESTNET_RPC_URL], expectedChainId: deployment.chainId,
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment, chain, mainnet]);
   const [mode, setMode] = useState<"open" | "manage">(() => {
     const params = new URLSearchParams(window.location.search);
@@ -455,6 +456,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {account && correctNetwork && <small>{network} connected</small>}
       </div>
     </header>
+
+    {!mainnet && <details className="fundingNetworkHelp">
+      <summary>Wallet connection help</summary>
+      <p>If your wallet shows a connection error or HTTP 403, check its Arc Testnet RPC. In Rabby, open Settings &gt; Modify RPC URL &gt; Arc Testnet, save <code>{ARC_TESTNET_RPC_URL}</code>, then select Refresh wallet above.</p>
+      <p>Changing the connection does not confirm a payment. Check any saved pending transaction before trying an action again.</p>
+      <a href="https://docs.arc.io/arc/references/connect-to-arc" target="_blank" rel="noreferrer">Arc wallet setup guide</a>
+    </details>}
 
     {service && <div role="status">
       {account && unresolvedPurchase && <div className="fundingPurchaseStatus">
