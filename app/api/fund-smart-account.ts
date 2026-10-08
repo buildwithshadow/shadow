@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import {
   createPublicClient,
   createWalletClient,
@@ -81,7 +82,7 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
     }
   }
 
-  const rpcUrl = requiredEnv("ARC_RPC_URL");
+  const rpcUrl = arcTestnetRpcUrl(requiredEnv("ARC_RPC_URL"));
   const usdc = (process.env.ARC_USDC ||
     process.env.VITE_ARC_USDC ||
     "0x3600000000000000000000000000000000000000") as Address;

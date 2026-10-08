@@ -22,6 +22,10 @@ on:
       - "app/historicalReads.js"
       - "app/arcTestnetNetwork.*"
       - "app/scripts/arc-testnet-network.test.mjs"
+      - "agent/src/**"
+      - "agent/package.json"
+      - "agent/pnpm-lock.yaml"
+      - "examples/float-v2-signed-spend/**"
       - "app/package.json"
       - "app/pnpm-lock.yaml"
       - "app/src/main.tsx"
@@ -163,6 +167,11 @@ jobs:
         run: node --test app/scripts/shadow-url-migration.test.mjs
       - name: Test public Arc testnet wallet settings and RPC repair guidance
         run: node --test app/scripts/arc-testnet-network.test.mjs
+      - name: Install agent dependencies
+        working-directory: agent
+        run: pnpm install --frozen-lockfile --ignore-workspace
+      - name: Typecheck testnet agent RPC consumers
+        run: pnpm --dir agent exec tsc --noEmit
       - name: Test Circle wallet diagnostic and bounded candidate signing payloads
         run: node --test app/scripts/circle-wallet-diagnostic.test.ts app/scripts/circle-candidate-probe.test.mjs app/scripts/circle-payable-intent.test.mjs
       - name: Test Gateway reserve intent and recovery boundaries

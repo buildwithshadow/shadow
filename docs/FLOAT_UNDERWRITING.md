@@ -41,7 +41,7 @@ Public inspection:
 cast call 0x20dcA96B0C487D94De885c726c956ffaF38b12C2 \
   "autonomousLineScore(address)(uint16,uint256,uint256)" \
   0x5c0b33b209f510868E07792Edc46c3792B0b92EC \
-  --rpc-url https://rpc.testnet.arc.network
+  --rpc-url https://rpc.testnet.arc.io
 ```
 
 Anyone can also call:

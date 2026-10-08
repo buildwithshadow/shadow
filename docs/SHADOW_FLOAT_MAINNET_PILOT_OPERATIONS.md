@@ -29,7 +29,7 @@ Scheduling and activating cap increases remain separate governor calls: `propose
 ## Running the monitor
 
 ```bash
-export ARC_RPC_URL=https://rpc.testnet.arc.network FLOAT_MAINNET_EXPECTED_CHAIN_ID=5042002
+export ARC_RPC_URL=https://rpc.testnet.arc.io FLOAT_MAINNET_EXPECTED_CHAIN_ID=5042002
 M=contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json
 node app/scripts/float-mainnet-indexer.mjs index --out index.json --resume --manifest $M
 node app/scripts/float-mainnet-monitor.mjs check --index index.json --manifest $M > check.json

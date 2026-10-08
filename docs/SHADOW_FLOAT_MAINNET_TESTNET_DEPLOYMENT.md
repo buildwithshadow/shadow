@@ -25,7 +25,7 @@ export FLOAT_ENV=~/.shadow/float-mainnet-arc-testnet.env
 | --- | --- |
 | `FLOAT_MAINNET_EXPECTED_CHAIN_ID` | `5042002` |
 | `FLOAT_MAINNET_USDC` | `0x3600000000000000000000000000000000000000` (FiatTokenProxy to `NativeFiatTokenV2_2`, 6 decimals) |
-| `ARC_RPC_URL` | `https://rpc.testnet.arc.io` (docs primary; `https://rpc.testnet.arc.network` also answers) |
+| `ARC_RPC_URL` | `https://rpc.testnet.arc.io` (current docs primary) |
 | `ARC_RPC_URL_2` | a different operator: `https://rpc.blockdaemon.testnet.arc.io`, `https://rpc.drpc.testnet.arc.io` or `https://rpc.quicknode.testnet.arc.io` |
 | `ARC_EXPLORER_URL` | `https://testnet.arcscan.app` (301 to `https://explorer.testnet.arc.io`) |
 | `FLOAT_MAINNET_PROPOSED_OWNER` | optional; the owner Safe. Blank or zero means none |

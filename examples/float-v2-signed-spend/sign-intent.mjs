@@ -1,10 +1,11 @@
+import { arcTestnetRpcUrl } from "./network.mjs";
 import { createPublicClient, defineChain, getAddress, hashTypedData, http, parseAbi } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
 const CHAIN_ID = 5_042_002;
 const SHADOW_FLOAT_V2 = getAddress("0x20dcA96B0C487D94De885c726c956ffaF38b12C2");
 const SHADOW_FLOAT_V1 = getAddress("0xf305647ba0ff7f1e2d4be5f37f2ef9f930531057");
-const ARC_RPC_URL = clean(process.env.ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const ARC_RPC_URL = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL));
 const PROVIDER = getAddress(clean(process.env.FLOAT_PROVIDER) || "0x8ddf06fE8985988d3e0883F945E891BD57084937");
 const ENDPOINT_HASH = clean(process.env.FLOAT_ENDPOINT_HASH) || "0x54f180bcd31ab4c3401b23bc78cb3eeb89f85d42a3b43e3d06a692b91d941160";
 const AMOUNT_USDC = BigInt(clean(process.env.FLOAT_AMOUNT_ATOMIC) || "10000");

@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "../arcTestnetNetwork.mjs";
 import {
   createPublicClient,
   formatUnits,
@@ -285,7 +286,7 @@ type CachedState = {
 };
 
 async function fetchSerializedState(): Promise<CachedState> {
-  const rpcUrl = requireEnv("ARC_RPC_URL");
+  const rpcUrl = arcTestnetRpcUrl(requireEnv("ARC_RPC_URL"));
   const router = requireEnv("SHADOW_ROUTER") as Address;
   const amm = requireEnv("SHADOW_AMM") as Address;
   const registry = requireEnv("SHADOW_REGISTRY") as Address;

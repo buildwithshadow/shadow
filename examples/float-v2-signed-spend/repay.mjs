@@ -1,3 +1,4 @@
+import { arcTestnetRpcUrl } from "./network.mjs";
 import { createPublicClient, createWalletClient, defineChain, erc20Abi, formatUnits, getAddress, http, keccak256, parseAbi, stringToBytes } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 
@@ -5,7 +6,7 @@ const CHAIN_ID = 5_042_002;
 const SHADOW_FLOAT_V2 = getAddress("0x20dcA96B0C487D94De885c726c956ffaF38b12C2");
 const SHADOW_FLOAT_V1 = getAddress("0xf305647ba0ff7f1e2d4bE5f37F2EF9f930531057");
 const ARC_USDC = getAddress("0x3600000000000000000000000000000000000000");
-const ARC_RPC_URL = clean(process.env.ARC_RPC_URL) || "https://rpc.testnet.arc.network";
+const ARC_RPC_URL = arcTestnetRpcUrl(clean(process.env.ARC_RPC_URL));
 const KEY = normalizeKey(clean(process.env.BUILDER_PRIVATE_KEY));
 const EXPECTED_AGENT = clean(process.env.EXPECTED_AGENT);
 
