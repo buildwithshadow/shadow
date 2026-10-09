@@ -13,7 +13,7 @@ const request = { blockchain:'ARC', sourceAddress:agent, contractAddress:contrac
   callData:encodeFunctionData({abi,functionName:'executeSpend',args:[intent,'0x1234']}), idempotencyKey };
 function setup() {
   const data=new Map(), calls=[], state={valid:true,fail:false,network:'ARC',history:[],response:{...request,id:'circle-1',txHash:'0x1234'}};
-  const options={entrypoint:'/stock',compatibility:'/guarded-compat',agent,provider,endpointHash,expectedLineId:lineId,maxAmount:'5000',beforeExecute:async()=>{state.guards=(state.guards??0)+1;if(state.guardFail)throw Error('held');},
+  const options={entrypoint:'/stock',compatibility:'/guarded-compat',agent,provider,endpointHash,expectedLineId:lineId,maxAmount:'5000',beforeSign:async()=>{state.signGuards=(state.signGuards??0)+1;if(state.guardFail)throw Error('held');},beforeExecute:async()=>{state.guards=(state.guards??0)+1;if(state.guardFail)throw Error('held');},
     journal:{get:async k=>data.get(k),put:async(k,v)=>data.set(k,v)},run:async(_node,args)=>{
       calls.push(args);
       const value=args.includes('status')?{mainnet:{tokenStatus:state.valid?'VALID':'EXPIRED'},testnet:{tokenStatus:'VALID'}}
@@ -87,4 +87,13 @@ test('mainnet pre-send monitor failure is definitely unsent and does not execute
 test('mainnet session cannot be satisfied by a valid testnet login',async()=>{
  const x=setup();x.state.valid=false;
  await assert.rejects(()=>x.driver.session(),/mainnet session/);
+});
+
+test('mainnet signing guard runs after remote session probes and prevents a newly held signature',async()=>{
+ const x=setup();const previous=x.options.run;
+ const driver=createCircleGuardedMainnetPurchaseDriver({...x.options,run:async(node,args,options)=>{
+  const result=await previous(node,args,options);if(args.includes('list'))x.state.guardFail=true;return result;
+ }});
+ await assert.rejects(()=>driver.signPurchase(JSON.stringify(typed()),scope),/held/);
+ assert.equal(x.state.signGuards,1);assert(!x.calls.some(c=>c.includes('sign')));
 });

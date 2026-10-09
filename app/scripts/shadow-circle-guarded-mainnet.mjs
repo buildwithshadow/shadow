@@ -5,7 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { createPublicClient, erc20Abi, getAddress, keccak256, stringToHex } from 'viem';
 import { GUARDED_MAINNET as deployment, GUARDED_MAINNET_SERVICE as service } from '../src/guardedMainnet.ts';
 import { createGuardedMainnetFundingKit, guardedMainnetChain } from '../src/candidateFunding.ts';
-import { createSelfServicePurchase } from '../src/selfServicePurchase.mjs';
+import { createGuardedMainnetPurchase } from '../src/selfServicePurchase.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 import { createCircleRunnerState } from './circle-agent-runner-state.mjs';
 import { createCircleGuardedMainnetPurchaser, createCircleGuardedRepayer } from './circle-agent-execution.mjs';
@@ -14,7 +14,7 @@ import { createCircleGuardedCliTransport } from './circle-agent-guarded-cli.mjs'
 import { createGuardedMainnetCircleOperations } from './circle-agent-guarded-operations.mjs';
 import { createRpcReadTransport } from './rpc-read-transport.mjs';
 import { assertHealthySpendMonitor } from './float-mainnet-monitor-spend-guard.mjs';
-import { readSessionPolicy, assertSessionIntent } from './float-mainnet-session.mjs';
+import { createMainnetCircleSessionGuard, mainnetCircleSessionIntent } from './circle-agent-mainnet-session.mjs';
 import { decodeFunctionData } from 'viem';
 import { circleGuardedRepaymentAbi } from './circle-agent-execution.mjs';
 import { parseAgentArgs, recoverAgentPurchase } from './shadow-circle-agent.mjs';
@@ -35,9 +35,11 @@ export function parseGuardedMainnetArgs(args) {
   must(options.command !== 'setup', 'Activate and authenticate mainnet separately; this runner cannot activate or change policies.');
   must(filtered.includes('--state'), 'Specify the original mainnet wallet --state directory. Do not create another journal to bypass a hold.');
   must(options.line && !/^0x0{64}$/.test(options.line), 'Pin the exact nonzero mainnet line, including for doctor.');
+  if (options.command === 'recover') must(monitor.sessionPath, 'Recovery requires the original --session-policy path; it does not require a spend-enabled monitor.');
   if (options.command === 'purchase' && options.confirm) must(Object.values(names).every(key => monitor[key]), 'Confirmed mainnet purchase requires all four reviewed monitor and session paths.');
   return { ...options, monitor };
 }
+export const createMainnetRunnerPurchase = createGuardedMainnetPurchase;
 export async function runGuardedMainnetAgent(options) {
   if (options.command === 'help') return { help: 'Controlled Arc MAINNET only, chain 5042. doctor|inspect|purchase|recover|repay --agent ADDRESS --line LINE --state ORIGINAL_JOURNAL --runtime ISOLATED_RUNTIME. Only purchase or repay with --confirm can sign or send. Purchase requires --monitor-baseline, --monitor-manifest, --monitor-state and --session-policy. Price 0.005 USDC, reserve 0.10 USDC, fee estimate cap 0.02 USDC per operation. No activation, policy setters, admission, funding, unpause or journal reset. No new mainnet access is granted by installing this runner.' };
   const { agent, line, command } = options;
@@ -48,16 +50,18 @@ export async function runGuardedMainnetAgent(options) {
   await kit.verifyCandidate(client);
   must((await client.getCode({ address: service.provider }) ?? '0x') === '0x', 'Only the pinned ordinary provider wallet is supported.');
   const connection = { client, address: deployment.address, chainId: 5042n };
-  const authorizePurchase = async struct => {
-    must(options.monitor?.sessionPath, 'Reviewed mainnet monitor configuration is required before spending.');
-    const sessionPolicy = readSessionPolicy(options.monitor.sessionPath);
-    assertSessionIntent(sessionPolicy, connection, struct);
-    return assertHealthySpendMonitor({ ...options.monitor, sessionPolicy, connection, struct });
+  const sessionGuard = options.monitor?.sessionPath ? createMainnetCircleSessionGuard({
+    sessionPath: options.monitor.sessionPath, connection,
+    monitor: (struct, sessionPolicy) => assertHealthySpendMonitor({ ...options.monitor, sessionPolicy, connection, struct }),
+  }) : null;
+  const authorizePurchase = struct => {
+    must(sessionGuard, 'Reviewed mainnet execution session configuration is required before spending.');
+    return sessionGuard.check(struct);
   };
   const journal = await createCircleAgentJournal(options.state);
   const entrypoint = join(options.runtime, 'node_modules/@circle-fin/cli/dist/index.js');
   if (command === 'doctor') {
-    const transport = await createCircleGuardedMainnetPurchaseTransport({ entrypoint, agent, journal, expectedLineId: line, provider: service.provider, endpointHash: keccak256(stringToHex(service.endpoint)), maxAmount: service.principal, beforeExecute: async () => { throw new Error('Doctor cannot submit.'); } });
+    const transport = await createCircleGuardedMainnetPurchaseTransport({ entrypoint, agent, journal, expectedLineId: line, provider: service.provider, endpointHash: keccak256(stringToHex(service.endpoint)), maxAmount: service.principal, beforeExecute: async () => { throw new Error('Doctor cannot submit.'); }, beforeSign: async () => { throw new Error('Doctor cannot sign.'); } });
     const session = await transport.session();
     const code = await client.getCode({ address: agent, blockTag: 'finalized' });
     return { ...session, contract: deployment.address, deployed: Boolean(code && code !== '0x'), purchasePrice: '0.005 USDC',
@@ -79,7 +83,7 @@ export async function runGuardedMainnetAgent(options) {
       const scope = { contract: deployment.address, provider: service.provider, endpointHash: keccak256(stringToHex(service.endpoint)) };
       const config = { chainId: deployment.chainId, agent, ...scope, runtimeHash: deployment.runtimeHash,
         expectedLineId: line, maxAmount: service.principal, maxNetworkFee: '20000000000000000' };
-      const transport = await createCircleGuardedMainnetPurchaseTransport({ ...common, ...scope, beforeExecute: request => authorizePurchase(decodeFunctionData({ abi: circleGuardedRepaymentAbi, data: request.callData }).args[0]) });
+      const transport = await createCircleGuardedMainnetPurchaseTransport({ ...common, ...scope, beforeSign: typed => authorizePurchase(typed.message), beforeExecute: request => sessionGuard.reserve(decodeFunctionData({ abi: circleGuardedRepaymentAbi, data: request.callData }).args[0]) });
       const purchaseExecutor = createCircleGuardedMainnetPurchaser({ client, circle: transport, journal, config, authorizePurchase });
       const operations = createGuardedMainnetCircleOperations({ agent, line, state, save, purchaseExecutor, readLine,
         readAllowance: () => client.readContract({ address: deployment.usdc, abi: erc20Abi, functionName: 'allowance', args: [agent, deployment.address] }),
@@ -87,13 +91,22 @@ export async function runGuardedMainnetAgent(options) {
           circle: await createCircleGuardedCliTransport({ ...common, contract: deployment.address, expectedDraw: plan.draw }) }),
       });
       const wallet = { chain: guardedMainnetChain, getChainId: async () => deployment.chainId, getAddresses: async () => [agent],
-        request: async ({ method, params }) => { await flush(); must(method === 'eth_signTypedData_v4' && same(params[0], agent), 'Unsupported signing request.'); await authorizePurchase(JSON.parse(params[1]).message); return transport.signPurchase(params[1], scope); },
-        sendTransaction: async request => { await flush(); must(same(request.account, agent) && same(request.to, deployment.address) && BigInt(request.value) === 0n, 'Unexpected guarded purchase transaction.'); return (await operations.executePurchase(request.data)).txHash; },
+        request: async ({ method, params }) => { await flush(); must(method === 'eth_signTypedData_v4' && same(params[0], agent), 'Unsupported signing request.'); return transport.signPurchase(params[1], scope); },
+        sendTransaction: async request => { await flush(); must(same(request.account, agent) && same(request.to, deployment.address) && BigInt(request.value) === 0n, 'Unexpected guarded purchase transaction.'); const result = await operations.executePurchase(request.data);
+          const { digest } = mainnetCircleSessionIntent(decodeFunctionData({ abi: circleGuardedRepaymentAbi, data: request.data }).args[0], connection);
+          await sessionGuard.recordOutcome(digest, result.txHash);
+          return result.txHash; },
       };
-      const engine = createSelfServicePurchase({ client, wallet, storage, withLock: async (_key, work) => work(),
+      const engine = createMainnetRunnerPurchase({ client, wallet, storage, withLock: async (_key, work) => work(),
         fetchImpl: async (...args) => { await flush(); return fetch(...args); },
         config: { chainId: deployment.chainId, account: agent, contract: deployment.address, runtimeHash: deployment.runtimeHash, ...service } });
-      if (command === 'recover') return { ...summary(await readLine()), ...await recoverAgentPurchase({ executor: operations, state, engine, client, save }) };
+      if (command === 'recover') {
+        const record=engine.load(), hadPurchase=Boolean(state.requests.purchase);
+        const recovered=await recoverAgentPurchase({ executor: operations, state, engine, client, save });
+        if(record && hadPurchase)await sessionGuard.recordOutcome(record.intent.digest, recovered.operations.purchase?.txHash, recovered.operations.purchase?.status==='not-submitted');
+        else await sessionGuard.reconcile();
+        return { ...summary(await readLine()), ...recovered };
+      }
       if (command === 'repay') { const repayment = await operations.repay(); return { ...summary(await readLine()), repayment }; }
       must(command === 'purchase' && options.confirm, 'Explicit purchase confirmation is required.');
       await transport.session();

@@ -13,7 +13,7 @@ node app/scripts/shadow-circle-guarded-mainnet.mjs inspect \
   --state ORIGINAL_MAINNET_JOURNAL --runtime ISOLATED_CIRCLE_RUNTIME
 ```
 
-`doctor` checks the mainnet Circle session and deployed wallet. `inspect`, and `purchase` or `repay` without `--confirm`, do not sign or submit. `recover` reconciles original recorded requests and retrieves the original result. Recovery does not resubmit a payment.
+`doctor` checks the mainnet Circle session and deployed wallet. `inspect`, and `purchase` or `repay` without `--confirm`, do not sign or submit. `recover` requires the original `--session-policy` path, reconciles original recorded requests and the execution session ledger, and retrieves the original result. It does not need a spend enabled monitor. Recovery does not resubmit a payment.
 
 A confirmed purchase additionally requires these reviewed operator paths:
 
@@ -29,7 +29,7 @@ node app/scripts/shadow-circle-guarded-mainnet.mjs purchase \
 
 The policy and monitor baseline must identify this exact chain, deployment, sponsor, line epoch, agent, provider, endpoint and Circle wallet as the named purchase executor. An older baseline naming an EOA executor cannot authorize this flow. Prepare the correct observer phase through the existing reviewed operating procedure. Do not edit snapshots, remove incident holds or weaken freshness checks to make a purchase pass.
 
-The fresh monitor check runs before signing, during execution preparation, after estimation and immediately before invoking Circle's execution command. The adapter verifies the pinned runtime and current line, bounds the fee estimate and preserves a durable uncertainty barrier before calling Circle. A failed monitor check before submission is definitely unsent. A lost execution response remains unknown; keep the original journal and transaction identity. No unsupported lookup by idempotency key or automatic retry is assumed.
+The fresh monitor check runs after the remote session probes immediately before signing, during execution preparation, after estimation and immediately before invoking Circle's execution command. The existing execution session ledger is reconciled and checked before signing or spending, then durably reserves the exact digest before Circle submission. Unknown attempts hold the session. Paid, blocked and reverted reservations conservatively consume its cumulative gross budget; repayment never refunds that capacity. Recovery attaches only the original transaction identity and reconciles this same ledger. The adapter verifies the pinned runtime and current line, bounds the fee estimate and preserves a durable uncertainty barrier before calling Circle. A failed monitor check before submission is definitely unsent. A lost execution response remains unknown; keep the original journal and transaction identity. No unsupported lookup by idempotency key or automatic retry is assumed.
 
 Repayment saves the original reviewed draw before approving the exact 0.005 USDC allowance and calling `repayForDraw`. A newer draw is refused. Recovery and repayment do not require an unpaused purchase phase. Sponsor reclaim remains a separate browser wallet action.
 

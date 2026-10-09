@@ -71,14 +71,14 @@ function purchasePolicy({ expectedLineId, provider, endpointHash, maxAmount }, m
   return Object.freeze({ expectedLineId: expectedLineId.toLowerCase(), provider: getAddress(provider), endpointHash: endpointHash.toLowerCase(), amount, chainId: mainnet ? 5042 : 5042002, network: mainnet ? 'ARC' : 'ARC-TESTNET', contract: mainnet ? GUARDED_MAINNET_CONTRACT : GUARDED_TESTNET_CONTRACT });
 }
 
-async function createTransport({ entrypoint, agent, journal, runtimeDirectory = journal?.runtimeDirectory, run = runFile, beforeExecute }, policy = null) {
+async function createTransport({ entrypoint, agent, journal, runtimeDirectory = journal?.runtimeDirectory, run = runFile, beforeExecute, beforeSign }, policy = null) {
   const address = getAddress(agent);
   const original = resolve(entrypoint);
   const source = await readFile(original, 'utf8');
   const patched = policy ? (policy.chainId === 5042 ? guardedMainnetPurchaseCompatibility(source) : guardedTestnetPurchaseCompatibility(source)) : rawCalldataCompatibility(source);
   const compatibility = await freezeCircleCliSource(patched, original, runtimeDirectory);
   entrypoint = await freezeCircleCliSource(source, original, runtimeDirectory);
-  return createDriver({ entrypoint, compatibility, agent: address, journal, run, beforeExecute }, policy);
+  return createDriver({ entrypoint, compatibility, agent: address, journal, run, beforeExecute, beforeSign }, policy);
 }
 
 // Split from preparation so transport behavior can be tested without authentication or npm downloads.
@@ -95,13 +95,13 @@ export function createCircleGuardedMainnetPurchaseDriver(options) {
   return createDriver(options, purchasePolicy(options, true));
 }
 
-function createDriver({ entrypoint, compatibility, agent, journal, run = runFile, beforeExecute }, policy = null) {
+function createDriver({ entrypoint, compatibility, agent, journal, run = runFile, beforeExecute, beforeSign }, policy = null) {
   const address = getAddress(agent);
   const deployment = policy ? policy.contract : CONTRACT;
   const network = policy?.network ?? 'ARC-TESTNET';
   const chainId = policy?.chainId ?? 5042002;
   const sessionKey = chainId === 5042 ? 'mainnet' : 'testnet';
-  if (chainId === 5042) requireThat(typeof beforeExecute === 'function', 'A fresh mainnet pre-send monitor guard is required.');
+  if (chainId === 5042) requireThat(typeof beforeExecute === 'function' && typeof beforeSign === 'function', 'Fresh mainnet signing and pre-send guards are required.');
   function checkPurchase(intent) {
     requireThat(getAddress(intent.agent) === address && getAddress(intent.executor) === address
       && intent.lineId.toLowerCase() === policy.expectedLineId && getAddress(intent.provider) === policy.provider
@@ -198,6 +198,7 @@ function createDriver({ entrypoint, compatibility, agent, journal, run = runFile
         requireThat(getAddress(contract) === getAddress(deployment) && getAddress(provider) === policy.provider && endpointHash.toLowerCase() === policy.endpointHash, 'Guarded signing scope changed.');
         checkPurchase(m);
       } else requireThat(getAddress(m.agent) === address && getAddress(m.executor) === address && getAddress(m.provider) === getAddress(provider) && m.endpointHash.toLowerCase() === endpointHash.toLowerCase() && BigInt(m.principal) === 50000n && BigInt(m.maximumTotalDebt) === 50000n, 'Signing request exceeds the bounded test service.');
+      if (chainId === 5042) await beforeSign(typed);
       const result = await command(['wallet', 'sign', 'typed-data', payload, '--address', address, '--chain', network]);
       requireThat(typeof result?.signature === 'string' && /^0x[0-9a-fA-F]+$/.test(result.signature), 'Circle returned no valid signature.');
       return result.signature;

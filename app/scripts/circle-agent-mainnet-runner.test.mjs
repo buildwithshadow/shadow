@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeFunctionData, keccak256 } from 'viem';
-import { parseGuardedMainnetArgs, runGuardedMainnetAgent } from './shadow-circle-guarded-mainnet.mjs';
+import { parseGuardedMainnetArgs, runGuardedMainnetAgent, createMainnetRunnerPurchase } from './shadow-circle-guarded-mainnet.mjs';
 import { createCircleGuardedMainnetPurchaser, circleGuardedRepaymentAbi as abi } from './circle-agent-execution.mjs';
 import { createGuardedMainnetCircleOperations, createGuardedCircleOperations } from './circle-agent-guarded-operations.mjs';
 import { GUARDED_MAINNET as deployment, GUARDED_MAINNET_SERVICE as service } from '../src/guardedMainnet.ts';
@@ -10,7 +10,7 @@ const flags=['--agent',agent,'--line',line,'--state','/tmp/original-mainnet-jour
 const guardFlags=['--monitor-baseline','/tmp/baseline','--monitor-manifest','/tmp/manifest','--monitor-state','/tmp/monitor','--session-policy','/tmp/session'];
 test('mainnet parser requires original state and exact line; read-only commands cannot confirm',()=>{
  for(const cmd of ['doctor','inspect','recover']){
-  const value=parseGuardedMainnetArgs([cmd,...flags]);assert.equal(value.state,'/tmp/original-mainnet-journal');assert.equal(value.line,line);
+  const value=parseGuardedMainnetArgs([cmd,...flags,...(cmd==='recover'?['--session-policy','/tmp/session']:[])]);assert.equal(value.state,'/tmp/original-mainnet-journal');assert.equal(value.line,line);
   assert.throws(()=>parseGuardedMainnetArgs([cmd,...flags,'--confirm']),/read-only/);
  }
  assert.throws(()=>parseGuardedMainnetArgs(['inspect','--agent',agent,'--line',line]),/original mainnet/);
@@ -59,4 +59,10 @@ test('mainnet restart recovery never sends and cannot rebind saved repayment to 
  const request={operationId:`${line}:repay`,to:deployment.address,data,value:'0'};
  const key=keccak256(data);x.state.requests.repay={version:1,kind:'repay',request,draw,key};
  assert.equal((await createGuardedMainnetCircleOperations(x.options).reconcile(key)).status,'unknown');assert.equal(x.sent.length,0);
+});
+
+test('the actual mainnet runner engine constructs on chain5042, while testnet and excessive prices are refused',()=>{
+ const options={client:{},wallet:{},storage:{getItem:()=>null},config:{chainId:5042,account:agent,contract:deployment.address,runtimeHash:deployment.runtimeHash,...service}};
+ assert.equal(createMainnetRunnerPurchase(options).load(),null);
+ for(const patch of [{chainId:5042002},{principal:'5001'}])assert.throws(()=>createMainnetRunnerPurchase({...options,config:{...options.config,...patch}}),/Guarded mainnet/);
 });
