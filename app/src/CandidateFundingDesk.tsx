@@ -84,6 +84,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   }));
   const [providerAgreed, setProviderAgreed] = useState(false);
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
+  const [walletSnapshotRevision, setWalletSnapshotRevision] = useState(0);
   const [snapshotError, setSnapshotError] = useState("");
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
   const [lineInputError, setLineInputError] = useState("");
@@ -244,7 +245,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     readCandidateSnapshot(client, { sponsor: account }).then((value) => { if (active) setSnapshot(value); })
       .catch((cause) => { if (active) setSnapshotError(`Could not read your sponsor status. ${messageOf(cause)} Reload the page to try again.`); });
     return () => { active = false; window.removeEventListener("storage", changed); };
-  }, [account]);
+  }, [account, walletSnapshotRevision, client, readCandidateSnapshot]);
 
   useEffect(() => {
     if (prepared && dialog.current && !dialog.current.open) dialog.current.showModal();
@@ -281,6 +282,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       activeAccount.current = getAddress(accounts[0]);
       setAccount(activeAccount.current);
       setChainId(Number(network));
+      // A refresh of the same account must still reload its balance and
+      // sponsor permissions, including changes made in another tab.
+      setWalletSnapshotRevision((previous) => previous + 1);
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(""); }
   }
