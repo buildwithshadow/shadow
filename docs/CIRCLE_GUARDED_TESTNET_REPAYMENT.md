@@ -42,9 +42,11 @@ identity remains unknown. Never replace the journal, clear its active barrier, o
 generate a fresh operation ID to escape an uncertain result. Mainnet has a separate
 chain namespace and remains accessible only through its explicit factories.
 
-These modules support repayment only. Guarded provider setup, purchase signing,
-participant admission, and the complete ordinary participant lifecycle require
-their own integration and live validation.
+These repayment entry points support repayment only. A separate
+[guarded purchase library](CIRCLE_GUARDED_TESTNET_PURCHASE.md) provides bounded
+testnet signing and execution. Guarded provider setup, participant admission,
+the public runner, and the complete ordinary participant lifecycle still
+require integration and live validation.
 
 ## Validation
 
