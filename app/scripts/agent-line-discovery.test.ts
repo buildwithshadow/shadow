@@ -147,6 +147,44 @@ test("cancellation stops before the next getLogs request", async () => {
   assert.equal(calls, 1);
 });
 
+test("cancellation while getBlockNumber is pending makes no getLogs request", async () => {
+  let active = true;
+  let calls = 0;
+  let resolveBlockNumber!: (value: bigint) => void;
+  const blockNumber = new Promise<bigint>(resolve => { resolveBlockNumber = resolve; });
+  const client: AgentLineDiscoveryClient = {
+    getBlockNumber: async () => blockNumber,
+    getLogs: async () => { calls++; return []; },
+  };
+
+  const discovery = discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, { isActive: () => active });
+  active = false;
+  resolveBlockNumber(10_001n);
+
+  assert.deepEqual(await discovery, []);
+  assert.equal(calls, 0);
+});
+
+test("cancellation during a split retry makes no later getLogs request", async () => {
+  let active = true;
+  const ranges: { fromBlock: bigint; toBlock: bigint }[] = [];
+  const client: AgentLineDiscoveryClient = {
+    getBlockNumber: async () => 20_000n,
+    getLogs: async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      ranges.push({ fromBlock, toBlock });
+      if (ranges.length === 1) throw new Error("ranges over 10000 blocks are not supported on free plan");
+      active = false;
+      throw new Error("ranges over 10000 blocks are not supported on free plan");
+    },
+  } as unknown as AgentLineDiscoveryClient;
+
+  assert.deepEqual(await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, { isActive: () => active }), []);
+  assert.deepEqual(ranges, [
+    { fromBlock: 15_001n, toBlock: 20_000n },
+    { fromBlock: 17_501n, toBlock: 20_000n },
+  ]);
+});
+
 test("uses only the read client methods and never calls a write method", async () => {
   const calls: string[] = [];
   const client = {

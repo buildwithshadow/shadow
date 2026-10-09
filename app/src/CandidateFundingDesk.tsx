@@ -220,6 +220,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   }
   function updateLineId(value: string) {
     invalidate();
+    focusLoadedLineHeading.current = false;
     setLine(null);
     setLineInputError("");
     setLineId(value);
@@ -244,13 +245,21 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     try {
       let ids = cachedIds;
       if (ids === undefined) {
+        let lastProgressUpdate: bigint | null = null;
         ids = await discoverAgentLineIds(discoveryClient, {
           address: deployment.address,
           agent: currentAccount,
           deployBlock: BigInt(publicTestnetManifest.deployment.blockNumber),
-        }, { isActive, onProgress: progress => { if (isActive()) setLineDiscoveryProgress(progress); } });
+        }, { isActive, onProgress: progress => {
+          if (!isActive()) return;
+          if (lastProgressUpdate === null || progress.searchedBlocks === 0n || progress.searchedBlocks === progress.totalBlocks
+            || progress.searchedBlocks - lastProgressUpdate >= progress.totalBlocks / 20n) {
+            lastProgressUpdate = progress.searchedBlocks;
+            setLineDiscoveryProgress(progress);
+          }
+        } });
         if (!isActive()) return;
-        discoveredLineIdsByAccount.current.set(accountKey, ids);
+        if (ids.length) discoveredLineIdsByAccount.current.set(accountKey, ids);
       }
       const values: CandidateLine[] = [];
       for (const id of ids) {
@@ -282,9 +291,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   }
   function selectDiscoveredLine(id: Hash) {
     keepSelectedLineInputEnabled.current = true;
-    focusLoadedLineHeading.current = true;
     document.getElementById("funding-line")?.focus();
     updateLineId(id);
+    focusLoadedLineHeading.current = true;
     void lookup(undefined, id).finally(() => { keepSelectedLineInputEnabled.current = false; });
   }
   function updateForm(key: keyof CandidateOpenInput, value: string) {
@@ -687,7 +696,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       <div className="fundingPanelHead"><div><h2 id="funding-manage-title">Find your funding line</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
       <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
         <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={updateLineId} disabled={Boolean(busy) && !keepSelectedLineInputEnabled.current} hint="The 0x identifier from your line-opening receipt." />
-        {showAgentLineDiscovery && <button type="button" disabled={lineDiscoveryStatus !== "loading" && Boolean(busy)} onClick={() => lineDiscoveryStatus === "loading" ? stopAgentLineDiscovery() : void findAgentLines()}>
+        {showAgentLineDiscovery && <button type="button" onClick={() => lineDiscoveryStatus === "loading" ? stopAgentLineDiscovery() : void findAgentLines()}>
           {lineDiscoveryStatus === "loading" ? "Stop" : "Find my funding lines"}
         </button>}
         <button type="submit" disabled={Boolean(busy)}>Load line</button>
@@ -695,7 +704,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       {showAgentLineDiscovery && lineDiscoveryStatus !== "idle" && <div className="agentLineDiscovery" aria-live="polite">
         {lineDiscoveryStatus === "loading" && <p role="status">{lineDiscoveryProgress
           ? `Searched ${lineDiscoveryProgress.searchedBlocks.toLocaleString()} of ${lineDiscoveryProgress.totalBlocks.toLocaleString()} blocks.`
-          : lineDiscoveryUsedCache ? "Refreshing current line states…" : "Checking the current block…"}</p>}
+          : lineDiscoveryUsedCache ? "Refreshing the lines found earlier in this session. Reload the page to search the chain again." : "Checking the current block…"}</p>}
         {lineDiscoveryStatus === "ready" && <><p role="status">Choose a funding line for this wallet.</p>
           <ul className="agentLineChoices">{discoveredLines.map((candidateLine) => <li key={candidateLine.lineId}>
             <button className="agentLineChoice" type="button" disabled={Boolean(busy)} onClick={() => selectDiscoveredLine(candidateLine.lineId)}>
