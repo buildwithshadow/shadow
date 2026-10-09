@@ -104,6 +104,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const dialog = useRef<HTMLDialogElement>(null);
+  const dialogTitle = useRef<HTMLHeadingElement>(null);
   const feedback = useRef<HTMLDivElement>(null);
   const purchaseSlot = useRef<HTMLDivElement>(null);
   const revision = useRef(0);
@@ -248,7 +249,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   }, [account, walletSnapshotRevision, client, readCandidateSnapshot]);
 
   useEffect(() => {
-    if (prepared && dialog.current && !dialog.current.open) dialog.current.showModal();
+    if (prepared && dialog.current) {
+      if (!dialog.current.open) dialog.current.showModal();
+      dialogTitle.current?.focus({ preventScroll: true });
+    }
     if (!prepared && dialog.current?.open) dialog.current.close();
   }, [prepared]);
 
@@ -631,10 +635,28 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     <footer className="fundingFoot">{service && !mainnet && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Candidate contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · {network}</p>
       <p>Looking for the earlier integration? <Link to="/builders/v2">Open Float V2 tools</Link>.</p></footer>
 
-    <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description"
-      onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}>
+    <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description" tabIndex={-1}
+      onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}
+      onKeyDown={(event) => {
+        if (event.key !== "Tab") return;
+        const focusable = dialog.current?.querySelectorAll<HTMLElement>('button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])');
+        if (!focusable?.length) {
+          event.preventDefault();
+          dialog.current?.focus({ preventScroll: true });
+          return;
+        }
+        const first = focusable[0];
+        const last = focusable[focusable.length - 1];
+        if (event.shiftKey && (document.activeElement === first || document.activeElement === dialogTitle.current)) {
+          event.preventDefault();
+          last.focus();
+        } else if (!event.shiftKey && document.activeElement === last) {
+          event.preventDefault();
+          first.focus();
+        }
+      }}>
       {prepared && <><p className="pageEyebrow">{network} · Wallet confirmation</p>
-        <h2 id="funding-review-title">{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : prepared.kind === "default" ? "Declare this line in default" : "Reclaim eligible funds"}</h2>
+        <h2 ref={dialogTitle} id="funding-review-title" tabIndex={-1}>{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : prepared.kind === "default" ? "Declare this line in default" : "Reclaim eligible funds"}</h2>
         <p id="funding-review-description">{prepared.summary}</p>
         <dl className="fundingDetails"><div><dt>Wallet</dt><dd><code>{prepared.account}</code></dd></div>
           <div><dt>{prepared.kind === "default" ? "Outstanding principal" : "Amount"}</dt><dd>{usdc(prepared.amount)} {mainnet ? 'USDC' : 'test USDC'}</dd></div>
@@ -645,7 +667,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           <div><dt>Endpoint</dt><dd>{reviewInput.endpoint}</dd></div><div><dt>Total / daily / per purchase</dt><dd>{reviewInput.lineSpendCap} / {reviewInput.dailySpendCap} / {reviewInput.providerPerSpendCap} USDC</dd></div></dl>}
         <p>{prepared.kind === "register" ? "Registration enables funding from this wallet only. Your tokens remain in your wallet." : prepared.kind === "approve" ? "This approval does not open a line or repay debt. You will review that transaction separately." : prepared.kind === "repay" ? "Review the repayment scope above. Legacy lines pay current debt at execution and can settle a newer purchase if approval is delayed; guarded lines reject a different purchase. Check confirmation before retrying." : prepared.kind === "default" ? "Unpaid spent principal remains a loss unless it is repaid." : prepared.kind === "open" ? "The sponsor bears repayment risk. A paid provider can leave debt outstanding even if delivery fails." : "Closing an open line ends its purchase access and returns eligible reserve to its sponsor."}</p>
         <p>Finish other transactions from this account first. If you submit one elsewhere while this wallet prompt is open, cancel this request and review it again. Shadow cannot reserve a wallet nonce across other apps or devices.</p>
-        <div className="fundingActions"><button autoFocus type="button" onClick={() => setPrepared(null)} disabled={Boolean(busy)}>Back</button>
+        <div className="fundingActions"><button type="button" onClick={() => setPrepared(null)} disabled={Boolean(busy)}>Back</button>
           <button className="fundingPrimary" type="button" onClick={() => void sendReviewed()} disabled={Boolean(busy)}>Confirm in wallet</button></div>
         {busy && <p role="status">{busy}</p>}
       </>}
