@@ -84,6 +84,7 @@
   .fundingDetails > div { grid-template-columns: 1fr; gap: 6px; }
 }
 @media (min-width: 521px) and (max-width: 760px) {
+  .fundingLookup { flex-wrap: wrap; }
   .fundingLookup .fundingField { order: 0; flex: 1 1 0; }
   .fundingLookup > button[type="submit"] { order: 1; }
   .fundingLookup > button[type="button"] { order: 2; flex: 0 0 100%; }
