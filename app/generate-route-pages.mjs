@@ -40,6 +40,7 @@ function replaceMeta(html, name, value) {
 
 for (const [route, description] of Object.entries(routeMetadata.socialDescriptions)) {
   if (route === "/") continue;
+  if (route === "/guarded-testnet" && process.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE !== "true") continue;
   const title = routeMetadata.routeTitles[route];
   if (!title) throw new Error(`Missing route title for ${route}`);
   const url = `${SHADOW_ORIGIN}${route}`;
@@ -50,6 +51,9 @@ for (const [route, description] of Object.entries(routeMetadata.socialDescriptio
   html = replaceMeta(html, "og:url", url);
   html = replaceMeta(html, "twitter:title", title);
   html = replaceMeta(html, "twitter:description", description);
+  const headClose = /\s*<\/head>/;
+  if (!headClose.test(html)) throw new Error("Missing head close tag in build output");
+  html = html.replace(headClose, () => `\n    <link rel="canonical" href="${escapeHtml(url)}" />\n  </head>`);
 
   const destination = fileURLToPath(new URL(`./dist${route}/index.html`, import.meta.url));
   await mkdir(dirname(destination), { recursive: true });
