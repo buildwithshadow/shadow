@@ -3,12 +3,28 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync }
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { acknowledgeHold, collectSnapshot, heartbeatStatus, loadContext, runMonitorLoop, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
+import { acknowledgeHold, collectSnapshot, heartbeatStatus, loadContext, monitorReadEnvironment, runMonitorLoop, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
 import { digestJson, evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-policy.mjs";
 
 const addr = (n) => `0x${n.toString(16).padStart(40, "0")}`;
 const hash = (n) => `0x${n.toString(16).padStart(64, "0")}`;
 const NOW = 1_800_000_000_000;
+test("monitor subprocess preserves bounded pacing without inheriting credentials or runtime injection", () => {
+  const parent = { PATH: "/usr/bin", ARC_RPC_URL: "https://wrong.invalid", FLOAT_MAINNET_EXPECTED_CHAIN_ID: "1",
+    SHADOW_RPC_READ_SPACING_MS: " 1500 ", PRIVATE_KEY: "private", CIRCLE_API_KEY: "credential",
+    NODE_OPTIONS: "--import /tmp/untrusted.mjs", HTTPS_PROXY: "https://proxy.invalid" };
+  const env = monitorReadEnvironment("https://rpc.quicknode.testnet.arc.io", "5042002", parent);
+  assert.deepEqual(env, { PATH: "/usr/bin", ARC_RPC_URL: "https://rpc.quicknode.testnet.arc.io",
+    FLOAT_MAINNET_EXPECTED_CHAIN_ID: "5042002", SHADOW_RPC_READ_SPACING_MS: "1500" });
+  assert.equal(parent.SHADOW_RPC_READ_SPACING_MS, " 1500 ");
+});
+test("monitor pacing remains optional and rejects values outside the CLI safety bounds", () => {
+  assert.equal(Object.hasOwn(monitorReadEnvironment("http://localhost", "5042002", {}), "SHADOW_RPC_READ_SPACING_MS"), false);
+  for (const spacing of ["350", "5000"]) assert.equal(monitorReadEnvironment("http://localhost", "5042002", { SHADOW_RPC_READ_SPACING_MS: spacing }).SHADOW_RPC_READ_SPACING_MS, spacing);
+  for (const spacing of ["", "0", "349", "5001", "1e3", "1500ms", "Infinity", "-1", "1500.1"]) {
+    assert.throws(() => monitorReadEnvironment("http://localhost", "5042002", { SHADOW_RPC_READ_SPACING_MS: spacing }), /between 350 and 5000/);
+  }
+});
 function fixture() {
   const limits = { protocolReserve: "100", lineReserve: "100", lineSpend: "100", perSpend: "50", dailySpend: "100" };
   const provider = { provider: addr(5), active: true, endpointHash: hash(8), expiry: "1800010000", perSpendCap: "50", dailySpendCap: "100" };

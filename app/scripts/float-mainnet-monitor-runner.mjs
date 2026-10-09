@@ -56,13 +56,26 @@ function latch(context, alerts, nowMs) {
 
 // This subprocess is read-only and has a hard wall-time/output bound. A killed
 // scan never yields a partial healthy snapshot. No keys reach its environment.
+export function monitorReadEnvironment(rpcUrl, chainId, env = process.env) {
+  const childEnv = { PATH: env.PATH, ARC_RPC_URL: rpcUrl, FLOAT_MAINNET_EXPECTED_CHAIN_ID: chainId };
+  const spacing = env.SHADOW_RPC_READ_SPACING_MS?.trim();
+  if (spacing !== undefined) {
+    if (!/^\d+$/.test(spacing) || Number(spacing) < 350 || Number(spacing) > 5000) {
+      throw new Error("SHADOW_RPC_READ_SPACING_MS must be between 350 and 5000");
+    }
+    childEnv.SHADOW_RPC_READ_SPACING_MS = spacing;
+  }
+  return childEnv;
+}
+
 export async function collectSnapshot(context, { rpcUrl = process.env.ARC_RPC_URL } = {}) {
   if (!rpcUrl) throw new Error("ARC_RPC_URL required");
   const { baseline: b } = context;
+  const childEnv = monitorReadEnvironment(rpcUrl, b.identity.chainId);
   const args = [MONITOR, "snapshot", "--manifest", context.manifestPath, "--warn-before", String(b.policy.warnBeforeSeconds), "--max-index-lag", String(b.policy.maxIndexLagSeconds), "--executor-from-block", b.executor.fromBlock];
   if (context.indexPath) args.push("--index", context.indexPath);
   return new Promise((resolveResult, reject) => {
-    const child = spawn(process.execPath, args, { env: { PATH: process.env.PATH, ARC_RPC_URL: rpcUrl, FLOAT_MAINNET_EXPECTED_CHAIN_ID: b.identity.chainId }, stdio: ["ignore", "pipe", "pipe"] });
+    const child = spawn(process.execPath, args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
     let output = ""; let bytes = 0; let stopped = false;
     const kill = () => { stopped = true; child.kill("SIGKILL"); };
     const timer = setTimeout(kill, b.policy.runTimeoutMs);
