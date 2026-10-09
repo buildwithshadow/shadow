@@ -17,7 +17,7 @@ import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
 import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
-import { mergeAgentLineDiscoveryCache, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
+import { getAgentLineDiscoveryContinuationCursor, mergeAgentLineDiscoveryCache, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -227,7 +227,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     const currentAccount = account;
     const accountKey = currentAccount.toLowerCase();
     const cached = discoveredLinesByAccount.current.get(accountKey);
-    const continuation = action === "continue" ? cached?.historyCursor ?? cached?.forwardCursor ?? undefined : undefined;
+    const continuation = action === "continue" ? getAgentLineDiscoveryContinuationCursor(cached) ?? undefined : undefined;
     if (action === "continue" && !continuation) return;
     const fromBlock = action === "again" ? (cached?.headBlock ?? BigInt(publicTestnetManifest.deployment.blockNumber)) + 1n : undefined;
     const discoveryDeployment = {
@@ -610,7 +610,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const lineBlocker = !account ? "Connect your wallet to repay." : !correctNetwork ? `Switch to ${network} to continue.`
     : gatewayHeld ? "Resolve Gateway funding above before continuing." : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
   const cachedLineDiscovery = account ? discoveredLinesByAccount.current.get(account.toLowerCase()) : undefined;
-  const incompleteLineDiscoveryCursor = cachedLineDiscovery?.historyCursor ?? cachedLineDiscovery?.forwardCursor;
+  const incompleteLineDiscoveryCursor = getAgentLineDiscoveryContinuationCursor(cachedLineDiscovery);
   const canContinueLineDiscovery = Boolean(cachedLineDiscovery?.historyCursor || cachedLineDiscovery?.forwardCursor);
   const incompleteLineDiscoveryProgress = incompleteLineDiscoveryCursor
     ? ` Searched ${incompleteLineDiscoveryCursor.searchedBlocks.toLocaleString()} of ${incompleteLineDiscoveryCursor.totalBlocks.toLocaleString()} blocks.` : "";

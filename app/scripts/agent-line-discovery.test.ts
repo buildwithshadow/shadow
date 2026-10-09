@@ -10,7 +10,11 @@ import {
   type AgentLineDiscoveryClient,
   type AgentLineOpenedLog,
 } from "../src/agentLineDiscovery.ts";
-import { mergeAgentLineDiscoveryCache } from "../src/agentLineDiscoveryCache.ts";
+import {
+  getAgentLineDiscoveryContinuationCursor,
+  mergeAgentLineDiscoveryCache,
+  type AgentLineDiscoveryCache,
+} from "../src/agentLineDiscoveryCache.ts";
 
 const contract = "0x1111111111111111111111111111111111111111" as Address;
 const agent = "0x2222222222222222222222222222222222222222" as Address;
@@ -292,6 +296,93 @@ test("restarting a budgeted forward scan keeps the original head until its gap i
 
   assert.equal(afterSecond.headBlock, oldHead);
   assert.notEqual(afterSecond.forwardCursor, null);
+});
+
+test("continues an unfinished forward range before pending history", async () => {
+  const deployment = { address: contract, agent, deployBlock: 1n };
+  const historyCursor = {
+    nextBlock: 25_000n,
+    span: AGENT_LINE_DISCOVERY_CHUNK_BLOCKS,
+    startBlock: 1n,
+    headBlock: 100_000n,
+    searchedBlocks: 75_000n,
+    totalBlocks: 100_000n,
+    pendingLineIds: [],
+  };
+  const initial: AgentLineDiscoveryCache = {
+    lineIds: [],
+    lines: [],
+    headBlock: 100_000n,
+    historyCursor,
+    forwardCursor: null,
+  };
+  const ranges: { fromBlock: bigint; toBlock: bigint }[] = [];
+  const client = {
+    getBlockNumber: async () => 300_000n,
+    getLogs: async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      ranges.push({ fromBlock, toBlock });
+      return [];
+    },
+  } as unknown as AgentLineDiscoveryClient;
+
+  const forwardSearch = await discoverAgentLineIds(client, deployment, {
+    ...activeDiscovery,
+    fromBlock: initial.headBlock + 1n,
+  });
+  assert.ok(forwardSearch.headBlock !== null);
+  assert.ok(forwardSearch.cursor !== null);
+  const bothCursors = mergeAgentLineDiscoveryCache("again", initial, {
+    lineIds: forwardSearch.lineIds,
+    headBlock: forwardSearch.headBlock,
+    cursor: forwardSearch.cursor,
+  });
+  assert.strictEqual(bothCursors.historyCursor, historyCursor);
+  assert.ok(bothCursors.forwardCursor !== null);
+  assert.equal(ranges.length, MAX_AGENT_LINE_DISCOVERY_REQUESTS - 1);
+
+  const forwardContinuation = getAgentLineDiscoveryContinuationCursor(bothCursors);
+  assert.strictEqual(forwardContinuation, bothCursors.forwardCursor);
+  const firstContinueStart = ranges.length;
+  const firstContinue = await discoverAgentLineIds(client, deployment, {
+    ...activeDiscovery,
+    cursor: forwardContinuation!,
+  });
+  assert.ok(firstContinue.cursor !== null);
+  assert.equal(ranges[firstContinueStart].toBlock, bothCursors.forwardCursor.nextBlock);
+  const afterFirstContinue = mergeAgentLineDiscoveryCache("continue", bothCursors, {
+    lineIds: firstContinue.lineIds,
+    headBlock: firstContinue.headBlock!,
+    cursor: firstContinue.cursor,
+  });
+  assert.equal(afterFirstContinue.headBlock, initial.headBlock);
+  assert.strictEqual(afterFirstContinue.historyCursor, historyCursor);
+  assert.ok(afterFirstContinue.forwardCursor !== null);
+  assert.strictEqual(getAgentLineDiscoveryContinuationCursor(afterFirstContinue), afterFirstContinue.forwardCursor);
+
+  const nextForwardContinuation = getAgentLineDiscoveryContinuationCursor(afterFirstContinue);
+  const secondContinueStart = ranges.length;
+  const secondContinue = await discoverAgentLineIds(client, deployment, {
+    ...activeDiscovery,
+    cursor: nextForwardContinuation!,
+  });
+  assert.equal(secondContinue.cursor, null);
+  assert.equal(ranges[secondContinueStart].toBlock, afterFirstContinue.forwardCursor.nextBlock);
+  const afterForwardComplete = mergeAgentLineDiscoveryCache("continue", afterFirstContinue, {
+    lineIds: secondContinue.lineIds,
+    headBlock: secondContinue.headBlock!,
+    cursor: secondContinue.cursor,
+  });
+  assert.equal(afterForwardComplete.headBlock, 300_000n);
+  assert.strictEqual(afterForwardComplete.historyCursor, historyCursor);
+  assert.equal(afterForwardComplete.forwardCursor, null);
+  assert.strictEqual(getAgentLineDiscoveryContinuationCursor(afterForwardComplete), historyCursor);
+
+  const historyContinueStart = ranges.length;
+  await discoverAgentLineIds(client, deployment, {
+    ...activeDiscovery,
+    cursor: getAgentLineDiscoveryContinuationCursor(afterForwardComplete)!,
+  });
+  assert.equal(ranges[historyContinueStart].toBlock, historyCursor.nextBlock);
 });
 
 test("cancellation stops before the next getLogs request", async () => {

@@ -10,12 +10,16 @@ export type AgentLineDiscoveryCache = {
   forwardCursor: AgentLineDiscoveryCursor | null;
 };
 
+export function getAgentLineDiscoveryContinuationCursor(cached: AgentLineDiscoveryCache | undefined) {
+  return cached?.forwardCursor ?? cached?.historyCursor ?? null;
+}
+
 export function mergeAgentLineDiscoveryCache(
   action: "initial" | "continue" | "again",
   cached: AgentLineDiscoveryCache | undefined,
   result: { lineIds: Hash[]; headBlock: bigint; cursor: AgentLineDiscoveryCursor | null },
 ): AgentLineDiscoveryCache {
-  const continuingHistory = action === "continue" && Boolean(cached?.historyCursor);
+  const continuingHistory = action === "continue" && !cached?.forwardCursor && Boolean(cached?.historyCursor);
   const existingIds = cached?.lineIds ?? [];
   const orderedIds = action === "continue" ? [...existingIds, ...result.lineIds]
     : action === "again" ? [...result.lineIds, ...existingIds] : result.lineIds;
