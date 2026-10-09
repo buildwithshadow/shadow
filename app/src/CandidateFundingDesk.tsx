@@ -461,7 +461,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const isSponsor = Boolean(account && line && account.toLowerCase() === line.sponsor.toLowerCase());
   const remaining = line ? (line.lineSpendCap > line.cumulativePrincipalPaid ? line.lineSpendCap - line.cumulativePrincipalPaid : 0n) : 0n;
   const repayable = line && (line.stateName === "DRAWN" || line.stateName === "DEFAULTED") && line.principalOutstanding > 0n;
-  const defaultable = line && isSponsor && line.stateName === "DRAWN" && line.principalOutstanding > 0n && line.observedTimestamp > line.dueAt;
+  const defaultable = line && isSponsor && line.stateName === "DRAWN" && line.principalOutstanding > 0n && line.observedTimestamp >= line.dueAt;
   const reclaimable = line && isSponsor && ((line.stateName === "OPEN" && line.principalOutstanding === 0n) ||
     (line.stateName === "DEFAULTED" && line.availableReserve + line.recoveryAvailable > 0n));
   const shareable = Boolean(service && line && isSponsor && line.stateName === "OPEN" && line.expiry > line.observedTimestamp &&

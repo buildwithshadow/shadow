@@ -255,7 +255,7 @@ async function prepareCandidateDefault(client: CandidateReadClient, rawAccount: 
   if (line.stateName !== 'DRAWN') throw new Error('Default requires a DRAWN line.')
   if (line.principalOutstanding <= 0n || line.principalOutstanding > CANDIDATE_FUNDING.maxReserve) throw new Error('This line has no bounded outstanding debt to default.')
   if (line.observedTimestamp < line.dueAt) throw new Error('This line is not due for default yet.')
-  return { kind: 'default', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'declareDefault', args: [line.lineId] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: 'Declaring default marks this line as DEFAULTED. The agent can still repay afterwards; those repayments go to sponsor recovery. This line will not reopen.' }
+  return { kind: 'default', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'declareDefault', args: [line.lineId] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: 'Declaring default marks this line as DEFAULTED. Anyone can still repay afterwards; those repayments go to sponsor recovery. This line will not reopen.' }
 }
 
 async function prepareCandidateReclaim(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
@@ -444,7 +444,8 @@ function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly a
       if (!pending.lineId || !same(args.lineId, pending.lineId)) continue
       if (pending.kind === 'open') return same(args.sponsor, pending.account) && !!pending.agent && same(args.agent, pending.agent) && BigInt(args.reserve) === BigInt(pending.amount) && String(args.epoch) === pending.expectedEpoch
       if (pending.kind === 'repay') return same(args.payer, pending.account) && BigInt(args.amount) === BigInt(pending.amount) && (!deployment.drawBoundRepayment || same(args.drawDigest, (decodeFunctionData({abi: candidateFundingAbi, data: pending.data}).args as readonly any[])[1]))
-      if (pending.kind === 'default') return BigInt(args.principalOutstanding) === BigInt(pending.amount)
+      // A partial repayment can land during the wallet prompt; the exact call identity and line are authoritative.
+      if (pending.kind === 'default') return true
       // Closing and reclaiming can return a newer balance if a repayment raced
       // the wallet prompt; the exact call identity and sponsor are authoritative.
       return same(args.sponsor, pending.account)

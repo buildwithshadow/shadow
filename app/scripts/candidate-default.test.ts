@@ -183,6 +183,22 @@ test('a confirmed default reconciles its LineDefaulted event and clears the jour
   assert.equal(f.state.sends, 1)
 })
 
+test('a default confirms when a partial repayment changes the event principal', async () => {
+  const f = fixture()
+  const prepared = await f.kit.prepareCandidateDefault(f.client, sponsor, lineId)
+  const pending: CandidatePending = {
+    version: 1, chainId: CANDIDATE_FUNDING.chainId, candidate: CANDIDATE_FUNDING.address, account: sponsor,
+    kind: 'default', to: prepared.to, data: prepared.data, value: '0', amount: '50000', lineId: prepared.lineId,
+    agent: prepared.agent, expectedEpoch: prepared.expectedEpoch?.toString() ?? null,
+    fromBlock: f.state.block.number.toString(), nonce: f.state.walletNonce, createdAt: new Date().toISOString(),
+    status: 'pending', txHash,
+  }
+  const blockNumber = f.state.block.number + 1n
+  f.state.transactions.set(txHash, { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: pending.nonce, chainId: pending.chainId, blockHash, blockNumber })
+  f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber, blockHash, logs: [defaultedLog(lineId, 40_000n, f.state.line.dueAt)] })
+  assert.equal((await f.kit.reconcileCandidatePending(f.client, pending)).status, 'confirmed')
+})
+
 test('a pending default blocks both repayment and recovery claim sends', async () => {
   const f = fixture()
   const prepared = await f.kit.prepareCandidateDefault(f.client, sponsor, lineId)
@@ -203,6 +219,23 @@ test('a pending default blocks both repayment and recovery claim sends', async (
   await assert.rejects(() => f.kit.executeCandidateCall(f.session, claim), /Resolve the saved transaction/)
   assert.equal(f.state.sends, 0)
   assert.equal(f.journal.load()?.kind, 'default')
+})
+
+test('a pending repayment blocks a prepared default send', async () => {
+  const f = fixture()
+  const repayment = await f.kit.prepareCandidateRepay(f.client, sponsor, lineId)
+  const pending: CandidatePending = {
+    version: 1, chainId: CANDIDATE_FUNDING.chainId, candidate: CANDIDATE_FUNDING.address, account: sponsor,
+    kind: 'repay', to: repayment.to, data: repayment.data, value: '0', amount: repayment.amount.toString(), lineId: repayment.lineId,
+    agent: repayment.agent, expectedEpoch: repayment.expectedEpoch?.toString() ?? null,
+    fromBlock: f.state.block.number.toString(), nonce: f.state.walletNonce, createdAt: new Date().toISOString(),
+    status: 'pending', txHash,
+  }
+  f.journal.save(pending)
+  const prepared = await f.kit.prepareCandidateDefault(f.client, sponsor, lineId)
+  await assert.rejects(() => f.kit.executeCandidateCall(f.session, prepared), /Resolve the saved transaction/)
+  assert.equal(f.state.sends, 0)
+  assert.equal(f.journal.load()?.kind, 'repay')
 })
 
 test('public testnet default sends recovery repayment to the sponsor claim on local Anvil', { skip: e2eSkip, timeout: 60_000 }, async () => {
