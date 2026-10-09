@@ -75,6 +75,7 @@ on:
       - "app/scripts/treasury-verify-live.mjs"
       - "app/scripts/treasury-verify-live.test.mjs"
       - "app/scripts/float-mainnet-*"
+      - "app/scripts/guarded-testnet-monitor-alerts*"
       - "app/scripts/rpc-read-queue*"
       - "app/scripts/rpc-read-transport*"
       - "examples/float-mainnet-provider-server/**"
