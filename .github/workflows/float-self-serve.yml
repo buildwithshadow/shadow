@@ -46,6 +46,9 @@ on:
       - "app/scripts/shadow-circle-guarded-testnet.mjs"
       - "app/src/savedTransactionLookup.ts"
       - "app/src/lineRefresh.ts"
+      - "app/src/agentLineDiscovery.ts"
+      - "app/src/agentLineDiscoveryCache.ts"
+      - "app/scripts/agent-line-discovery.test.ts"
       - "app/scripts/line-refresh.test.ts"
       - "app/scripts/saved-transaction-lookup.test.ts"
       - "app/scripts/gateway-funding-guard.test.ts"
@@ -146,6 +149,8 @@ jobs:
           node --test --test-concurrency=1 app/scripts/self-service-purchase*.test.mjs app/scripts/shadow-v2-cycle-service.test.mjs
       - name: Test saved transaction hash lookup
         run: node --test app/scripts/saved-transaction-lookup.test.ts app/scripts/gateway-funding-guard.test.ts app/scripts/line-refresh.test.ts
+      - name: Test bounded agent line discovery and cache continuation
+        run: node --test app/scripts/agent-line-discovery.test.ts
       - name: Test the shared RPC read queue
         run: node --test app/scripts/rpc-read-queue.test.mjs
 
