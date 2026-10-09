@@ -16,7 +16,7 @@ import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
-import { discoverAgentLineIds, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
+import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryCursor, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -33,6 +33,13 @@ const messageOf = candidateErrorMessage;
 type Provider = NonNullable<Window["ethereum"]> & {
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
+};
+type AgentLineDiscoveryCache = {
+  lineIds: Hash[];
+  lines: CandidateLine[];
+  headBlock: bigint;
+  historyCursor: AgentLineDiscoveryCursor | null;
+  forwardCursor: AgentLineDiscoveryCursor | null;
 };
 
 function Field({ label, name, value, onChange, hint, error: fieldError, decimal = false, required = true, disabled = false }: {
@@ -94,10 +101,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [lineInputError, setLineInputError] = useState("");
   const [line, setLine] = useState<CandidateLine | null>(null);
   const [discoveredLines, setDiscoveredLines] = useState<CandidateLine[]>([]);
-  const [lineDiscoveryStatus, setLineDiscoveryStatus] = useState<"idle" | "loading" | "ready" | "empty" | "failed">("idle");
+  const [lineDiscoveryStatus, setLineDiscoveryStatus] = useState<"idle" | "loading" | "ready" | "empty" | "partial" | "failed">("idle");
   const [lineDiscoveryProgress, setLineDiscoveryProgress] = useState<AgentLineDiscoveryProgress | null>(null);
   const [lineDiscoveryLoadingStates, setLineDiscoveryLoadingStates] = useState(false);
-  const [lineDiscoveryUsedCache, setLineDiscoveryUsedCache] = useState(false);
+  const [lineDiscoveryAction, setLineDiscoveryAction] = useState<"initial" | "continue" | "again">("initial");
   const [lineRefreshError, setLineRefreshError] = useState("");
   const [pending, setPending] = useState<CandidatePending | null>(null);
   const [journalError, setJournalError] = useState("");
@@ -123,7 +130,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const purchaseSlot = useRef<HTMLDivElement>(null);
   const revision = useRef(0);
   const activeAccount = useRef<Address | null>(null);
-  const discoveredLineIdsByAccount = useRef(new Map<string, Hash[]>());
+  const discoveredLinesByAccount = useRef(new Map<string, AgentLineDiscoveryCache>());
   const lineDiscoveryRun = useRef(0);
   const lineDiscoveryActive = useRef(false);
   const keepSelectedLineInputEnabled = useRef(false);
@@ -176,17 +183,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   }, [busy, chainId, checkUnresolvedPurchase]);
 
   useEffect(() => {
-    lineDiscoveryActive.current = false;
-    lineDiscoveryRun.current++;
     setLineDiscoveryProgress(null);
     setLineDiscoveryLoadingStates(false);
     setLineDiscoveryStatus(status => status === "idle" ? status : "idle");
+    return cancelAgentLineDiscovery;
   }, [account, role, mode, pending, journalError, gatewayHeld, unresolvedPurchase, showAgentLineDiscovery]);
-
-  useEffect(() => () => {
-    lineDiscoveryActive.current = false;
-    lineDiscoveryRun.current++;
-  }, []);
 
   useEffect(() => {
     window.addEventListener("focus", checkUnresolvedPurchase);
@@ -228,10 +229,20 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setLineInputError("");
     setLineId(value);
   }
-  async function findAgentLines() {
+  async function findAgentLines(action: "initial" | "continue" | "again" = "initial") {
     if (!discoveryClient || !account || !showAgentLineDiscovery) return;
     const currentAccount = account;
     const accountKey = currentAccount.toLowerCase();
+    const cached = discoveredLinesByAccount.current.get(accountKey);
+    const continuingHistory = Boolean(action === "continue" && cached?.historyCursor);
+    const continuation = action === "continue" ? cached?.historyCursor ?? cached?.forwardCursor ?? undefined : undefined;
+    if (action === "continue" && !continuation) return;
+    const fromBlock = action === "again" ? (cached?.headBlock ?? BigInt(publicTestnetManifest.deployment.blockNumber)) + 1n : undefined;
+    const discoveryDeployment = {
+      address: deployment.address,
+      agent: currentAccount,
+      deployBlock: BigInt(publicTestnetManifest.deployment.blockNumber),
+    };
     const run = ++lineDiscoveryRun.current;
     lineDiscoveryActive.current = true;
     const isActive = () => {
@@ -240,46 +251,59 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         && context.account?.toLowerCase() === accountKey && activeAccount.current?.toLowerCase() === accountKey
         && context.role === "agent" && context.mode === "manage" && context.showAgentLineDiscovery;
     };
-    const cachedIds = discoveredLineIdsByAccount.current.get(accountKey);
-    setDiscoveredLines([]);
+    setDiscoveredLines(action === "initial" ? [] : cached?.lines ?? []);
     setLineDiscoveryProgress(null);
-    setLineDiscoveryLoadingStates(false);
-    setLineDiscoveryUsedCache(cachedIds !== undefined);
+    setLineDiscoveryLoadingStates(Boolean(cached?.lineIds.length));
+    setLineDiscoveryAction(action);
     setLineDiscoveryStatus("loading");
     try {
-      let ids = cachedIds;
-      if (ids === undefined) {
         let lastProgressUpdate: bigint | null = null;
-        ids = await discoverAgentLineIds(discoveryClient, {
-          address: deployment.address,
-          agent: currentAccount,
-          deployBlock: BigInt(publicTestnetManifest.deployment.blockNumber),
-        }, { isActive, onProgress: progress => {
+      const result = await discoverAgentLineIds(discoveryClient, discoveryDeployment, {
+        isActive,
+        ...(continuation ? { cursor: continuation } : {}),
+        ...(fromBlock !== undefined ? { fromBlock } : {}),
+        onProgress: progress => {
           if (!isActive()) return;
           if (lastProgressUpdate === null || progress.searchedBlocks === 0n || progress.searchedBlocks === progress.totalBlocks
             || progress.searchedBlocks - lastProgressUpdate >= progress.totalBlocks / 20n) {
             lastProgressUpdate = progress.searchedBlocks;
             setLineDiscoveryProgress(progress);
           }
-        } });
-        if (!isActive()) return;
-        if (ids.length) discoveredLineIdsByAccount.current.set(accountKey, ids);
-      }
-      setLineDiscoveryLoadingStates(Boolean(ids.length));
-      const values: CandidateLine[] = [];
-      for (const id of ids) {
+        },
+      });
+      if (!isActive() || result.headBlock === null) return;
+      const existingIds = cached?.lineIds ?? [];
+      const orderedIds = action === "continue" ? [...existingIds, ...result.lineIds]
+        : action === "again" ? [...result.lineIds, ...existingIds] : result.lineIds;
+      const lineIds = [...new Set(orderedIds)];
+      const nextCache: AgentLineDiscoveryCache = {
+        lineIds,
+        lines: cached?.lines ?? [],
+        headBlock: action === "again" ? result.headBlock : cached?.headBlock ?? result.headBlock,
+        historyCursor: action === "initial" ? result.cursor
+          : action === "continue" && continuingHistory ? result.cursor : cached?.historyCursor ?? null,
+        forwardCursor: action === "again" ? result.cursor
+          : action === "continue" && !continuingHistory ? result.cursor : cached?.forwardCursor ?? null,
+      };
+      discoveredLinesByAccount.current.set(accountKey, nextCache);
+      setLineDiscoveryLoadingStates(Boolean(lineIds.length));
+      const knownLines = new Map((cached?.lines ?? []).map(value => [value.lineId, value]));
+      const linesToRead = lineIds.filter(id => !knownLines.has(id)).slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
+      for (const id of linesToRead) {
         if (!isActive()) return;
         const value = await readCandidateLine(client, id);
         if (!isActive()) return;
-        if (value.agent.toLowerCase() === accountKey) values.push(value);
+        if (value.agent.toLowerCase() === accountKey) knownLines.set(id, value);
       }
       if (!isActive()) return;
+      const values = lineIds.map(id => knownLines.get(id)).filter((value): value is CandidateLine => value !== undefined);
+      const completeCache = { ...nextCache, lines: values };
+      discoveredLinesByAccount.current.set(accountKey, completeCache);
       setDiscoveredLines(values);
       setLineDiscoveryLoadingStates(false);
-      setLineDiscoveryStatus(values.length ? "ready" : "empty");
+      setLineDiscoveryStatus(completeCache.historyCursor || completeCache.forwardCursor ? "partial" : values.length ? "ready" : "empty");
     } catch {
       if (isActive()) {
-        setDiscoveredLines([]);
         setLineDiscoveryLoadingStates(false);
         setLineDiscoveryStatus("failed");
       }
@@ -290,9 +314,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       }
     }
   }
-  function stopAgentLineDiscovery() {
+  function cancelAgentLineDiscovery() {
     lineDiscoveryActive.current = false;
     lineDiscoveryRun.current++;
+  }
+  function stopAgentLineDiscovery() {
+    cancelAgentLineDiscovery();
     setLineDiscoveryProgress(null);
     setLineDiscoveryLoadingStates(false);
     setLineDiscoveryStatus("idle");
@@ -465,7 +492,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       const value = await readCandidateLine(client, id);
       if (revision.current === currentRevision) setLine(value);
     }
-    catch (cause) { setError(messageOf(cause)); }
+    catch (cause) { if (revision.current === currentRevision) setError(messageOf(cause)); }
     finally { setBusy(""); }
   }
 
@@ -598,6 +625,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     : !providerAgreed ? "Confirm the provider agreement above to continue." : null;
   const lineBlocker = !account ? "Connect your wallet to repay." : !correctNetwork ? `Switch to ${network} to continue.`
     : gatewayHeld ? "Resolve Gateway funding above before continuing." : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
+  const cachedLineDiscovery = account ? discoveredLinesByAccount.current.get(account.toLowerCase()) : undefined;
+  const incompleteLineDiscoveryCursor = cachedLineDiscovery?.historyCursor ?? cachedLineDiscovery?.forwardCursor;
+  const canContinueLineDiscovery = Boolean(cachedLineDiscovery?.historyCursor || cachedLineDiscovery?.forwardCursor);
+  const incompleteLineDiscoveryProgress = incompleteLineDiscoveryCursor
+    ? ` Searched ${incompleteLineDiscoveryCursor.searchedBlocks.toLocaleString()} of ${incompleteLineDiscoveryCursor.totalBlocks.toLocaleString()} blocks.` : "";
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
@@ -707,9 +739,15 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       <div className="fundingPanelHead"><div><h2 id="funding-manage-title">Find your funding line</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
       <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
         <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={updateLineId} disabled={Boolean(busy) && !keepSelectedLineInputEnabled.current} hint="The 0x identifier from your line-opening receipt." />
-        {showAgentLineDiscovery && <button type="button" onClick={() => lineDiscoveryStatus === "loading" ? stopAgentLineDiscovery() : void findAgentLines()}>
-          {lineDiscoveryStatus === "loading" ? "Stop" : "Find my funding lines"}
+        {showAgentLineDiscovery && <>
+        <button type="button" onClick={() => lineDiscoveryStatus === "loading" ? stopAgentLineDiscovery()
+            : void findAgentLines(cachedLineDiscovery ? "again" : "initial")}>
+            {lineDiscoveryStatus === "loading" ? "Stop" : cachedLineDiscovery ? "Search again" : "Find my funding lines"}
+        </button>
+        {lineDiscoveryStatus !== "loading" && canContinueLineDiscovery && <button type="button" onClick={() => void findAgentLines("continue")}>
+            Continue search
         </button>}
+        </>}
         <button type="submit" disabled={Boolean(busy)}>Load line</button>
       </form>
       {showAgentLineDiscovery && lineDiscoveryStatus !== "idle" && <div className="agentLineDiscovery" aria-live="polite">
@@ -717,8 +755,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           ? "Loading the current state of the lines found…"
           : lineDiscoveryProgress
           ? `Searched ${lineDiscoveryProgress.searchedBlocks.toLocaleString()} of ${lineDiscoveryProgress.totalBlocks.toLocaleString()} blocks.`
-          : lineDiscoveryUsedCache ? "Refreshing the lines found earlier in this session. Reload the page to search the chain again." : "Checking the current block…"}</p>}
-        {lineDiscoveryStatus === "ready" && <><p role="status">Choose a funding line for this wallet.</p>
+          : lineDiscoveryAction === "again" ? "Checking for lines opened since the last search…"
+          : lineDiscoveryAction === "continue" ? "Continuing the earlier search…" : "Checking the current block…"}</p>}
+        {(lineDiscoveryStatus === "ready" || lineDiscoveryStatus === "partial" || (lineDiscoveryStatus === "loading" && discoveredLines.length > 0)) && <>
+          {lineDiscoveryStatus === "ready" && <p role="status">Choose a funding line for this wallet.</p>}
+          {lineDiscoveryStatus === "partial" && <p role="status">{`Search incomplete.${incompleteLineDiscoveryProgress} ${discoveredLines.length
+            ? "Choose a line already found or continue searching earlier blocks."
+            : "Continue searching to check more blocks, or enter a line ID below."}`}</p>}
           <ul className="agentLineChoices">{discoveredLines.map((candidateLine) => <li key={candidateLine.lineId}>
             <button className="agentLineChoice" type="button" disabled={Boolean(busy)} onClick={() => selectDiscoveredLine(candidateLine.lineId)}>
               <span><strong>{candidateLine.stateName === "OPEN" ? "Open" : candidateLine.stateName === "DRAWN" ? "Drawn" : candidateLine.stateName === "CLOSED" ? "Closed" : "Defaulted"}</strong><code>{compact(candidateLine.lineId)}</code></span>
@@ -727,10 +770,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
             </button>
           </li>)}</ul>
         </>}
-        {lineDiscoveryStatus === "empty" && <p role="status">No public testnet funding lines were found for this wallet. A sponsor must open a line for this wallet first. Share your <a href="#agent-funding-link">agent funding link</a>.</p>}
+        {lineDiscoveryStatus === "empty" && <p role="status">No public testnet funding lines were found for this wallet in the available history. A sponsor must open a line for this wallet first. Share your <a href="#agent-funding-link">agent funding link</a>.</p>}
         {lineDiscoveryStatus === "failed" && <p role="status">The funding line lookup failed. Paste the line ID below to load it.</p>}
       </div>}
-      {mainnet && role === "agent" && account && !hasLineQuery && !lineId.trim() && <p className="agentLineDiscovery" role="status">Line discovery runs only in the public testnet flow at /start. Mainnet is currently paused after one controlled rehearsal, and this page has no mainnet start block to search from. Paste your funding line ID below.</p>}
+      {mainnet && role === "agent" && account && !hasLineQuery && !lineId.trim() && <p className="agentLineDiscovery" role="status">Enter a funding line ID on this route to load a mainnet line.</p>}
       {line && <div className="fundingLine">
         <div className="fundingPanelHead"><h3 id="funding-loaded-line-heading" tabIndex={-1}>{line.stateName === "DRAWN" ? "Purchase awaiting repayment" : line.stateName === "OPEN" ? "Line open" : line.stateName === "CLOSED" ? "Line closed" : "Line defaulted"}</h3>
           <span>Updated at block {line.observedBlock.toString()}</span></div>

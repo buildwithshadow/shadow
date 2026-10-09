@@ -1,6 +1,7 @@
 import { parseAbiItem, type Address, type Hash, type PublicClient } from "viem";
 
 export const AGENT_LINE_DISCOVERY_CHUNK_BLOCKS = 5_000n;
+export const MAX_AGENT_LINE_DISCOVERY_REQUESTS = 16;
 export const MAX_AGENT_LINE_DISCOVERY_RESULTS = 10;
 
 const lineOpenedEvent = parseAbiItem(
@@ -17,9 +18,29 @@ export type AgentLineDiscoveryClient = Pick<PublicClient, "getBlockNumber" | "ge
 
 export type AgentLineDiscoveryProgress = { searchedBlocks: bigint; totalBlocks: bigint };
 
+export type AgentLineDiscoveryCursor = {
+  nextBlock: bigint;
+  span: bigint;
+  startBlock: bigint;
+  headBlock: bigint;
+  searchedBlocks: bigint;
+  totalBlocks: bigint;
+  pendingLineIds: Hash[];
+};
+
+export type AgentLineDiscoveryResult = {
+  lineIds: Hash[];
+  headBlock: bigint | null;
+  cursor: AgentLineDiscoveryCursor | null;
+  searchedBlocks: bigint;
+  totalBlocks: bigint;
+};
+
 export type AgentLineDiscoveryOptions = {
   isActive: () => boolean;
   onProgress?: (progress: AgentLineDiscoveryProgress) => void;
+  cursor?: AgentLineDiscoveryCursor;
+  fromBlock?: bigint;
 };
 
 // Mirrors isLogRangeLimit in app/scripts/float-mainnet-cli.mjs; this adds "ranges over N blocks". Keep both in sync.
@@ -54,7 +75,6 @@ export function parseAgentLineLogs(logs: readonly AgentLineOpenedLog[], agent: A
     if (seen.has(lineId)) continue;
     seen.add(lineId);
     lineIds.push(lineId);
-    if (lineIds.length === MAX_AGENT_LINE_DISCOVERY_RESULTS) break;
   }
   return lineIds;
 }
@@ -62,56 +82,74 @@ export function parseAgentLineLogs(logs: readonly AgentLineOpenedLog[], agent: A
 export async function discoverAgentLineIds(
   client: AgentLineDiscoveryClient,
   deployment: { address: Address; agent: Address; deployBlock: bigint },
-  { isActive, onProgress }: AgentLineDiscoveryOptions,
-): Promise<Hash[]> {
+  { isActive, onProgress, cursor: continuation, fromBlock }: AgentLineDiscoveryOptions,
+): Promise<AgentLineDiscoveryResult> {
   if (deployment.deployBlock < 0n) throw new RangeError("The deployment block cannot be negative.");
-  if (!isActive()) return [];
-  const head = await client.getBlockNumber();
-  if (!isActive()) return [];
-  if (head < deployment.deployBlock) throw new Error("The current block is before the funding contract deployment block.");
+  if (continuation && fromBlock !== undefined) throw new TypeError("A continuation cursor cannot be combined with a new search start block.");
+  if (fromBlock !== undefined && fromBlock < deployment.deployBlock) throw new RangeError("The search start block cannot be before deployment.");
+  if (!isActive()) return { lineIds: [], headBlock: null, cursor: null, searchedBlocks: 0n, totalBlocks: 0n };
 
-  let cursor = head;
-  let span = AGENT_LINE_DISCOVERY_CHUNK_BLOCKS;
-  let requests = 0n;
-  const chunks = (head - deployment.deployBlock) / AGENT_LINE_DISCOVERY_CHUNK_BLOCKS + 1n;
-  const maxRequests = chunks * 2n + 16n;
-  const totalBlocks = head - deployment.deployBlock + 1n;
-  let searchedBlocks = 0n;
+  let headBlock: bigint;
+  let nextBlock: bigint;
+  let span: bigint;
+  let startBlock: bigint;
+  let searchedBlocks: bigint;
+  let totalBlocks: bigint;
+  let requests = 0;
+  const pendingLineIds = continuation ? [...continuation.pendingLineIds] : [];
+  if (continuation) {
+    ({ headBlock, nextBlock, span, startBlock, searchedBlocks, totalBlocks } = continuation);
+  } else {
+    requests++;
+    headBlock = await client.getBlockNumber();
+    if (!isActive()) return { lineIds: [], headBlock, cursor: null, searchedBlocks: 0n, totalBlocks: 0n };
+    if (headBlock < deployment.deployBlock) throw new Error("The current block is before the funding contract deployment block.");
+    startBlock = fromBlock ?? deployment.deployBlock;
+    nextBlock = headBlock;
+    span = AGENT_LINE_DISCOVERY_CHUNK_BLOCKS;
+    searchedBlocks = 0n;
+    totalBlocks = headBlock >= startBlock ? headBlock - startBlock + 1n : 0n;
+  }
+
+  const currentCursor = (): AgentLineDiscoveryCursor | null => nextBlock >= startBlock || pendingLineIds.length > 0
+    ? { nextBlock, span, startBlock, headBlock, searchedBlocks, totalBlocks, pendingLineIds }
+    : null;
   const seen = new Set<string>();
-  const lineIds: Hash[] = [];
+  const lineIds = pendingLineIds.splice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
   onProgress?.({ searchedBlocks, totalBlocks });
-  while (cursor >= deployment.deployBlock && lineIds.length < MAX_AGENT_LINE_DISCOVERY_RESULTS) {
-    const fromBlock = cursor - span + 1n > deployment.deployBlock
-      ? cursor - span + 1n
-      : deployment.deployBlock;
-    if (++requests > maxRequests) throw new Error("Agent line discovery is incomplete because its bounded RPC request budget was exhausted.");
-    if (!isActive()) return lineIds;
+  while (nextBlock >= startBlock && lineIds.length < MAX_AGENT_LINE_DISCOVERY_RESULTS) {
+    if (!isActive()) return { lineIds, headBlock, cursor: currentCursor(), searchedBlocks, totalBlocks };
+    if (requests >= MAX_AGENT_LINE_DISCOVERY_REQUESTS) {
+      return { lineIds, headBlock, cursor: currentCursor(), searchedBlocks, totalBlocks };
+    }
+    const from = nextBlock - span + 1n > startBlock ? nextBlock - span + 1n : startBlock;
     let logs: readonly AgentLineOpenedLog[];
+    requests++;
     try {
       logs = await client.getLogs({
         address: deployment.address,
         event: lineOpenedEvent,
         args: { agent: deployment.agent },
-        fromBlock,
-        toBlock: cursor,
+        fromBlock: from,
+        toBlock: nextBlock,
       }) as unknown as readonly AgentLineOpenedLog[];
     } catch (error) {
-      if (fromBlock < cursor && isLogRangeLimit(error)) {
-        span = (cursor - fromBlock + 2n) / 2n;
+      if (from < nextBlock && isLogRangeLimit(error)) {
+        span = (nextBlock - from + 2n) / 2n;
         continue;
       }
       throw error;
     }
-    if (!isActive()) return lineIds;
+    if (!isActive()) return { lineIds, headBlock, cursor: currentCursor(), searchedBlocks, totalBlocks };
     for (const lineId of parseAgentLineLogs(logs, deployment.agent)) {
       if (seen.has(lineId)) continue;
       seen.add(lineId);
-      lineIds.push(lineId);
-      if (lineIds.length === MAX_AGENT_LINE_DISCOVERY_RESULTS) break;
+      if (lineIds.length < MAX_AGENT_LINE_DISCOVERY_RESULTS) lineIds.push(lineId);
+      else pendingLineIds.push(lineId);
     }
-    searchedBlocks += cursor - fromBlock + 1n;
-    cursor = fromBlock - 1n;
+    searchedBlocks += nextBlock - from + 1n;
+    nextBlock = from - 1n;
     onProgress?.({ searchedBlocks, totalBlocks });
   }
-  return lineIds;
+  return { lineIds, headBlock, cursor: currentCursor(), searchedBlocks, totalBlocks };
 }

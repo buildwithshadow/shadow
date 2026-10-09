@@ -3,6 +3,7 @@ import test from "node:test";
 import type { Address, Hash } from "viem";
 import {
   AGENT_LINE_DISCOVERY_CHUNK_BLOCKS,
+  MAX_AGENT_LINE_DISCOVERY_REQUESTS,
   MAX_AGENT_LINE_DISCOVERY_RESULTS,
   discoverAgentLineIds,
   parseAgentLineLogs,
@@ -31,7 +32,7 @@ test("parses only the requested agent's valid line IDs, newest first, without du
   ], agent), [lineId(4), lineId(2), lineId(1)]);
 });
 
-test("scans newest chunks first, keeps each request within 5000 blocks, and returns at most ten lines", async () => {
+test("scans newest chunks first and carries extra matches beyond the ten-line page in its cursor", async () => {
   const ranges: { fromBlock: bigint; toBlock: bigint }[] = [];
   const progress: { searchedBlocks: bigint; totalBlocks: bigint }[] = [];
   const client = {
@@ -40,20 +41,38 @@ test("scans newest chunks first, keeps each request within 5000 blocks, and retu
       assert.equal(address, contract);
       assert.equal(args?.agent?.toLowerCase(), agent.toLowerCase());
       ranges.push({ fromBlock, toBlock });
-      return Array.from({ length: MAX_AGENT_LINE_DISCOVERY_RESULTS + 2 }, (_, index) =>
-        openedLog(lineId(index + 1), 12_300n - BigInt(index), index));
+      return fromBlock === 7_346n ? Array.from({ length: MAX_AGENT_LINE_DISCOVERY_RESULTS + 2 }, (_, index) =>
+        openedLog(lineId(index + 1), 12_300n - BigInt(index), index)) : [];
     },
   } as unknown as AgentLineDiscoveryClient;
 
-  const ids = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, {
+  const first = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, {
     ...activeDiscovery,
     onProgress: value => progress.push(value),
   });
 
-  assert.deepEqual(ids, Array.from({ length: MAX_AGENT_LINE_DISCOVERY_RESULTS }, (_, index) => lineId(index + 1)));
+  assert.deepEqual(first.lineIds, Array.from({ length: MAX_AGENT_LINE_DISCOVERY_RESULTS }, (_, index) => lineId(index + 1)));
+  assert.notEqual(first.cursor, null);
+  assert.deepEqual(first.cursor?.pendingLineIds, [lineId(11), lineId(12)]);
+  assert.equal(first.headBlock, 12_345n);
   assert.deepEqual(ranges, [{ fromBlock: 7_346n, toBlock: 12_345n }]);
   assert.ok(ranges.every(({ fromBlock, toBlock }) => toBlock - fromBlock + 1n <= AGENT_LINE_DISCOVERY_CHUNK_BLOCKS));
-  assert.deepEqual(progress, [{ searchedBlocks: 0n, totalBlocks: 12_345n }, { searchedBlocks: 5_000n, totalBlocks: 12_345n }]);
+  assert.deepEqual(progress, [
+    { searchedBlocks: 0n, totalBlocks: 12_345n },
+    { searchedBlocks: 5_000n, totalBlocks: 12_345n },
+  ]);
+
+  const continued = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, {
+    ...activeDiscovery,
+    cursor: first.cursor!,
+  });
+
+  assert.deepEqual(continued.lineIds, [lineId(11), lineId(12)]);
+  assert.equal(continued.cursor, null);
+  assert.deepEqual(ranges.slice(1), [
+    { fromBlock: 2_346n, toBlock: 7_345n },
+    { fromBlock: 1n, toBlock: 2_345n },
+  ]);
 });
 
 test("continues to older chunks when needed and orders their lines newest first", async () => {
@@ -68,7 +87,7 @@ test("continues to older chunks when needed and orders their lines newest first"
     },
   } as unknown as AgentLineDiscoveryClient;
 
-  assert.deepEqual(await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery), [lineId(1), lineId(2), lineId(3)]);
+  assert.deepEqual((await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery)).lineIds, [lineId(1), lineId(2), lineId(3)]);
   assert.deepEqual(ranges, [
     { fromBlock: 5_002n, toBlock: 10_001n },
     { fromBlock: 2n, toBlock: 5_001n },
@@ -87,7 +106,7 @@ test("splits a request only when the RPC reports an explicit block range limit",
     },
   } as unknown as AgentLineDiscoveryClient;
 
-  assert.deepEqual(await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery), [lineId(1)]);
+  assert.deepEqual((await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery)).lineIds, [lineId(1)]);
   assert.deepEqual(ranges, [
     { fromBlock: 1n, toBlock: 5_000n },
     { fromBlock: 2_501n, toBlock: 5_000n },
@@ -120,19 +139,113 @@ test("does not split a range error when a nested cause identifies a rate limit",
   assert.equal(calls, 1);
 });
 
-test("stops at the bounded request budget after one allowed halving per chunk", async () => {
+test("returns an empty complete search across current history within the fixed request budget", async () => {
   let calls = 0;
   const client: AgentLineDiscoveryClient = {
-    getBlockNumber: async () => 5_000n,
-    getLogs: async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+    getBlockNumber: async () => BigInt(MAX_AGENT_LINE_DISCOVERY_REQUESTS - 1) * AGENT_LINE_DISCOVERY_CHUNK_BLOCKS,
+    getLogs: async () => {
       calls++;
-      if (toBlock - fromBlock + 1n > 1n) throw new Error("requested range too large");
+      return [];
+    },
+  };
+
+  const result = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery);
+
+  assert.deepEqual(result.lineIds, []);
+  assert.equal(result.cursor, null);
+  assert.equal(result.searchedBlocks, result.totalBlocks);
+  assert.equal(calls, MAX_AGENT_LINE_DISCOVERY_REQUESTS - 1);
+});
+
+test("returns partial matches and resumes from the continuation cursor within a fixed request budget", async () => {
+  let blockNumberCalls = 0;
+  const ranges: { fromBlock: bigint; toBlock: bigint }[] = [];
+  const client = {
+    getBlockNumber: async () => { blockNumberCalls++; return 85_000n; },
+    getLogs: async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      ranges.push({ fromBlock, toBlock });
+      if (fromBlock === 80_001n) return [openedLog(lineId(1), 84_000n, 0)];
+      if (fromBlock === 1n) return [openedLog(lineId(2), 2_000n, 0)];
       return [];
     },
   } as unknown as AgentLineDiscoveryClient;
 
-  await assert.rejects(discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery), /request budget was exhausted/);
-  assert.equal(calls, 18);
+  const first = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery);
+
+  assert.deepEqual(first.lineIds, [lineId(1)]);
+  assert.notEqual(first.cursor, null);
+  assert.equal(first.cursor?.nextBlock, 10_000n);
+  assert.equal(ranges.length, MAX_AGENT_LINE_DISCOVERY_REQUESTS - 1);
+
+  const continued = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, {
+    ...activeDiscovery,
+    cursor: first.cursor!,
+  });
+
+  assert.deepEqual(continued.lineIds, [lineId(2)]);
+  assert.equal(continued.cursor, null);
+  assert.equal(blockNumberCalls, 1);
+  assert.deepEqual(ranges.slice(-2), [
+    { fromBlock: 5_001n, toBlock: 10_000n },
+    { fromBlock: 1n, toBlock: 5_000n },
+  ]);
+});
+
+test("search again scans forward from the cached head and returns newly opened lines", async () => {
+  let head = 100n;
+  const ranges: { fromBlock: bigint; toBlock: bigint }[] = [];
+  const client = {
+    getBlockNumber: async () => head,
+    getLogs: async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      ranges.push({ fromBlock, toBlock });
+      return fromBlock === 101n ? [openedLog(lineId(2), 115n, 0)] : [openedLog(lineId(1), 90n, 0)];
+    },
+  } as unknown as AgentLineDiscoveryClient;
+
+  const initial = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery);
+  head = 120n;
+  assert.ok(initial.headBlock !== null);
+  const refreshed = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, {
+    ...activeDiscovery,
+    fromBlock: initial.headBlock + 1n,
+  });
+
+  assert.deepEqual(initial.lineIds, [lineId(1)]);
+  assert.deepEqual(refreshed.lineIds, [lineId(2)]);
+  assert.equal(refreshed.headBlock, 120n);
+  assert.deepEqual(ranges, [
+    { fromBlock: 1n, toBlock: 100n },
+    { fromBlock: 101n, toBlock: 120n },
+  ]);
+});
+
+test("search again checks blocks after an empty cached result", async () => {
+  let head = 100n;
+  const ranges: { fromBlock: bigint; toBlock: bigint }[] = [];
+  const client = {
+    getBlockNumber: async () => head,
+    getLogs: async ({ fromBlock, toBlock }: { fromBlock: bigint; toBlock: bigint }) => {
+      ranges.push({ fromBlock, toBlock });
+      return fromBlock === 101n ? [openedLog(lineId(2), 115n, 0)] : [];
+    },
+  } as unknown as AgentLineDiscoveryClient;
+
+  const initial = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery);
+  head = 120n;
+  assert.deepEqual(initial.lineIds, []);
+  assert.equal(initial.cursor, null);
+  assert.ok(initial.headBlock !== null);
+
+  const refreshed = await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, {
+    ...activeDiscovery,
+    fromBlock: initial.headBlock + 1n,
+  });
+
+  assert.deepEqual(refreshed.lineIds, [lineId(2)]);
+  assert.deepEqual(ranges, [
+    { fromBlock: 1n, toBlock: 100n },
+    { fromBlock: 101n, toBlock: 120n },
+  ]);
 });
 
 test("cancellation stops before the next getLogs request", async () => {
@@ -143,7 +256,7 @@ test("cancellation stops before the next getLogs request", async () => {
     getLogs: async () => { calls++; active = false; return []; },
   };
 
-  assert.deepEqual(await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, { isActive: () => active }), []);
+  assert.deepEqual((await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, { isActive: () => active })).lineIds, []);
   assert.equal(calls, 1);
 });
 
@@ -161,7 +274,7 @@ test("cancellation while getBlockNumber is pending makes no getLogs request", as
   active = false;
   resolveBlockNumber(10_001n);
 
-  assert.deepEqual(await discovery, []);
+  assert.deepEqual((await discovery).lineIds, []);
   assert.equal(calls, 0);
 });
 
@@ -178,7 +291,7 @@ test("cancellation during a split retry makes no later getLogs request", async (
     },
   } as unknown as AgentLineDiscoveryClient;
 
-  assert.deepEqual(await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, { isActive: () => active }), []);
+  assert.deepEqual((await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, { isActive: () => active })).lineIds, []);
   assert.deepEqual(ranges, [
     { fromBlock: 15_001n, toBlock: 20_000n },
     { fromBlock: 17_501n, toBlock: 20_000n },
@@ -194,6 +307,6 @@ test("uses only the read client methods and never calls a write method", async (
     sendTransaction: async () => { calls.push("sendTransaction"); throw new Error("unexpected send"); },
   } as unknown as AgentLineDiscoveryClient;
 
-  assert.deepEqual(await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery), [lineId(1)]);
+  assert.deepEqual((await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery)).lineIds, [lineId(1)]);
   assert.deepEqual(calls, ["getBlockNumber", "getLogs"]);
 });
