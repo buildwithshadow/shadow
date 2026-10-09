@@ -45,8 +45,9 @@ enabled on this route. Keep `/start` for the existing self-service deployment.
 
 Without `--confirm`, purchase and repayment only show the line. With it,
 purchase signs and executes one bounded intent, while repayment may perform
-the exact 0.005 allowance followed by a separate repayment transaction. Both
-use testnet gas and a maximum estimated fee of 0.02 test USDC per execution.
+the exact 0.005 allowance followed by a separate repayment transaction. The
+purchase permits a fee estimate up to 0.05 test USDC; the allowance and repayment
+each permit estimates up to 0.03 test USDC. These checks do not guarantee actual fees.
 
 ```sh
 node app/scripts/shadow-circle-guarded-testnet.mjs purchase --agent YOUR_AGENT_ADDRESS --line LINE_ID --state ORIGINAL_JOURNAL --runtime APPROVED_RUNTIME --confirm
