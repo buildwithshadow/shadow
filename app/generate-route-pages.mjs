@@ -41,6 +41,7 @@ function replaceMeta(html, name, value) {
 for (const [route, description] of Object.entries(routeMetadata.socialDescriptions)) {
   if (route === "/") continue;
   if (route === "/guarded-testnet" && process.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE !== "true") continue;
+  if (route === "/mainnet" && process.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE !== "true") continue;
   const title = routeMetadata.routeTitles[route];
   if (!title) throw new Error(`Missing route title for ${route}`);
   const url = `${SHADOW_ORIGIN}${route}`;
