@@ -134,3 +134,10 @@ test("an invalid key is refused without echoing it", () => {
   const valid = numberToHex(order - 1n, { size: 32 });
   assert.match(walletFromEnv(connection, "FLOAT_AGENT_PRIVATE_KEY", { FLOAT_AGENT_PRIVATE_KEY: valid }).account.address, /^0x[0-9a-fA-F]{40}$/);
 });
+
+
+test("canonical log batch configuration is optional and bounded", () => {
+  assert.equal(Object.hasOwn(readDeployment(ENV),"logChunkBlocks"),false);
+  for(const value of ['5000','7500',' 10000 '])assert.equal(readDeployment({...ENV,SHADOW_RPC_LOG_CHUNK_BLOCKS:value}).logChunkBlocks,BigInt(value.trim()));
+  for(const value of ['', '0','4999','10001','1e4','10000.1','Infinity'])assert.throws(()=>readDeployment({...ENV,SHADOW_RPC_LOG_CHUNK_BLOCKS:value}),/between 5000 and 10000/);
+});

@@ -8,6 +8,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { performance } from "node:perf_hooks";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
 import { canonicalJson, digestJson, evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-policy.mjs";
+import { configuredLogChunkBlocks } from "./float-mainnet-config.mjs";
 
 const MONITOR = fileURLToPath(new URL("./float-mainnet-monitor.mjs", import.meta.url));
 const alert = (code, detail) => ({ code, severity: "critical", detail });
@@ -65,6 +66,8 @@ export function monitorReadEnvironment(rpcUrl, chainId, env = process.env) {
     }
     childEnv.SHADOW_RPC_READ_SPACING_MS = spacing;
   }
+  const logChunkBlocks = configuredLogChunkBlocks(env.SHADOW_RPC_LOG_CHUNK_BLOCKS);
+  if (logChunkBlocks !== undefined) childEnv.SHADOW_RPC_LOG_CHUNK_BLOCKS = String(logChunkBlocks);
   return childEnv;
 }
 

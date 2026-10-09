@@ -92,3 +92,37 @@ test("an unsplittable block fails closed, and a one-block-only provider cannot e
   await assert.rejects(findLogs(restrictive.connection, "ProviderPaid", args, 0n, 4_999n), /bounded request budget exhausted after 32 requests/);
   assert.equal(restrictive.requests.length, 32);
 });
+
+
+test("configured 10000 block batches preserve complete forward coverage with fewer requests", async () => {
+  const blocks = [0n,4999n,5000n,9999n,10000n,19999n,20000n,20001n];
+  const scan=scanner({limit:10000n,blocks});scan.connection.logChunkBlocks=10000n;
+  const result=await findLogs(scan.connection,"ProviderPaid",args,0n,20001n);
+  assert.deepEqual(result.map(log=>log.blockNumber),blocks);
+  assert.deepEqual(scan.successful,[[0n,9999n],[10000n,19999n],[20000n,20001n]]);
+});
+test("configured larger batches shrink to provider limits and preserve backward coverage", async () => {
+  const scan=scanner({limit:5000n,blocks:[0n,9999n]});scan.connection.logChunkBlocks=10000n;
+  const found=await findLatestLog(scan.connection,"ProviderPaid",args,{fromBlock:0n,toBlock:20000n});
+  assert.equal(found.log.blockNumber,9999n);
+  assert.deepEqual(scan.requests.slice(0,2),[[10001n,20000n],[15001n,20000n]]);
+  for(let i=1;i<scan.successful.length;i++)assert.equal(scan.successful[i][1],scan.successful[i-1][0]-1n);
+});
+test("configured batches reject unsafe bounds before any read and never split a quota", async () => {
+  for(const size of [0n,4999n,10001n,10000]){
+    const scan=scanner();scan.connection.logChunkBlocks=size;
+    await assert.rejects(findLogs(scan.connection,"ProviderPaid",args,0n,20000n),/between 5000 and 10000/);
+    assert.equal(scan.requests.length,0);
+  }
+  const scan=scanner({fail:()=>limitError('rate limit exceeded')});scan.connection.logChunkBlocks=10000n;
+  await assert.rejects(findLogs(scan.connection,"ProviderPaid",args,0n,20000n),/log scan incomplete/);
+  assert.equal(scan.requests.length,1);
+});
+test("explicit requested range errors shrink but nested quotas still take precedence", async () => {
+  const scan=scanner({fail:(from,to)=>to-from>=3n?limitError('requested range too large'):null});
+  assert.deepEqual(await findLogs(scan.connection,"ProviderPaid",args,0n,5n),[]);
+  assert.deepEqual(scan.successful,[[0n,2n],[3n,5n]]);
+  const quota=scanner({fail:()=>Object.assign(limitError('requested range too large'),{cause:new Error('API quota exhausted')})});
+  await assert.rejects(findLogs(quota.connection,"ProviderPaid",args,0n,5n),/log scan incomplete/);
+  assert.equal(quota.requests.length,1);
+});
