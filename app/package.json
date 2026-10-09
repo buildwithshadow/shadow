@@ -5,7 +5,7 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
-    "build": "node ./node_modules/vite/bin/vite.js build",
+    "build": "node ./node_modules/vite/bin/vite.js build && node ./generate-route-pages.mjs",
     "typecheck": "tsc --noEmit",
     "gateway:settle": "node scripts/gateway-settle-receipts.mjs",
     "cctp:verify": "node scripts/cctp-verify.mjs"

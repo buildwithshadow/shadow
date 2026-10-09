@@ -1,0 +1,18 @@
+{
+  "routeTitles": {
+    "/evidence": "Evidence | Shadow",
+    "/builders": "Builders | Shadow",
+    "/builders/v2": "Float V2 tools | Shadow",
+    "/start": "Fund an agent | Shadow",
+    "/guarded-testnet": "Guarded testnet funding | Shadow",
+    "/funding": "Earlier candidate | Shadow",
+    "/roadmap": "Roadmap | Shadow"
+  },
+  "socialDescriptions": {
+    "/start": "Set aside USDC for an agent's purchases. Track what it owes and reclaim eligible funds from your own wallet.",
+    "/evidence": "This page brings the Float board and supporting records together.",
+    "/builders": "The public browser flow starts at /start on Arc testnet.",
+    "/builders/v2": "These tools are for the earlier Float V2 contract; the current public testnet browser flow starts at /start.",
+    "/roadmap": "Today's browser flow is self-service. The groups below separate current use, history, and open work."
+  }
+}

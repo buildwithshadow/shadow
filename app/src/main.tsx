@@ -1,4 +1,5 @@
 import { arcTestnetRpcUrl, arcTestnetWalletParameters } from "../arcTestnetNetwork.mjs";
+import routeMetadata from "../routeMetadata.json" with { type: "json" };
 import { useEffect, useMemo, useState } from "react";
 import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
 import { GUARDED_MAINNET, GUARDED_MAINNET_SERVICE } from "./guardedMainnet";
@@ -1450,15 +1451,7 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
 }
 
 const HOME_TITLE = document.title;
-const ROUTE_TITLES: Record<string, string> = {
-  "/evidence": "Evidence | Shadow",
-  "/builders": "Builders | Shadow",
-  "/builders/v2": "Float V2 tools | Shadow",
-  "/start": "Fund an agent | Shadow",
-  "/guarded-testnet": "Guarded testnet funding | Shadow",
-  "/funding": "Earlier candidate | Shadow",
-  "/roadmap": "Roadmap | Shadow",
-};
+const ROUTE_TITLES: Record<string, string> = routeMetadata.routeTitles;
 
 function EvidenceRedirect({ fallbackHash = "" }: { fallbackHash?: string }) {
   const hash = useLocation().hash;
