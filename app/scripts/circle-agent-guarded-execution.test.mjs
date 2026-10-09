@@ -285,8 +285,8 @@ test('disk-backed lost repayment survives independent journal/adapter recreation
 
 const purchaseIntent = {agent, sponsor: provider, lineId, lineEpoch:1n, termsHash:digest, provider, endpointHash, principal:5000n, maximumTotalDebt:5000n, dueAt:1000n, nonce:0n, signatureExpiry:900n, executor:agent};
 const purchaseRequest = {operationId:'guarded-purchase:one',to:contract,data:encodeFunctionData({abi,functionName:'executeSpend',args:[purchaseIntent,'0x1234']})};
-function setupPurchase() {
-  const x=setup({config:testnetConfig},createCircleGuardedTestnetPurchaser);
+function setupPurchase(configPatch = {}) {
+  const x=setup({config:{...testnetConfig,...configPatch}},createCircleGuardedTestnetPurchaser);
   x.state.lineState=1;x.state.outstanding=0n;
   x.state.receipt.logs=[eventLog('ProviderPaid',{digest,lineId,provider,principal:5000n,dueAt:1000n})];
   return x;
@@ -302,7 +302,7 @@ test('guarded testnet purchase recovers one exact user operation after lost conf
 });
 test('guarded purchase disallows mainnet, extra value, changed line/provider/price and all repayment or allowance calls',async()=>{
   assert.throws(()=>createCircleGuardedTestnetPurchaser({config}),/Only Arc testnet/);
-  for(const patch of [{maxAmount:'5001'},{expectedLineId:`0x${'00'.repeat(32)}`},{maxNetworkFee:parseUnits('0.021',18).toString()}]) {
+  for(const patch of [{maxAmount:'5001'},{expectedLineId:`0x${'00'.repeat(32)}`},{maxNetworkFee:parseUnits('0.050000000000000001',18).toString()}]) {
     assert.throws(()=>setup({config:{...testnetConfig,...patch}},createCircleGuardedTestnetPurchaser));
   }
   const x=setupPurchase();
@@ -312,6 +312,26 @@ test('guarded purchase disallows mainnet, extra value, changed line/provider/pri
   for(const request of [repay,{...purchaseRequest,value:1n},{...purchaseRequest,data:purchaseRequest.data+'00'},
     {...purchaseRequest,to:usdc,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})}]) await assert.rejects(()=>x.adapter.execute(request));
   assert.equal(x.state.sends,0);assert.equal(x.state.estimates,0);
+});
+test('guarded testnet purchase accepts its observed fee and the exact 0.05 ceiling without increasing principal',async()=>{
+  for (const fee of ['0.0430571714625','0.05']) {
+    const x=setupPurchase({maxNetworkFee:parseUnits('0.05',18).toString()});x.state.fee=fee;
+    assert.equal((await x.adapter.execute(purchaseRequest)).status,'confirmed');
+    assert.equal(x.state.sends,1);assert.equal(x.state.request.blockchain,'ARC-TESTNET');
+    assert.equal(x.state.request.amount,'0');assert.equal(x.state.request.callData,purchaseRequest.data);
+  }
+});
+test('guarded purchase still honors a lower configured fee and refuses an excessive quote before journaling a send',async()=>{
+  for (const [cap,fee] of [['0.02','0.0430571714625'],['0.05','0.050000000000000001']]) {
+    const x=setupPurchase({maxNetworkFee:parseUnits(cap,18).toString()});x.state.fee=fee;
+    await assert.rejects(()=>x.adapter.execute(purchaseRequest),error=>error.message.includes(`Quote: ${fee} USDC; cap: ${cap} USDC`));
+    assert.equal(x.state.sends,0);assert.equal(x.values.size,0);
+  }
+});
+test('the purchase fee ceiling does not extend either guarded repayment adapter',()=>{
+  for (const [factory,base] of [[createCircleGuardedRepayer,config],[createCircleGuardedTestnetRepayer,testnetConfig]]) {
+    assert.throws(()=>setup({config:{...base,maxNetworkFee:parseUnits('0.05',18).toString()}},factory),/Invalid bounded execution limits/);
+  }
 });
 test('guarded purchase refuses non guarded deployments and changed debt both before and after fee estimation',async()=>{
   for(const stage of ['before','estimate']) {
