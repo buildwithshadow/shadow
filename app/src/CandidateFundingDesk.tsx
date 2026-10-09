@@ -15,6 +15,8 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
+import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
+import { discoverAgentLineIds } from "./agentLineDiscovery";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -63,8 +65,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     timeout: 15_000, fallbackUrls: ['https://rpc.drpc.testnet.arc.io', ARC_TESTNET_RPC_URL], expectedChainId: deployment.chainId,
     queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
   }) }) : deployment.selfRegistration ? createPublicClient({ chain: candidateFundingChain,
-    transport: createRpcReadTransport("https://rpc.drpc.testnet.arc.io", { timeout: 15_000,
-      fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", ARC_TESTNET_RPC_URL], expectedChainId: deployment.chainId,
+    transport: createRpcReadTransport("https://rpc.blockdaemon.testnet.arc.io", { timeout: 15_000,
+      fallbackUrls: [ARC_TESTNET_RPC_URL, "https://rpc.drpc.testnet.arc.io"], expectedChainId: deployment.chainId,
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment, chain, mainnet, guardedTestnet]);
   const [mode, setMode] = useState<"open" | "manage">(() => {
     const params = new URLSearchParams(window.location.search);
@@ -85,9 +87,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [providerAgreed, setProviderAgreed] = useState(false);
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
   const [snapshotError, setSnapshotError] = useState("");
+  const [hasLineQuery] = useState(() => new URLSearchParams(window.location.search).has("line"));
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
   const [lineInputError, setLineInputError] = useState("");
   const [line, setLine] = useState<CandidateLine | null>(null);
+  const [discoveredLines, setDiscoveredLines] = useState<CandidateLine[]>([]);
+  const [lineDiscoveryStatus, setLineDiscoveryStatus] = useState<"idle" | "loading" | "ready" | "empty" | "failed">("idle");
   const [lineRefreshError, setLineRefreshError] = useState("");
   const [pending, setPending] = useState<CandidatePending | null>(null);
   const [journalError, setJournalError] = useState("");
@@ -151,6 +156,43 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   useEffect(() => {
     checkUnresolvedPurchase();
   }, [busy, chainId, checkUnresolvedPurchase]);
+
+  useEffect(() => {
+    const eligible = service && window.location.pathname === "/start" && !mainnet && !hasLineQuery
+      && role === "agent" && mode === "manage" && account && !lineId.trim()
+      && !pending && !journalError && !gatewayHeld && !unresolvedPurchase;
+    if (!eligible) {
+      setDiscoveredLines([]);
+      setLineDiscoveryStatus("idle");
+      return;
+    }
+    let active = true;
+    const currentAccount = account;
+    setDiscoveredLines([]);
+    setLineDiscoveryStatus("loading");
+    void (async () => {
+      const ids = await discoverAgentLineIds(client, {
+        address: deployment.address,
+        agent: currentAccount,
+        deployBlock: BigInt(publicTestnetManifest.deployment.blockNumber),
+      });
+      const values: CandidateLine[] = [];
+      for (const id of ids) {
+        const value = await readCandidateLine(client, id);
+        if (!active || activeAccount.current?.toLowerCase() !== currentAccount.toLowerCase()) return;
+        if (value.agent.toLowerCase() === currentAccount.toLowerCase()) values.push(value);
+      }
+      if (!active || activeAccount.current?.toLowerCase() !== currentAccount.toLowerCase()) return;
+      setDiscoveredLines(values);
+      setLineDiscoveryStatus(values.length ? "ready" : "empty");
+    })().catch(() => {
+      if (active && activeAccount.current?.toLowerCase() === currentAccount.toLowerCase()) {
+        setDiscoveredLines([]);
+        setLineDiscoveryStatus("failed");
+      }
+    });
+    return () => { active = false; };
+  }, [account, client, deployment.address, gatewayHeld, hasLineQuery, journalError, lineId, mainnet, mode, pending, readCandidateLine, role, service, unresolvedPurchase]);
 
   useEffect(() => {
     window.addEventListener("focus", checkUnresolvedPurchase);
@@ -578,6 +620,21 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         <small id="funding-open-hint">{openBlocker ?? (!snapshot && !snapshotError ? "Checking this wallet’s sponsor status…" : "Review first. Any USDC approval and funding transaction need separate wallet confirmations.")}</small></div>
     </form> : <section className="fundingPanel" aria-labelledby="funding-manage-title">
       <div className="fundingPanelHead"><div><h2 id="funding-manage-title">Find your funding line</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
+      {service && role === "agent" && account && !hasLineQuery && !lineId.trim() && window.location.pathname === "/start" && <div className="agentLineDiscovery">
+        {lineDiscoveryStatus === "loading" && <p role="status">Looking for funding lines for this wallet on the public testnet…</p>}
+        {lineDiscoveryStatus === "ready" && <><p role="status">Choose a funding line for this wallet.</p>
+          <ul className="agentLineChoices">{discoveredLines.map((candidateLine) => <li key={candidateLine.lineId}>
+            <button className="agentLineChoice" type="button" onClick={() => { updateLineId(candidateLine.lineId); void lookup(undefined, candidateLine.lineId); }}>
+              <span><strong>{candidateLine.stateName === "OPEN" ? "Open" : candidateLine.stateName === "DRAWN" ? "Drawn" : candidateLine.stateName === "CLOSED" ? "Closed" : "Defaulted"}</strong><code>{compact(candidateLine.lineId)}</code></span>
+              <span>Available reserve {usdc(candidateLine.availableReserve)} USDC · Debt {usdc(candidateLine.principalOutstanding)} USDC</span>
+              <small>Sponsor {compact(candidateLine.sponsor)}</small>
+            </button>
+          </li>)}</ul>
+        </>}
+        {lineDiscoveryStatus === "empty" && <p role="status">No public testnet funding lines were found for this wallet. A sponsor must open a line for this wallet first. Share your <a href="#agent-funding-link">agent funding link</a>.</p>}
+        {lineDiscoveryStatus === "failed" && <p role="status">The funding line lookup failed. Paste the line ID below to load it.</p>}
+      </div>}
+      {mainnet && role === "agent" && account && !hasLineQuery && !lineId.trim() && window.location.pathname === "/mainnet" && <p className="agentLineDiscovery" role="status">Public testnet discovery runs on /start. The controlled mainnet rehearsal is currently paused, and its deployment start block is not configured for line discovery here.</p>}
       <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
         <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={updateLineId} disabled={Boolean(busy)} hint="The 0x identifier from your line-opening receipt." />
         <button type="submit" disabled={Boolean(busy)}>Load line</button>
