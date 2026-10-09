@@ -34,10 +34,18 @@ export function createCircleGuardedRepayer(options) {
   return createExecutor(options, true);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded) {
+/** Separate testnet entry point; shares the original testnet wallet journal and holds.
+ * Keeps guarded amount, fee, exact-draw and receipt checks; cannot purchase or activate.
+ */
+export function createCircleGuardedTestnetRepayer(options) {
+  requireThat(options.config.chainId === TESTNET, 'Only Arc testnet guarded repayment is enabled.');
+  return createExecutor(options, true, TESTNET);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET) {
   const config = Object.freeze({ ...suppliedConfig });
-  const CHAIN = guarded ? 5042 : TESTNET;
-  const network = guarded ? 'ARC' : 'ARC-TESTNET';
+  const CHAIN = chainId;
+  const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
   const abi = guarded ? circleGuardedRepaymentAbi : legacyAbi;
   const agent = getAddress(config.agent), contract = getAddress(config.contract);
   const cap = BigInt(config.maxAmount), feeCap = BigInt(config.maxNetworkFee);
