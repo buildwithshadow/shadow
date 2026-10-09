@@ -190,8 +190,8 @@ export function HomePage() {
             sponsor carries that risk, up to the amount set aside. If the due
             date passes with the debt unpaid, the sponsor can declare a default
             and then take back the unspent reserve, plus anything repaid later.
-            On this website a sponsor can take back those funds once a default
-            is declared, but cannot yet declare the default.
+            The sponsor can declare a default from the funding page once the
+            due date passes with debt unpaid.
           </p>
         </div>
         <table className="homeLimitTable">

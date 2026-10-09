@@ -54,7 +54,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const chain = useMemo(() => candidateChainFor(deployment), [deployment]);
   const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
   const explorer = chain.blockExplorers.default.url;
-  const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
+  const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay, prepareCandidateDefault,
     readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => (mainnet ? createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment), [deployment, mainnet]);
   const client = useMemo(() => mainnet ? createPublicClient({ chain, transport: createRpcReadTransport('https://rpc.mainnet.arc.io', {
     timeout: 15_000, fallbackUrls: ['https://rpc.blockdaemon.mainnet.arc.io'], expectedChainId: 5042,
@@ -306,7 +306,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     finally { setBusy(""); }
   }
 
-  async function review(action: "register" | "open" | "repay" | "reclaim", event?: FormEvent) {
+  async function review(action: "register" | "open" | "repay" | "default" | "reclaim", event?: FormEvent) {
     event?.preventDefault();
     if (!account || !canWrite) return;
     if (action === "open" && !providerAgreed) { setError("Confirm the provider accepts Shadow payments for this endpoint before funding it."); return; }
@@ -316,6 +316,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       if (action !== "open" && action !== "register" && !line) throw new Error("Load the funding line before reviewing an action.");
       const value = action === "register" ? await prepareCandidateRegistration(client, account) : action === "open" ? await prepareCandidateOpen(client, account, form)
         : action === "repay" ? await prepareCandidateRepay(client, account, line!.lineId)
+        : action === "default" ? await prepareCandidateDefault(client, account, line!.lineId)
         : await prepareCandidateReclaim(client, account, line!.lineId);
       if (revision.current !== currentRevision) throw new Error("The wallet or form changed. Review the current details again.");
       setReviewInput(action === "open" ? { ...form } : null);
@@ -399,7 +400,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         if (!lock) throw new Error("Another Shadow tab is handling this wallet. Finish that transaction there first.");
         if (!mainnet) assertGatewayFundingResolved(sender);
         assertCandidateFundingResolved(sender, window.localStorage, deployment.chainId);
-        if (intent.kind !== 'repay' && !(intent.kind === 'approve' && intent.nextAction === 'repay')) assertPurchaseResolved(sender, window.localStorage, deployment.chainId);
+        if (intent.kind !== 'repay' && intent.kind !== 'default' && !(intent.kind === 'approve' && intent.nextAction === 'repay')) assertPurchaseResolved(sender, window.localStorage, deployment.chainId);
         const result = await executeCandidateCall({
           publicClient: client,
           walletClient: createWalletClient({ chain, transport: custom(window.ethereum!), account: sender }),
@@ -460,6 +461,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const isSponsor = Boolean(account && line && account.toLowerCase() === line.sponsor.toLowerCase());
   const remaining = line ? (line.lineSpendCap > line.cumulativePrincipalPaid ? line.lineSpendCap - line.cumulativePrincipalPaid : 0n) : 0n;
   const repayable = line && (line.stateName === "DRAWN" || line.stateName === "DEFAULTED") && line.principalOutstanding > 0n;
+  const defaultable = line && isSponsor && line.stateName === "DRAWN" && line.principalOutstanding > 0n && line.observedTimestamp > line.dueAt;
   const reclaimable = line && isSponsor && ((line.stateName === "OPEN" && line.principalOutstanding === 0n) ||
     (line.stateName === "DEFAULTED" && line.availableReserve + line.recoveryAvailable > 0n));
   const shareable = Boolean(service && line && isSponsor && line.stateName === "OPEN" && line.expiry > line.observedTimestamp &&
@@ -532,7 +534,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
     {pending && <section className="fundingRecovery" aria-labelledby="funding-recovery-title">
       <h2 id="funding-recovery-title">Check the previous transaction first</h2>
-      <p>A {pending.kind === "register" ? "sponsor registration" : pending.kind === "approve" ? "USDC approval" : pending.kind === "open" ? "line opening" : pending.kind === "repay" ? "repayment" : "reclaim"} has not been resolved. New transactions from this wallet are paused here so a retry cannot accidentally send it again.</p>
+      <p>A {pending.kind === "register" ? "sponsor registration" : pending.kind === "approve" ? "USDC approval" : pending.kind === "open" ? "line opening" : pending.kind === "repay" ? "repayment" : pending.kind === "default" ? "default declaration" : "reclaim"} has not been resolved. New transactions from this wallet are paused here so a retry cannot accidentally send it again.</p>
       <p>Finish any open wallet prompt. Then check its status. Keep this browser’s site data until it is resolved.</p>
       {pending.txHash && <a href={`${explorer}/tx/${pending.txHash}`} target="_blank" rel="noreferrer">Open the saved transaction</a>}
       <Field name="recovery-hash" label="Transaction hash from your wallet (optional)" value={recoveryHash} onChange={setRecoveryHash} required={false} disabled={Boolean(busy)}
@@ -593,7 +595,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           <div><dt>Total purchases</dt><dd>{usdc(line.cumulativePrincipalPaid)} <small>USDC</small></dd></div>
           <div><dt>Remaining total limit</dt><dd>{usdc(remaining)} <small>USDC</small></dd></div>
         </dl>
-        <p>{line.stateName === "CLOSED" ? "This line is closed and cannot fund another purchase. Open a new line if you want to provide another budget." : "Repay a purchase in full before the next one. Repayment restores reserve; it does not reset the total purchase limit."}</p>
+        <p>{line.stateName === "CLOSED" ? "This line is closed and cannot fund another purchase. Open a new line if you want to provide another budget." : line.stateName === "DEFAULTED" ? "This line is defaulted and cannot fund another purchase." : "Repay a purchase in full before the next one. Repayment restores reserve; it does not reset the total purchase limit."}</p>
         {line.stateName === "DEFAULTED" && <p className="fundingCallout">Repayment supports sponsor recovery. This defaulted line will not reopen. Recoverable funds: {usdc(line.availableReserve + line.recoveryAvailable)} USDC.</p>}
         {line.principalOutstanding > 0n && <p>Repayment due: <strong>{when(line.dueAt)}</strong>. The obligation remains if service delivery is unresolved.</p>}
         {line.expiry <= line.observedTimestamp && <p className="fundingCallout">The line has expired for new purchases. Existing debt and eligible reclaim remain.</p>}
@@ -603,11 +605,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           <input id="line-share-link" readOnly aria-describedby="line-share-link-hint" value={`${window.location.origin}${window.location.pathname}?line=${line.lineId}`} />
           <small id="line-share-link-hint">It opens this page with the line filled in. The agent’s page checks the line again before any payment is sent.</small></div>}
         <div className="fundingActions">
+          {defaultable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("default")}>Review default</button>}
           {repayable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("repay")}>Review full repayment</button>}
           {reclaimable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("reclaim")}>{line.stateName === "DEFAULTED" ? "Review recovery claim" : "Review close and reclaim"}</button>}
           <button type="button" disabled={Boolean(busy)} onClick={() => void lookup()}>Refresh line</button>
           {line.stateName === "OPEN" && line.principalOutstanding === 0n && !isSponsor && <small>Only the sponsor can close this line and reclaim its reserve.</small>}
-          {(repayable || reclaimable) && lineBlocker && <small id="funding-line-action-hint">{lineBlocker}</small>}
+          {(defaultable || repayable || reclaimable) && lineBlocker && <small id="funding-line-action-hint">{lineBlocker}</small>}
         </div>
         <details><summary>Line details</summary>
           <dl className="fundingDetails"><div><dt>Line ID</dt><dd><code>{line.lineId}</code></dd></div><div><dt>Sponsor</dt><dd><code>{line.sponsor}</code></dd></div>
@@ -627,16 +630,16 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description"
       onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}>
       {prepared && <><p className="pageEyebrow">{network} · Wallet confirmation</p>
-        <h2 id="funding-review-title">{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : "Reclaim eligible funds"}</h2>
+        <h2 id="funding-review-title">{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : prepared.kind === "default" ? "Declare this line in default" : "Reclaim eligible funds"}</h2>
         <p id="funding-review-description">{prepared.summary}</p>
         <dl className="fundingDetails"><div><dt>Wallet</dt><dd><code>{prepared.account}</code></dd></div>
-          <div><dt>Amount</dt><dd>{usdc(prepared.amount)} {mainnet ? 'USDC' : 'test USDC'}</dd></div>
+          <div><dt>{prepared.kind === "default" ? "Outstanding principal" : "Amount"}</dt><dd>{usdc(prepared.amount)} {mainnet ? 'USDC' : 'test USDC'}</dd></div>
           <div><dt>Contract receiving the call</dt><dd><code>{prepared.to}</code></dd></div>
           {prepared.lineId && <div><dt>Line ID</dt><dd><code>{prepared.lineId}</code></dd></div>}
         </dl>
         {reviewInput && <dl className="fundingDetails"><div><dt>Agent</dt><dd><code>{reviewInput.agent}</code></dd></div><div><dt>Provider</dt><dd><code>{reviewInput.provider}</code></dd></div>
           <div><dt>Endpoint</dt><dd>{reviewInput.endpoint}</dd></div><div><dt>Total / daily / per purchase</dt><dd>{reviewInput.lineSpendCap} / {reviewInput.dailySpendCap} / {reviewInput.providerPerSpendCap} USDC</dd></div></dl>}
-        <p>{prepared.kind === "register" ? "Registration enables funding from this wallet only. Your tokens remain in your wallet." : prepared.kind === "approve" ? "This approval does not open a line or repay debt. You will review that transaction separately." : prepared.kind === "repay" ? "Review the repayment scope above. Legacy lines pay current debt at execution and can settle a newer purchase if approval is delayed; guarded lines reject a different purchase. Check confirmation before retrying." : prepared.kind === "open" ? "The sponsor bears repayment risk. A paid provider can leave debt outstanding even if delivery fails." : "Closing an open line ends its purchase access and returns eligible reserve to its sponsor."}</p>
+        <p>{prepared.kind === "register" ? "Registration enables funding from this wallet only. Your tokens remain in your wallet." : prepared.kind === "approve" ? "This approval does not open a line or repay debt. You will review that transaction separately." : prepared.kind === "repay" ? "Review the repayment scope above. Legacy lines pay current debt at execution and can settle a newer purchase if approval is delayed; guarded lines reject a different purchase. Check confirmation before retrying." : prepared.kind === "default" ? "Unpaid spent principal remains a loss unless it is repaid." : prepared.kind === "open" ? "The sponsor bears repayment risk. A paid provider can leave debt outstanding even if delivery fails." : "Closing an open line ends its purchase access and returns eligible reserve to its sponsor."}</p>
         <p>Finish other transactions from this account first. If you submit one elsewhere while this wallet prompt is open, cancel this request and review it again. Shadow cannot reserve a wallet nonce across other apps or devices.</p>
         <div className="fundingActions"><button autoFocus type="button" onClick={() => setPrepared(null)} disabled={Boolean(busy)}>Back</button>
           <button className="fundingPrimary" type="button" onClick={() => void sendReviewed()} disabled={Boolean(busy)}>Confirm in wallet</button></div>

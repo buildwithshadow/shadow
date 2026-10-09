@@ -42,7 +42,7 @@ export interface CandidateSnapshot {
   limits: CandidateLimits; totalCommittedCapital: bigint; minimumRepaymentWindow: bigint; maximumRepaymentWindow: bigint
   balance: bigint; allowance: bigint; activeLineId: Hash; nextEpoch: bigint; activeLine: CandidateLine | null
 }
-export type CandidateAction = 'register' | 'approve' | 'open' | 'repay' | 'close' | 'claim-defaulted'
+export type CandidateAction = 'register' | 'approve' | 'open' | 'repay' | 'default' | 'close' | 'claim-defaulted'
 export interface CandidatePrepared {
   kind: CandidateAction; account: Address; to: Address; data: Hex; value: '0'; amount: bigint
   lineId: Hash | null; agent: Address | null; expectedEpoch: bigint | null
@@ -248,6 +248,16 @@ async function prepareCandidateRepay(client: CandidateReadClient, rawAccount: st
   return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', args: deployment.drawBoundRepayment ? [line.lineId, line.drawDigest!, line.principalOutstanding] : [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: deployment.drawBoundRepayment ? `Repay purchase ${line.drawDigest}. The transaction reverts if another purchase replaces it.` : 'Pay this fixed amount toward whatever debt this line has when the transaction executes. A delayed approval can pay a newer purchase. This legacy contract does not bind repayment to the purchase shown now.' }
 }
 
+async function prepareCandidateDefault(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
+  const account = address(rawAccount)
+  const line = await readCandidateLine(client, rawLineId)
+  if (!same(account, line.sponsor)) throw new Error('Only this line’s sponsor can declare a default.')
+  if (line.stateName !== 'DRAWN') throw new Error('Default requires a DRAWN line.')
+  if (line.principalOutstanding <= 0n || line.principalOutstanding > CANDIDATE_FUNDING.maxReserve) throw new Error('This line has no bounded outstanding debt to default.')
+  if (line.observedTimestamp < line.dueAt) throw new Error('This line is not due for default yet.')
+  return { kind: 'default', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'declareDefault', args: [line.lineId] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: 'Declaring default marks this line as DEFAULTED. The agent can still repay afterwards; those repayments go to sponsor recovery. This line will not reopen.' }
+}
+
 async function prepareCandidateReclaim(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
   const account = address(rawAccount)
   const line = await readCandidateLine(client, rawLineId)
@@ -261,7 +271,7 @@ async function prepareCandidateReclaim(client: CandidateReadClient, rawAccount: 
 
 function checkPending(value: unknown, expectedAccount?: Address): CandidatePending {
   const p = value as CandidatePending
-  const actions: string[] = ['register', 'approve', 'open', 'repay', 'close', 'claim-defaulted']
+  const actions: string[] = ['register', 'approve', 'open', 'repay', 'default', 'close', 'claim-defaulted']
   if (!p || p.version !== 1 || p.chainId !== CANDIDATE_FUNDING.chainId || !same(p.candidate ?? '', CANDIDATE_FUNDING.address) || !isAddress(p.account) || (expectedAccount && !same(expectedAccount, p.account)) || !actions.includes(p.kind) || !isAddress(p.to) || !/^0x(?:[0-9a-fA-F]{2})+$/.test(p.data) || p.data.length > 4096 || p.value !== '0' || !/^\d+$/.test(p.amount) || !/^\d+$/.test(p.fromBlock) || !Number.isSafeInteger(p.nonce) || p.nonce < 0 || !['wallet', 'pending', 'unknown'].includes(p.status) || (p.txHash !== null && !/^0x[0-9a-fA-F]{64}$/.test(p.txHash))) throw new Error('The saved transaction record is invalid. Keep it for investigation; no new transaction was sent.')
   if (p.actualNonce !== undefined && (!p.txHash || !Number.isSafeInteger(p.actualNonce) || p.actualNonce < 0)) throw new Error('The saved actual transaction nonce is invalid.')
   // Decode the saved call, so reconciliation cannot accidentally certify an
@@ -297,7 +307,7 @@ function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'v
   if (!same(record.to, isApproval ? CANDIDATE_FUNDING.usdc : CANDIDATE_FUNDING.address) || record.value !== '0') throw new Error('The transaction does not target the expected release contract.')
   const abi: Abi = isApproval ? erc20Abi : candidateFundingAbi
   const decoded = decodeFunctionData({ abi, data: record.data })
-  const expectedName = { register: 'registerSponsor', approve: 'approve', open: 'openLine', repay: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', close: 'closeLine', 'claim-defaulted': 'claimDefaulted' }[record.kind]
+  const expectedName = { register: 'registerSponsor', approve: 'approve', open: 'openLine', repay: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', default: 'declareDefault', close: 'closeLine', 'claim-defaulted': 'claimDefaulted' }[record.kind]
   if (decoded.functionName !== expectedName) throw new Error('The transaction action does not match its calldata.')
   const args = decoded.args as readonly any[]
   const value = BigInt(record.amount)
@@ -313,6 +323,7 @@ function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'v
   } else if (!isApproval) {
     if (!record.lineId || !same(args[0], record.lineId)) throw new Error('The transaction line does not match its calldata.')
     if (record.kind === 'repay' && (BigInt(args[deployment.drawBoundRepayment ? 2 : 1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('The repayment must equal the displayed bounded amount.')
+    if (record.kind === 'default' && value > CANDIDATE_FUNDING.maxReserve) throw new Error('The default amount exceeds this browser release’s limit.')
     if (record.kind === 'repay' && deployment.drawBoundRepayment) hash(args[1], 'Purchase digest')
   }
   return { abi, functionName: decoded.functionName, args }
@@ -371,6 +382,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
       const current = await readCandidateLine(client, prepared.lineId!)
       if (!prepared.lineFingerprint || fingerprint(current) !== prepared.lineFingerprint) throw new Error('The line or debt changed. Refresh and review the current amount before confirming.')
       if (prepared.kind === 'repay' && deployment.drawBoundRepayment && !same(call.args[1], current.drawDigest!)) throw new Error('The repayment calldata names a different purchase. Review it again.')
+      if (prepared.kind === 'default' && prepared.amount !== current.principalOutstanding) throw new Error('The outstanding debt changed. Refresh before declaring default.')
     }
     await client.simulateContract({ address: prepared.to, abi: call.abi, functionName: call.functionName, args: call.args, account: session.account })
     const block = await client.getBlock()
@@ -420,7 +432,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
 }
 
 function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly any[] }): boolean {
-  const expected = { register: 'SponsorAllowed', approve: 'Approval', open: 'LineOpened', repay: deployment.drawBoundRepayment ? 'DrawRepaid' : 'Repaid', close: 'LineClosed', 'claim-defaulted': 'SponsorClaimed' }[pending.kind]
+  const expected = { register: 'SponsorAllowed', approve: 'Approval', open: 'LineOpened', repay: deployment.drawBoundRepayment ? 'DrawRepaid' : 'Repaid', default: 'LineDefaulted', close: 'LineClosed', 'claim-defaulted': 'SponsorClaimed' }[pending.kind]
   for (const log of receipt.logs) {
     if (!same(log.address, pending.to)) continue
     try {
@@ -432,6 +444,7 @@ function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly a
       if (!pending.lineId || !same(args.lineId, pending.lineId)) continue
       if (pending.kind === 'open') return same(args.sponsor, pending.account) && !!pending.agent && same(args.agent, pending.agent) && BigInt(args.reserve) === BigInt(pending.amount) && String(args.epoch) === pending.expectedEpoch
       if (pending.kind === 'repay') return same(args.payer, pending.account) && BigInt(args.amount) === BigInt(pending.amount) && (!deployment.drawBoundRepayment || same(args.drawDigest, (decodeFunctionData({abi: candidateFundingAbi, data: pending.data}).args as readonly any[])[1]))
+      if (pending.kind === 'default') return BigInt(args.principalOutstanding) === BigInt(pending.amount)
       // Closing and reclaiming can return a newer balance if a repayment raced
       // the wallet prompt; the exact call identity and sponsor are authoritative.
       return same(args.sponsor, pending.account)
@@ -503,7 +516,7 @@ async function reconcileCandidatePending(client: CandidateReadClient, rawPending
     if (!registered && !hasExpectedEvent(pending, receipt)) return unknown('The transaction succeeded, but its expected Shadow event could not be verified. Keep this record and investigate before retrying.')
     const action: Record<CandidateAction, string> = {
       register: 'Sponsor registration', approve: 'USDC approval', open: 'Opening',
-      repay: 'Repayment', close: 'Close', 'claim-defaulted': 'Recovery claim',
+      repay: 'Repayment', default: 'Default declaration', close: 'Close', 'claim-defaulted': 'Recovery claim',
     }
     const lineLabel = pending.lineId ? ` for line ${pending.lineId.slice(0, 8)}…${pending.lineId.slice(-4)}` : ''
     return { status: 'confirmed', txHash, message: `${action[pending.kind]}${lineLabel} is confirmed onchain.`, ...(pending.lineId ? { lineId: pending.lineId } : {}) }
@@ -525,6 +538,6 @@ async function prepareCandidateRegistration(client: CandidateReadClient, rawAcco
     summary: 'Register your wallet to fund your own agent lines. This does not transfer or approve tokens; testnet gas applies.' }
 }
 
-return { verifyCandidate, readCandidateLine, readCandidateSnapshot, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, createCandidateJournal, executeCandidateCall, reconcileCandidatePending, candidateErrorMessage, prepareCandidateRegistration }
+return { verifyCandidate, readCandidateLine, readCandidateSnapshot, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateDefault, prepareCandidateReclaim, createCandidateJournal, executeCandidateCall, reconcileCandidatePending, candidateErrorMessage, prepareCandidateRegistration }
 }
-export const { verifyCandidate, readCandidateLine, readCandidateSnapshot, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, createCandidateJournal, executeCandidateCall, reconcileCandidatePending, candidateErrorMessage, prepareCandidateRegistration } = createCandidateFundingKit(CANDIDATE_FUNDING)
+export const { verifyCandidate, readCandidateLine, readCandidateSnapshot, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateDefault, prepareCandidateReclaim, createCandidateJournal, executeCandidateCall, reconcileCandidatePending, candidateErrorMessage, prepareCandidateRegistration } = createCandidateFundingKit(CANDIDATE_FUNDING)
