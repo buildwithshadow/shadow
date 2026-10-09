@@ -1450,7 +1450,6 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
   };
 }
 
-const HOME_TITLE = document.title;
 const ROUTE_TITLES: Record<string, string> = routeMetadata.routeTitles;
 
 function EvidenceRedirect({ fallbackHash = "" }: { fallbackHash?: string }) {
@@ -1483,7 +1482,7 @@ function App() {
   const [treasuryError, setTreasuryError] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = ROUTE_TITLES[route] ?? HOME_TITLE;
+    document.title = ROUTE_TITLES[route] ?? ROUTE_TITLES["/"];
     let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
     if (!canonical) {
       canonical = document.createElement("link");

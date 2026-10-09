@@ -1,5 +1,6 @@
 {
   "routeTitles": {
+    "/": "Shadow | Let your agent buy services on a budget you set",
     "/evidence": "Evidence | Shadow",
     "/builders": "Builders | Shadow",
     "/builders/v2": "Float V2 tools | Shadow",
@@ -9,10 +10,10 @@
     "/roadmap": "Roadmap | Shadow"
   },
   "socialDescriptions": {
-    "/start": "Set aside USDC for an agent's purchases. Track what it owes and reclaim eligible funds from your own wallet.",
+    "/start": "Arc testnet, test USDC only. Set aside USDC for an agent's purchases. Track what it owes and reclaim eligible funds from your own wallet.",
     "/evidence": "This page brings the Float board and supporting records together.",
-    "/builders": "The public browser flow starts at /start on Arc testnet.",
+    "/builders": "The public browser flow starts at /start on Arc testnet: a sponsor funds a line, an agent submits and repays a purchase, then the sponsor closes the line and reclaims the remaining reserve.",
     "/builders/v2": "These tools are for the earlier Float V2 contract; the current public testnet browser flow starts at /start.",
-    "/roadmap": "Today's browser flow is self-service. The groups below separate current use, history, and open work."
+    "/roadmap": "Shadow product status. Today's browser flow is self-service; see current use, history, and open work."
   }
 }
