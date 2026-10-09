@@ -107,6 +107,10 @@ State defaults to `~/.local/share/shadow/agent-testnet`. Keep it private: purcha
 
 `recover` does not execute or sign a transaction. If preflight or fee estimation failed before the execution journal was created, recovery reports that nothing was submitted. Because the provider already received the signed authorization, retain it until expiry; recovery then verifies it is unpaid at a finalized block and archives it so a new purchase can be prepared. A partial journal barrier remains blocked for inspection. It reconciles saved Circle IDs/hashes and retrieves an already-paid result. If the Circle response was lost before any transaction identity was saved, automatic recovery may remain unresolved. Check the original request in Circle; do not submit a replacement. See [execution recovery](circle-agent-execution.md) for lock and finality requirements.
 
+## Guarded testnet fee limits
+
+The separate `app/scripts/shadow-circle-guarded-testnet.mjs` engineering runner uses the guarded deployment and a 0.005 test USDC purchase. It permits a network fee estimate up to 0.05 test USDC for that purchase. Its repayment allowance and repayment each retain the 0.02 test USDC estimate ceiling. These checks do not guarantee actual network fees. A quote above the configured ceiling is rejected before transaction submission and reports both the quote and the limit. Reconcile that original attempt through `recover` before preparing another purchase. Mainnet repayment limits and the public testnet runner described above are unchanged.
+
 ## Circle CLI compatibility
 
 Circle CLI 1.2.0 does not expose the raw-calldata option needed for Shadow's tuple call. Shadow checks the SHA-256 of the tested release and writes a separate, narrowly scoped compatibility copy inside the dedicated runtime. The original CLI file is unchanged. Authentication, Circle policies and version checks are preserved. This is **Shadow compatibility code, not an official Circle browser integration**.
