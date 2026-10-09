@@ -226,18 +226,21 @@ function isLogRangeLimit(error) {
     seen.add(current);
     const detail = [current.shortMessage, current.details, current.message].filter((value) => typeof value === "string").join(" ");
     if (/rate limit|quota|too many requests|requests? per|\b429\b/i.test(detail)) return false;
-    if (/block range.{0,80}(?:too (?:large|wide)|exceed|limit|maximum)|(?:maximum|max|limited to).{0,40}block range|query returned more than.{0,40}(?:results|logs)|(?:log )?response size.{0,40}(?:exceed|limit|too large)|too many (?:logs|results)/i.test(detail)) rangeLimit = true;
+    if (/block range.{0,80}(?:too (?:large|wide)|exceed|limit|maximum)|requested range too large|(?:maximum|max|limited to).{0,40}block range|query returned more than.{0,40}(?:results|logs)|(?:log )?response size.{0,40}(?:exceed|limit|too large)|too many (?:logs|results)/i.test(detail)) rangeLimit = true;
   }
   return rangeLimit;
 }
 
 // Inclusive, non-overlapping batches. Smaller successful ranges become the
-// new ceiling for this scan. At most ~13 halvings are possible from 5,000;
+// new ceiling for this scan. At most ~14 halvings are possible from 10,000;
 // a request budget also prevents a restrictive node turning a large scan
 // into unbounded one-block reads. A failure never yields a complete result.
 async function* logBatches(connection, event, args, low, high, reverse = false) {
   if (low > high) return;
-  let span = LOG_CHUNK_BLOCKS;
+  let span = connection.logChunkBlocks ?? LOG_CHUNK_BLOCKS;
+  if (typeof span !== "bigint" || span < LOG_CHUNK_BLOCKS || span > 10_000n) {
+    throw new Error("Configured log batch must be between 5000 and 10000 blocks");
+  }
   let cursor = reverse ? high : low;
   let requests = 0n;
   const maxRequests = ((high - low) / LOG_CHUNK_BLOCKS + 1n) * 16n + 16n;

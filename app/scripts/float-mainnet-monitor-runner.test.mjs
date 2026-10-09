@@ -11,11 +11,11 @@ const hash = (n) => `0x${n.toString(16).padStart(64, "0")}`;
 const NOW = 1_800_000_000_000;
 test("monitor subprocess preserves bounded pacing without inheriting credentials or runtime injection", () => {
   const parent = { PATH: "/usr/bin", ARC_RPC_URL: "https://wrong.invalid", FLOAT_MAINNET_EXPECTED_CHAIN_ID: "1",
-    SHADOW_RPC_READ_SPACING_MS: " 1500 ", PRIVATE_KEY: "private", CIRCLE_API_KEY: "credential",
+    SHADOW_RPC_READ_SPACING_MS: " 1500 ", SHADOW_RPC_LOG_CHUNK_BLOCKS:" 10000 ", PRIVATE_KEY: "private", CIRCLE_API_KEY: "credential",
     NODE_OPTIONS: "--import /tmp/untrusted.mjs", HTTPS_PROXY: "https://proxy.invalid" };
   const env = monitorReadEnvironment("https://rpc.quicknode.testnet.arc.io", "5042002", parent);
   assert.deepEqual(env, { PATH: "/usr/bin", ARC_RPC_URL: "https://rpc.quicknode.testnet.arc.io",
-    FLOAT_MAINNET_EXPECTED_CHAIN_ID: "5042002", SHADOW_RPC_READ_SPACING_MS: "1500" });
+    FLOAT_MAINNET_EXPECTED_CHAIN_ID: "5042002", SHADOW_RPC_READ_SPACING_MS: "1500", SHADOW_RPC_LOG_CHUNK_BLOCKS:"10000" });
   assert.equal(parent.SHADOW_RPC_READ_SPACING_MS, " 1500 ");
 });
 test("monitor pacing remains optional and rejects values outside the CLI safety bounds", () => {
@@ -388,4 +388,10 @@ test("a failed cycle with a still-healthy persisted heartbeat stops the supervis
   }),/runner lock exists/);
   assert.equal(readFileSync(join(f.context.stateDir,'runner.lock'),'utf8'),'another process');
  } finally {f.cleanup();}
+});
+
+
+test("monitor scan batching is optional and never inherits an unsafe range", () => {
+  assert.equal(Object.hasOwn(monitorReadEnvironment("http://localhost","5042002",{}),"SHADOW_RPC_LOG_CHUNK_BLOCKS"),false);
+  for(const size of ['','4999','10001','1e4'])assert.throws(()=>monitorReadEnvironment("http://localhost","5042002",{SHADOW_RPC_LOG_CHUNK_BLOCKS:size}),/between 5000 and 10000/);
 });

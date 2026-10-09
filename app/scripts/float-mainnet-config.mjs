@@ -104,12 +104,22 @@ export function endpointHashFrom({ endpoint, endpointHash }) {
 // or a release manifest; there is no default address. A manifest is trusted
 // only when it passed (ok: true) on this chain; its recorded runtime code hash
 // is checked against the chain by connectCandidate.
+export function configuredLogChunkBlocks(value) {
+  if (value === undefined) return undefined;
+  const raw = typeof value === "string" ? value.trim() : "";
+  if (!/^\d+$/.test(raw) || Number(raw) < 5000 || Number(raw) > 10000) {
+    throw new Error("SHADOW_RPC_LOG_CHUNK_BLOCKS must be between 5000 and 10000");
+  }
+  return BigInt(raw);
+}
+
 export function readDeployment(env = process.env, { manifest } = {}) {
   const rpcUrl = env.ARC_RPC_URL?.trim();
   if (!rpcUrl) throw new Error("ARC_RPC_URL is required");
   const chainRaw = env.FLOAT_MAINNET_EXPECTED_CHAIN_ID?.trim();
   if (!chainRaw || !/^\d+$/.test(chainRaw)) throw new Error("FLOAT_MAINNET_EXPECTED_CHAIN_ID must be a decimal chain id");
   const spacingRaw = env.SHADOW_RPC_READ_SPACING_MS?.trim();
+  const logChunkBlocks = configuredLogChunkBlocks(env.SHADOW_RPC_LOG_CHUNK_BLOCKS);
   if (spacingRaw !== undefined && (!/^\d+$/.test(spacingRaw) || Number(spacingRaw) < 350 || Number(spacingRaw) > 5000)) {
     throw new Error("SHADOW_RPC_READ_SPACING_MS must be between 350 and 5000");
   }
@@ -140,6 +150,7 @@ export function readDeployment(env = process.env, { manifest } = {}) {
   return {
     rpcUrl: arcRpcUrlForChain(rpcUrl, chainRaw),
     ...(spacingRaw !== undefined ? { readSpacingMs: Number(spacingRaw) } : {}),
+    ...(logChunkBlocks !== undefined ? { logChunkBlocks } : {}),
     expectedChainId: BigInt(chainRaw),
     address: getAddress(raw),
     runtimeHash: release?.runtimeHash ?? null,
@@ -207,7 +218,8 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
   if (mismatches.length) {
     throw new Error(`${deployment.address} is not this ShadowFloatMainnet generation (${mismatches.join(", ")} differ)`);
   }
-  return { chain, transport, client, address: deployment.address, chainId, deployBlock: deployment.deployBlock ?? null };
+  return { chain, transport, client, address: deployment.address, chainId, deployBlock: deployment.deployBlock ?? null,
+    ...(deployment.logChunkBlocks !== undefined ? { logChunkBlocks: deployment.logChunkBlocks } : {}) };
 }
 
 // A participant's key, read from env at runtime only. It is never printed:

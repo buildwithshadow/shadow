@@ -56,6 +56,8 @@ Set only the public/read-only RPC connection needed by the monitor. No signing k
 
 If the RPC rate limits historical scans, set `SHADOW_RPC_READ_SPACING_MS` to an integer between `350` and `5000`. The runner forwards this setting to its read subprocess while excluding other parent environment variables, including wallet credentials and Node preload options. The default remains unchanged when omitted. Measure a complete scan before approving the schedule and freshness bounds; slower pacing does not waive incomplete scans, stale observations or an existing hold.
 
+A verified RPC that supports larger log ranges may use `SHADOW_RPC_LOG_CHUNK_BLOCKS` between `5000` and `10000`. The default remains `5000`. Scans still cover every block and shrink only for explicit range or result limits. Quota errors fail the scan instead of creating more requests. This setting changes neither the freshness policy nor transaction retries.
+
 ```sh
 export ARC_RPC_URL='https://your-approved-read-only-rpc.example'
 node app/scripts/float-mainnet-monitor-runner.mjs once \

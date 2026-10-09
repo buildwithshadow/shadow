@@ -164,7 +164,9 @@ test("candidate connections pace reads even in write mode, while broadcasts are 
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const deployment = { rpcUrl: `http://127.0.0.1:${server.address().port}`, expectedChainId: 5042002n, address: "0x0000000000000000000000000000000000000001" };
+  deployment.logChunkBlocks=10000n;
   const connection = await connectCandidate(deployment);
+  assert.equal(connection.logChunkBlocks,10000n);
   const [found, head] = await Promise.all([connection.client.getLogs({ fromBlock: 0n, toBlock: 16n }), connection.client.getBlockNumber()]);
   assert.deepEqual(found, []); assert.equal(head, 16n); assert.equal(logs, 2); assert.equal(maximum, 1);
   // Public deterministic test key, never a funded wallet.
@@ -183,6 +185,7 @@ test("candidate connections pace reads even in write mode, while broadcasts are 
   assert.equal(sends, 1);
   await assert.rejects(connection.client.request({ method: "eth_sendRawTransaction", params: ["0x1234"] }), /read-only RPC transport refuses/);
   const readOnly = await connectCandidate(deployment, { readOnly: true });
+  assert.equal(readOnly.logChunkBlocks,10000n);
   const readonlyWallet = walletFromEnv(readOnly, "TEST_KEY", { TEST_KEY: `0x${"0".repeat(63)}1` }).wallet;
   await assert.rejects(readonlyWallet.sendRawTransaction({ serializedTransaction: "0x1234" }), /read-only RPC transport refuses/);
   assert.equal(sends, 1);
