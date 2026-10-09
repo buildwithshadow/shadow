@@ -149,6 +149,8 @@ test('default bounds reject a different line, a non-drawn line, and a line befor
   f.state.line.dueAt = f.state.block.timestamp + 1n
   await assert.rejects(() => f.kit.prepareCandidateDefault(f.client, sponsor, lineId), /due/)
   assert.equal(f.state.sends, 0)
+  f.state.line.dueAt = f.state.block.timestamp
+  assert.equal((await f.kit.prepareCandidateDefault(f.client, sponsor, lineId)).kind, 'default')
 })
 
 test('guarded mainnet prepares the same sponsor default selector', async () => {
@@ -183,7 +185,7 @@ test('a confirmed default reconciles its LineDefaulted event and clears the jour
   assert.equal(f.state.sends, 1)
 })
 
-test('a default confirms when a partial repayment changes the event principal', async () => {
+test('a reduced default confirms only for the exact transaction, contract and line', async () => {
   const f = fixture()
   const prepared = await f.kit.prepareCandidateDefault(f.client, sponsor, lineId)
   const pending: CandidatePending = {
@@ -197,6 +199,18 @@ test('a default confirms when a partial repayment changes the event principal', 
   f.state.transactions.set(txHash, { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: pending.nonce, chainId: pending.chainId, blockHash, blockNumber })
   f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber, blockHash, logs: [defaultedLog(lineId, 40_000n, f.state.line.dueAt)] })
   assert.equal((await f.kit.reconcileCandidatePending(f.client, pending)).status, 'confirmed')
+  const receipt = f.state.receipts.get(txHash)!
+  for (const log of [defaultedLog(otherLineId, 40_000n, f.state.line.dueAt), { ...defaultedLog(lineId, 40_000n, f.state.line.dueAt), address: other }]) {
+    f.state.receipts.set(txHash, { ...receipt, logs: [log] })
+    f.journal.save(pending)
+    assert.equal((await f.kit.reconcileCandidatePending(f.client, pending, undefined, f.journal)).status, 'unknown')
+    assert.equal(f.journal.load()?.kind, 'default')
+  }
+  f.state.receipts.set(txHash, receipt)
+  f.state.transactions.set(txHash, { ...f.state.transactions.get(txHash)!, from: other })
+  assert.equal((await f.kit.reconcileCandidatePending(f.client, pending, undefined, f.journal)).status, 'unknown')
+  assert.equal(f.journal.load()?.kind, 'default')
+  assert.equal(f.state.sends, 0)
 })
 
 test('a pending default blocks both repayment and recovery claim sends', async () => {
