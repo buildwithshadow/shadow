@@ -125,3 +125,22 @@ test('provider failure before execution keeps authorization until finalized unpa
   options.engine.archive=async()=>{throw new Error('receipt is paid');};
   await assert.rejects(recoverAgentPurchase(options),/receipt is paid/);assert.equal(saves,1);
 });
+
+test('mainnet website handoff keeps original local paths explicit and requires monitor only for purchase',()=>{
+ const commands=circleAgentCommands(line,agent,'guarded-mainnet');
+ for(const action of ['inspect','purchase','recover','repay']){
+  assert(commands[action].startsWith(`node app/scripts/shadow-circle-guarded-mainnet.mjs ${action} `));
+  assert(commands[action].includes('--state "$SHADOW_CIRCLE_MAINNET_STATE"'));
+  assert(commands[action].includes('--runtime "$SHADOW_CIRCLE_RUNTIME"'));
+  assert(!commands[action].includes('--testnet'));
+  assert.equal(commands[action].includes('--confirm'),action==='purchase'||action==='repay');
+ }
+ assert(commands.purchase.includes('--monitor-baseline "$SHADOW_CIRCLE_MAINNET_BASELINE"'));
+ assert(commands.purchase.includes('--monitor-manifest "$SHADOW_CIRCLE_MAINNET_MANIFEST"'));
+ assert(commands.purchase.includes('--monitor-state "$SHADOW_CIRCLE_MAINNET_MONITOR_STATE"'));
+ assert(commands.purchase.includes('--session-policy "$SHADOW_CIRCLE_MAINNET_SESSION"'));
+ assert(commands.recover.includes('--session-policy "$SHADOW_CIRCLE_MAINNET_SESSION"'));
+ assert(!commands.recover.includes('--monitor'));
+ assert(!commands.inspect.includes('--session-policy'));
+ assert.throws(()=>circleAgentCommands(line,agent,'guarded-mainnet;send'));
+});

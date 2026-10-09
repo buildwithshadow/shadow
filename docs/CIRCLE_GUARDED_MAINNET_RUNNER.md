@@ -33,4 +33,19 @@ The fresh monitor check runs after the remote session probes immediately before 
 
 Repayment saves the original reviewed draw before approving the exact 0.005 USDC allowance and calling `repayForDraw`. A newer draw is refused. Recovery and repayment do not require an unpaused purchase phase. Sponsor reclaim remains a separate browser wallet action.
 
-This release supplies operator tooling. The browser Circle handoff remains testnet only until separately integrated and verified. Live mainnet rehearsal, qualified independent review and credential containment procedures remain separate release requirements.
+This release supplies operator tooling. The feature gated mainnet browser handoff provides command templates; it cannot authenticate or operate the Circle wallet. Live mainnet rehearsal, qualified independent review and credential containment procedures remain separate release requirements.
+
+## Local operator paths
+
+The mainnet browser handoff uses these environment variables. Configure them privately in the agent's own terminal once. Use the original mainnet wallet journal, isolated reviewed runtime, original approved session policy and current verified observer state. Paths are local configuration, not wallet keys. Do not copy another operator's journal or credentials.
+
+```sh
+export SHADOW_CIRCLE_MAINNET_STATE="/path/to/original/mainnet/journal"
+export SHADOW_CIRCLE_RUNTIME="/path/to/isolated/circle/runtime"
+export SHADOW_CIRCLE_MAINNET_SESSION="/path/to/approved/session.json"
+export SHADOW_CIRCLE_MAINNET_BASELINE="/path/to/approved/baseline.json"
+export SHADOW_CIRCLE_MAINNET_MANIFEST="/path/to/verified/manifest.json"
+export SHADOW_CIRCLE_MAINNET_MONITOR_STATE="/path/to/current/observer/state"
+```
+
+These are examples to replace with the reviewed local paths. The website never reads the variables. Unset variables expand to empty arguments, which the runner refuses before signing or sending. Inspect requires the journal and runtime; recovery also requires the original session policy; purchase requires all six paths. Repayment retains the original journal and runtime and does not need an unpaused spend monitor.
