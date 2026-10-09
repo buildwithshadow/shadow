@@ -1,9 +1,10 @@
 import { randomUUID } from 'node:crypto';
-import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
+import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, formatUnits, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
 import legacyAbi from './float-mainnet-abi.json' with { type: 'json' };
 
 const TESTNET = 5042002;
+export const GUARDED_TESTNET_PURCHASE_FEE_CAP = '50000000000000000'; // 0.05 test USDC, purchase execution only.
 export const circleGuardedRepaymentAbi = [...legacyAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...parseAbi([
   'function repayForDraw(bytes32 lineId,bytes32 expectedDraw,uint256 amount)',
   'function currentDrawDigest(bytes32 lineId) view returns (bytes32)',
@@ -55,7 +56,8 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
   const abi = guarded || purchaseOnly ? circleGuardedRepaymentAbi : legacyAbi;
   const agent = getAddress(config.agent), contract = getAddress(config.contract);
   const cap = BigInt(config.maxAmount), feeCap = BigInt(config.maxNetworkFee);
-  requireThat(cap > 0n && cap <= (purchaseOnly ? 5_000n : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18), 'Invalid bounded execution limits.');
+  const maximumFee = purchaseOnly && CHAIN === TESTNET ? BigInt(GUARDED_TESTNET_PURCHASE_FEE_CAP) : parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18);
+  requireThat(cap > 0n && cap <= (purchaseOnly ? 5_000n : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= maximumFee, 'Invalid bounded execution limits.');
   if (guarded) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && /^0x[0-9a-fA-F]{64}$/.test(config.expectedDraw) && !/^0x0{64}$/.test(config.expectedDraw), 'Pin the exact line and nonzero reviewed draw.');
   if (purchaseOnly) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && !/^0x0{64}$/.test(config.expectedLineId), 'Pin the exact nonzero purchase line.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.runtimeHash), 'Pin the deployed runtime hash.');
@@ -260,7 +262,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const payload = envelope(request, randomUUID());
       const estimate = await circle.estimate(payload);
       requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
-      requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, 'Estimated fee exceeds execution budget.');
+      requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, `Estimated fee exceeds execution budget. Quote: ${estimate.networkFee} USDC; cap: ${formatUnits(feeCap, 18)} USDC.`);
       // Refresh policy after the remote estimate. No spend request if conditions changed.
       await prepare(request);
       const record = { version: 1, namespace, operationId: request.operationId, request: payload, requestHash: hash(payload), expected, createdAt: new Date().toISOString() };
