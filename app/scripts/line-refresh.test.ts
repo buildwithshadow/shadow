@@ -33,18 +33,19 @@ test('an external purchase and repayment appear on consecutive refreshes without
   assert.deepEqual(f.values, ['DRAWN:50000:50000', 'OPEN:100000:0']);
 });
 
-test('focus and timer events cannot overlap a slow read', async t => {
+test('focus during a slow read queues one immediate fresh read without overlap', async t => {
   const pending = deferred<string>(); let calls = 0;
-  const f = fixture(t, () => { calls++; return pending.promise; });
+  const f = fixture(t, () => ++calls === 1 ? pending.promise : Promise.resolve('REPAID'));
   t.mock.timers.tick(15_000);
   f.focus.dispatchEvent(new Event('focus'));
   f.visibility.dispatchEvent(new Event('visibilitychange'));
   t.mock.timers.tick(60_000);
   assert.equal(calls, 1);
   pending.resolve('DRAWN'); await settle();
-  assert.deepEqual(f.values, ['DRAWN']);
-  t.mock.timers.tick(14_999); assert.equal(calls, 1);
-  t.mock.timers.tick(1); await settle(); assert.equal(calls, 2);
+  assert.deepEqual(f.values, ['DRAWN', 'REPAID']);
+  assert.equal(calls, 2);
+  t.mock.timers.tick(14_999); assert.equal(calls, 2);
+  t.mock.timers.tick(1); await settle(); assert.equal(calls, 3);
 });
 
 test('focus refreshes immediately and replaces the scheduled tick', async t => {
@@ -78,7 +79,9 @@ test('failure retains the last result and subsequent retries recover', async t =
 test('stopping for a changed view or wallet review drops late responses and all triggers', async t => {
   const pending = deferred<string>(); let calls = 0;
   const f = fixture(t, () => { calls++; return pending.promise; });
-  t.mock.timers.tick(15_000); f.stop();
+  t.mock.timers.tick(15_000);
+  f.focus.dispatchEvent(new Event('focus'));
+  f.stop();
   pending.resolve('OLD LINE'); await settle();
   f.focus.dispatchEvent(new Event('focus'));
   f.visibility.dispatchEvent(new Event('visibilitychange'));
@@ -95,4 +98,16 @@ test('late errors from a stopped view are discarded', async t => {
 test('stopping before the first tick prevents any read', async t => {
   let calls = 0; const f = fixture(t, async () => String(++calls));
   f.stop(); t.mock.timers.tick(60_000); await settle(); assert.equal(calls, 0);
+});
+
+test('becoming hidden cancels a queued resume until the page is visible again', async t => {
+  const pending = deferred<string>(); let calls = 0;
+  const f = fixture(t, () => ++calls === 1 ? pending.promise : Promise.resolve('CURRENT'));
+  t.mock.timers.tick(15_000);
+  f.focus.dispatchEvent(new Event('focus'));
+  f.state.visible = false; f.visibility.dispatchEvent(new Event('visibilitychange'));
+  pending.resolve('EARLIER'); await settle();
+  t.mock.timers.tick(60_000); await settle(); assert.equal(calls, 1);
+  f.state.visible = true; f.visibility.dispatchEvent(new Event('visibilitychange')); await settle();
+  assert.deepEqual(f.values, ['EARLIER', 'CURRENT']); assert.equal(calls, 2);
 });

@@ -10,14 +10,16 @@ export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarg
 }) {
   let stopped = false;
   let reading = false;
+  let queued = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
   const schedule = () => {
     if (!stopped && visible()) timer = setTimeout(() => { void refresh(); }, intervalMs);
   };
   const refresh = async () => {
-    if (stopped || reading) return;
+    if (stopped) return;
     clearTimeout(timer);
-    if (!visible()) return;
+    if (!visible()) { queued = false; return; }
+    if (reading) { queued = true; return; }
     reading = true;
     try {
       const value = await read();
@@ -26,7 +28,10 @@ export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarg
       if (!stopped) onError(error);
     } finally {
       reading = false;
-      schedule();
+      // Returning to a page can race a read of a block from before the return.
+      // Coalesce those triggers into one fresh read once this one settles.
+      if (queued) { queued = false; void refresh(); }
+      else schedule();
     }
   };
   const resume = () => { void refresh(); };
