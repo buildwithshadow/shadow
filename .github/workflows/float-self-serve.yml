@@ -21,6 +21,8 @@ on:
       - "app/historicalReads.d.ts"
       - "app/historicalReads.js"
       - "app/arcTestnetNetwork.*"
+      - "app/src/walletNetwork.ts"
+      - "app/scripts/wallet-network.test.ts"
       - "app/guardedTestnetDeployment.mjs"
       - "app/scripts/arc-testnet-network.test.mjs"
       - "agent/src/**"
@@ -178,7 +180,7 @@ jobs:
       - name: Test domain migration and mandate identity compatibility
         run: node --test app/scripts/shadow-url-migration.test.mjs
       - name: Test public Arc testnet wallet settings and RPC repair guidance
-        run: node --test app/scripts/arc-testnet-network.test.mjs
+        run: node --test app/scripts/arc-testnet-network.test.mjs app/scripts/wallet-network.test.ts
       - name: Install agent dependencies
         working-directory: agent
         run: pnpm install --frozen-lockfile --ignore-workspace

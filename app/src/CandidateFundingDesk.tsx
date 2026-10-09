@@ -15,6 +15,7 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
+import { ensureWalletChain } from "./walletNetwork";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -294,18 +295,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setBusy(`Switching to ${network}…`);
     try {
       if (!window.ethereum) throw new Error("Connect your browser wallet first.");
-      try {
-        await window.ethereum.request({ method: "wallet_switchEthereumChain", params: [{ chainId: `0x${CANDIDATE_FUNDING.chainId.toString(16)}` }] });
-      } catch (cause) {
-        if ((cause as { code?: number }).code !== 4902) throw cause;
-        await window.ethereum.request({ method: "wallet_addEthereumChain", params: [{
-          chainId: `0x${CANDIDATE_FUNDING.chainId.toString(16)}`, chainName: chain.name,
-          nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
-          rpcUrls: [...chain.rpcUrls.default.http], blockExplorerUrls: [explorer],
-        }] });
-      }
+      const selectedChain = await ensureWalletChain(window.ethereum, {
+        chainId: `0x${CANDIDATE_FUNDING.chainId.toString(16)}`, chainName: chain.name,
+        nativeCurrency: { name: "USDC", symbol: "USDC", decimals: 18 },
+        rpcUrls: [...chain.rpcUrls.default.http], blockExplorerUrls: [explorer],
+      });
       invalidate();
-      setChainId(Number(await window.ethereum.request({ method: "eth_chainId" })));
+      setChainId(selectedChain);
     } catch (cause) { setError(messageOf(cause)); }
     finally { setBusy(""); }
   }
@@ -493,6 +489,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
     {!mainnet && <details className="fundingNetworkHelp">
       <summary>Wallet connection help</summary>
+      <p>If switching does not open a prompt, open your wallet extension and check for a waiting request. If needed, add or select this network in the wallet, then select Refresh wallet above.</p>
+      <dl className="fundingDetails"><div><dt>Network</dt><dd>Arc Testnet</dd></div><div><dt>Chain ID</dt><dd>5042002</dd></div><div><dt>Gas currency</dt><dd>USDC</dd></div><div><dt>RPC URL</dt><dd><code>{ARC_TESTNET_RPC_URL}</code></dd></div><div><dt>Explorer</dt><dd><code>{explorer}</code></dd></div></dl>
       <p>If your wallet shows a connection error or HTTP 403, check its Arc Testnet RPC. In Rabby, open Settings &gt; Modify RPC URL &gt; Arc Testnet, save <code>{ARC_TESTNET_RPC_URL}</code>, then select Refresh wallet above.</p>
       <p>Changing the connection does not confirm a payment. Check any saved pending transaction before trying an action again.</p>
       <a href="https://docs.arc.io/arc/references/connect-to-arc" target="_blank" rel="noreferrer">Arc wallet setup guide</a>

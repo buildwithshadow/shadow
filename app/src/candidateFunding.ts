@@ -1,4 +1,5 @@
 import { ARC_TESTNET_RPC_URL, ARC_TESTNET_EXPLORER_URL, arcTestnetConnectionHelp } from "../arcTestnetNetwork.mjs";
+import { walletRequestHelp } from './walletNetwork.ts';
 import { TransactionReceiptNotFoundError, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, isAddress, isAddressEqual, keccak256, parseUnits, stringToHex, zeroAddress, zeroHash, defineChain, type Abi, type Address, type Hash, type Hex, type PublicClient, type WalletClient } from 'viem'
 import candidateAbiJson from '../scripts/float-mainnet-abi.json' with { type: 'json' }
 import { parseAbi } from 'viem'
@@ -130,6 +131,8 @@ function tokenRead(client: CandidateReadClient, functionName: string, args: read
 function candidateErrorMessage(error: unknown): string {
   const help = !mainnet && arcTestnetConnectionHelp(error)
   if (help) return help
+  const walletHelp = walletRequestHelp(error)
+  if (walletHelp) return walletHelp
   if (error instanceof Error) return error.message.split('\n')[0]
   return 'The request could not be completed. Check the connection and try refreshing.'
 }
