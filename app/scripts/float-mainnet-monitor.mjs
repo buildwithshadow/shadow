@@ -17,6 +17,8 @@ import {
 import { readIndexFile } from "./float-mainnet-indexer.mjs";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
 import { readExecutionTransaction } from "./float-mainnet-monitor-execution-transaction.mjs";
+import { readCircleExecutionAttribution } from "./float-mainnet-monitor-circle-execution.mjs";
+import { entryPoint07Address } from "viem/account-abstraction";
 
 // Read-only pilot monitor and reconciliation for the ShadowFloatMainnet
 // candidate. Every read is pinned to one block. check exits 1 on a critical
@@ -79,7 +81,7 @@ async function discover(connection, indexPath, pinned) {
   for (const log of logs) {
     const { eventName, args } = decodeEventLog({ abi: floatEventAbi, data: log.data, topics: log.topics });
     events.push({ event: eventName, args, blockNumber: log.blockNumber, blockHash: log.blockHash,
-      transactionHash: log.transactionHash, transactionIndex: log.transactionIndex });
+      transactionHash: log.transactionHash, transactionIndex: log.transactionIndex, logIndex: log.logIndex });
   }
 
   const lineIds = [...new Set(events.filter((entry) => entry.event === "LineOpened").map((entry) => entry.args.lineId))];
@@ -318,6 +320,7 @@ async function check(values, { snapshot = false } = {}) {
       if (!transactions.has(key)) transactions.set(key, await readExecutionTransaction(connection.client, event));
       const tx = transactions.get(key);
       let executor = null;
+      let routed = null;
       // A routed smart-account call needs a route-specific decoder. It cannot
       // establish the signed executor from the outer sender alone.
       if (tx.to?.toLowerCase() === connection.address.toLowerCase()) {
@@ -325,9 +328,11 @@ async function check(values, { snapshot = false } = {}) {
           const decoded = decodeFunctionData({ abi: floatAbi, data: tx.input });
           if (decoded.functionName === "executeSpend") executor = decoded.args[0].executor;
         } catch { /* unknown calldata remains unverifiable */ }
+      } else if (tx.to?.toLowerCase() === entryPoint07Address.toLowerCase()) {
+        routed = await readCircleExecutionAttribution(connection.client, event, tx, connection.address);
       }
       executions.push({ event: event.event, digest: event.args.digest, lineId: event.args.lineId,
-        blockNumber: event.blockNumber, transactionHash: event.transactionHash, sender: tx.from, executor });
+        blockNumber: event.blockNumber, transactionHash: event.transactionHash, sender: tx.from, executor, ...(routed ?? {}) });
     }
     extended = { identity: { chainId: connection.chainId, address: connection.address, runtimeCodeHash: keccak256(runtime), usdc },
       sponsors, accounting, executionAudit: { fromBlock, toBlock: pinned.number, executions } };

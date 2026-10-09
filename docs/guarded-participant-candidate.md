@@ -16,6 +16,16 @@ The browser route uses agent self-execution. A reviewed monitor baseline must ex
 
 A local monitor hold gates the dedicated execution tools; it does **not** prevent a browser agent from submitting directly to the contract. The onchain `spendsPaused` flag is the browser route's enforcement mechanism. An operator must handle critical incidents by pausing the contract, and the owner must separately authorize resumption. No automatic pause signer or browser-to-private-monitor bridge is provided by this change. Never describe observation alerts as prevention of onchain execution.
 
+Circle agent execution has a separate `executorPolicy: "circle-agent-v07"` choice
+for an explicitly approved line. The collector verifies the canonical finalized
+EntryPoint v0.7 transaction, the exact successful user operation, its account
+call and signed intent, and the payment event within that operation's receipt
+boundaries. The snapshot retains the outer sender as the bundler and records
+the verified agent and user operation hash separately. This policy requires
+the agent and signed executor to equal that line's approved agent. Default
+dedicated execution and ordinary `agent-self` policies do not accept a routed
+Circle proof. Existing baselines are not upgraded automatically.
+
 Before funded participant activation, review and approve this execution model, the incident-to-pause operating procedure and its response-time risk; demonstrate the pause/refusal and recovery path; and keep the current deployed pauses in place until that review is complete. Configuring a line's execution policy is not pilot clearance.
 
 ## Lifecycle notices
