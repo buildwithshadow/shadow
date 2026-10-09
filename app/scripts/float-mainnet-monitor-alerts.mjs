@@ -1,6 +1,6 @@
 // Read-only operational alerts. No signing, pause, spend or hold acknowledgement.
 import { createHash, randomUUID } from 'node:crypto';
-import { fstatSync, lstatSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
+import { closeSync, fsyncSync, openSync, fstatSync, lstatSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
@@ -255,8 +255,13 @@ async function main(load = loadMainnetContext, notify = notifyMainnet) {
       destinationId: String(config.chatId), send: text => sendTelegram(config, text), save: value => {
         const temporary = resolve(dir, `notification.${randomUUID()}.tmp`);
         try {
-          writeFileSync(temporary, JSON.stringify(value) + '\n', { flag: 'wx', mode: 0o600 });
+          const file = openSync(temporary, 'wx', 0o600);
+          try { writeFileSync(file, JSON.stringify(value) + '\n'); fsyncSync(file); }
+          finally { closeSync(file); }
           renameSync(temporary, resolve(dir, 'notification.json'));
+          const directory = openSync(dir, 'r');
+          try { fsyncSync(directory); }
+          finally { closeSync(directory); }
         } finally { rmSync(temporary, { force: true }); }
       } });
     console.log(JSON.stringify(result));

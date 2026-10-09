@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, writeFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, writeFileSync, rmSync, mkdirSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { GUARDED_TESTNET as deployment } from '../guardedTestnetDeployment.mjs';
@@ -97,4 +99,47 @@ test('failed Telegram delivery does not suppress retries or six hour failure rem
     await notifyGuardedTestnet(options(now)); await notifyGuardedTestnet(options(now)); assert.equal(sent, 1);
     await notifyGuardedTestnet(options(now + 21600000)); assert.equal(sent, 2);
   } finally { f.cleanup(); }
+});
+
+test('CLI flushes the delivery record and directory before exit; failed file flush preserves prior state', async () => {
+  for (const fail of [false, true]) {
+    const f = fixture();
+    try {
+      await f.run(Date.now());
+      const state = join(f.dir, 'notifications'); mkdirSync(state);
+      const original = JSON.stringify({ destinationId: '456', binding: 'old', key: 'healthy', sentAt: new Date(now).toISOString() });
+      const saved = join(state, 'notification.json'); writeFileSync(saved, original);
+      const events = join(f.dir, 'flush-events.jsonl');
+      const stub = join(f.dir, 'durability-stub.mjs');
+      const config = join(f.dir, 'telegram.json'); writeFileSync(config, JSON.stringify({ token: '123:fake', chatId: '456' }));
+      writeFileSync(stub, `import fs from 'node:fs';
+import { syncBuiltinESMExports } from 'node:module';
+const record = event => fs.appendFileSync(${JSON.stringify(events)}, JSON.stringify(event)+'\\n');
+const flush = fs.fsyncSync, rename = fs.renameSync;
+fs.fsyncSync = fd => {
+  const kind = fs.fstatSync(fd).isDirectory() ? 'directory' : 'file';
+  record('flush:'+kind);
+  if (${fail} && kind === 'file') throw Error('injected file flush failure');
+  return flush(fd);
+};
+fs.renameSync = (...args) => { record('rename'); return rename(...args); };
+syncBuiltinESMExports();
+globalThis.fetch = async () => { record('delivery'); return { ok:true, json:async()=>({ok:true,result:{chat:{id:456}}}) }; };
+`);
+      const child = spawnSync(process.execPath, ['--import', stub, fileURLToPath(new URL('./guarded-testnet-monitor-alerts.mjs', import.meta.url)),
+        '--baseline', f.options.baselinePath, '--manifest', f.options.manifestPath, '--observer-dir', f.options.stateDir, '--state-dir', state, '--config', config],
+      { encoding: 'utf8', timeout: 10000 });
+      const observed = readFileSync(events, 'utf8').trim().split('\n').map(JSON.parse);
+      if (fail) {
+        assert.equal(child.status, 1, child.stdout + child.stderr);
+        assert.deepEqual(observed, ['delivery', 'flush:file']);
+        assert.equal(readFileSync(saved, 'utf8'), original);
+      } else {
+        assert.equal(child.status, 0, child.stdout + child.stderr);
+        assert.deepEqual(observed, ['delivery', 'flush:file', 'rename', 'flush:directory']);
+        assert.equal(JSON.parse(readFileSync(saved)).destinationId, '456');
+      }
+      assert.ok(!readdirSync(state).some(name => name.endsWith('.tmp')));
+    } finally { f.cleanup(); }
+  }
 });
