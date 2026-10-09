@@ -14,6 +14,7 @@ import { GatewayFunding } from "./GatewayFunding";
 import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPurchaseResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
+import { startLineRefresh } from "./lineRefresh";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -83,6 +84,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
   const [lineInputError, setLineInputError] = useState("");
   const [line, setLine] = useState<CandidateLine | null>(null);
+  const [lineRefreshError, setLineRefreshError] = useState("");
   const [pending, setPending] = useState<CandidatePending | null>(null);
   const [journalError, setJournalError] = useState("");
   const [gatewayHeld, setGatewayHeld] = useState(false);
@@ -106,6 +108,30 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const autoChecked = useRef("");
   const correctNetwork = chainId === CANDIDATE_FUNDING.chainId;
   const canWrite = Boolean(account && correctNetwork && !busy && !pending && !journalError && !gatewayHeld);
+  const loadedLineId = line?.lineId;
+  const lineViewRevision = revision.current;
+
+  // A sponsor can be watching while the agent purchases or repays elsewhere.
+  // Keep these reads separate from transaction reviews and recovery journals.
+  useEffect(() => {
+    setLineRefreshError("");
+    if (!loadedLineId || mode !== "manage" || busy || prepared || pending || journalError || gatewayHeld) return;
+    const isCurrent = () => revision.current === lineViewRevision;
+    return startLineRefresh({
+      read: () => readCandidateLine(client, loadedLineId),
+      onValue: value => {
+        if (!isCurrent()) return;
+        setLine(previous => isCurrent() && previous?.lineId === value.lineId && value.observedBlock >= previous.observedBlock ? value : previous);
+        setLineRefreshError("");
+      },
+      onError: () => {
+        if (isCurrent()) setLineRefreshError("Automatic refresh is temporarily unavailable. Showing the last confirmed values and retrying. You can also select Refresh line.");
+      },
+      visible: () => document.visibilityState === "visible",
+      focusTarget: window,
+      visibilityTarget: document,
+    });
+  }, [loadedLineId, lineViewRevision, account, chainId, mode, busy, prepared, pending, journalError, gatewayHeld, client, readCandidateLine]);
 
   const checkUnresolvedPurchase = useCallback(() => {
     if (!service || !account) { setUnresolvedPurchase(false); return; }
@@ -555,6 +581,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       {line && <div className="fundingLine">
         <div className="fundingPanelHead"><h3>{line.stateName === "DRAWN" ? "Purchase awaiting repayment" : line.stateName === "OPEN" ? "Line open" : line.stateName === "CLOSED" ? "Line closed" : "Line defaulted"}</h3>
           <span>Updated at block {line.observedBlock.toString()}</span></div>
+        <p className="fundingScope">Balances refresh automatically while this page is visible.</p>
+        {lineRefreshError && <p className="fundingCallout" role="status">{lineRefreshError}</p>}
         <dl className="fundingMetrics">
           <div><dt>Available reserve</dt><dd>{usdc(line.availableReserve)} <small>USDC</small></dd></div>
           <div><dt>Outstanding debt</dt><dd>{usdc(line.principalOutstanding)} <small>USDC</small></dd></div>
