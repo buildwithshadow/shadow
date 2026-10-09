@@ -230,7 +230,7 @@ test('guarded testnet refuses mainnet responses and keeps the unresolved wallet 
 });
 
 test('explicit guarded testnet entry point retains guarded caps, network checks and stale-draw refusal',async()=>{
-  for(const patch of [{chainId:5042},{chainId:1},{maxAmount:'50001'},{maxNetworkFee:parseUnits('0.021',18).toString()}]){
+  for(const patch of [{chainId:5042},{chainId:1},{maxAmount:'50001'},{maxNetworkFee:parseUnits('0.030000000000000001',18).toString()}]){
     assert.throws(()=>setup({config:{...testnetConfig,...patch}},createCircleGuardedTestnetRepayer));
   }
   for(const patch of [{chainId:5042},{draw:endpointHash}]){
@@ -240,6 +240,38 @@ test('explicit guarded testnet entry point retains guarded caps, network checks 
   const x=setupTestnet();
   const mainnet=createCircleGuardedRepayer({...x.options,config});
   assert.notEqual(mainnet.operationKey(repay),x.adapter.operationKey(repay));
+});
+
+test('guarded testnet repayment accepts the observed fee and exact 0.03 ceiling for the same draw',async()=>{
+  for(const fee of ['0.020700798075','0.03']) {
+    const x=setup({config:{...testnetConfig,maxNetworkFee:parseUnits('0.03',18).toString()}},createCircleGuardedTestnetRepayer);
+    x.state.fee=fee;
+    assert.equal((await x.adapter.execute(repay)).status,'confirmed');
+    assert.equal((await x.adapter.execute(repay)).status,'confirmed');
+    assert.equal(x.state.sends,1);assert.equal(x.state.request.callData,repay.data);
+    assert.equal(x.state.request.blockchain,'ARC-TESTNET');assert.equal(x.state.request.amount,'0');
+  }
+});
+
+test('guarded testnet repayment respects lower configured limits and rejects excess fees before journaling',async()=>{
+  for(const [cap,fee] of [['0.02','0.020700798075'],['0.03','0.030000000000000001']]) {
+    const x=setup({config:{...testnetConfig,maxNetworkFee:parseUnits(cap,18).toString()}},createCircleGuardedTestnetRepayer);
+    x.state.fee=fee;
+    await assert.rejects(()=>x.adapter.execute(repay),error=>error.message.includes(`Quote: ${fee} USDC; cap: ${cap} USDC`));
+    assert.equal(x.state.sends,0);assert.equal(x.values.size,0);
+    assert.equal((await x.adapter.reconcile(x.adapter.operationKey(repay))).status,'not-submitted');
+  }
+  assert.throws(()=>setup({config:{...config,maxNetworkFee:parseUnits('0.03',18).toString()}}),/Invalid bounded execution limits/);
+});
+
+test('a higher testnet fee allowance cannot replace an unresolved repayment',async()=>{
+  const x=setupTestnet();x.state.lose=true;
+  const first=await x.adapter.execute(repay);assert.equal(first.status,'unknown');
+  const originalKey=x.state.request.idempotencyKey;
+  const resumed=createCircleGuardedTestnetRepayer({...x.options,config:{...testnetConfig,maxNetworkFee:parseUnits('0.03',18).toString()}});
+  assert.equal((await resumed.execute(repay)).status,'unknown');
+  assert.equal((await resumed.reconcile(first.key)).status,'confirmed');
+  assert.equal(x.state.sends,1);assert.equal(x.state.request.idempotencyKey,originalKey);
 });
 
 test('guarded path never sends generic repayment, purchases, or owner controls', async () => {

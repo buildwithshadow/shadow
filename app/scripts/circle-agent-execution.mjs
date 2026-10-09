@@ -5,6 +5,7 @@ import legacyAbi from './float-mainnet-abi.json' with { type: 'json' };
 
 const TESTNET = 5042002;
 export const GUARDED_TESTNET_PURCHASE_FEE_CAP = '50000000000000000'; // 0.05 test USDC, purchase execution only.
+export const GUARDED_TESTNET_REPAYMENT_FEE_CAP = '30000000000000000'; // 0.03 test USDC, guarded testnet repayment actions only.
 export const circleGuardedRepaymentAbi = [...legacyAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...parseAbi([
   'function repayForDraw(bytes32 lineId,bytes32 expectedDraw,uint256 amount)',
   'function currentDrawDigest(bytes32 lineId) view returns (bytes32)',
@@ -56,7 +57,9 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
   const abi = guarded || purchaseOnly ? circleGuardedRepaymentAbi : legacyAbi;
   const agent = getAddress(config.agent), contract = getAddress(config.contract);
   const cap = BigInt(config.maxAmount), feeCap = BigInt(config.maxNetworkFee);
-  const maximumFee = purchaseOnly && CHAIN === TESTNET ? BigInt(GUARDED_TESTNET_PURCHASE_FEE_CAP) : parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18);
+  const maximumFee = CHAIN === TESTNET && purchaseOnly ? BigInt(GUARDED_TESTNET_PURCHASE_FEE_CAP)
+    : CHAIN === TESTNET && guarded ? BigInt(GUARDED_TESTNET_REPAYMENT_FEE_CAP)
+    : parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18);
   requireThat(cap > 0n && cap <= (purchaseOnly ? 5_000n : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= maximumFee, 'Invalid bounded execution limits.');
   if (guarded) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && /^0x[0-9a-fA-F]{64}$/.test(config.expectedDraw) && !/^0x0{64}$/.test(config.expectedDraw), 'Pin the exact line and nonzero reviewed draw.');
   if (purchaseOnly) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && !/^0x0{64}$/.test(config.expectedLineId), 'Pin the exact nonzero purchase line.');

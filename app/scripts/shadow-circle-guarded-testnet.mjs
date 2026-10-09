@@ -9,7 +9,7 @@ import { createCandidateFundingKit, candidateFundingChain } from '../src/candida
 import { createSelfServicePurchase } from '../src/selfServicePurchase.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 import { createCircleRunnerState } from './circle-agent-runner-state.mjs';
-import { createCircleGuardedTestnetPurchaser, createCircleGuardedTestnetRepayer, GUARDED_TESTNET_PURCHASE_FEE_CAP } from './circle-agent-execution.mjs';
+import { createCircleGuardedTestnetPurchaser, createCircleGuardedTestnetRepayer, GUARDED_TESTNET_PURCHASE_FEE_CAP, GUARDED_TESTNET_REPAYMENT_FEE_CAP } from './circle-agent-execution.mjs';
 import { createCircleCliTransport, createCircleGuardedTestnetPurchaseTransport } from './circle-agent-cli-transport.mjs';
 import { createCircleGuardedTestnetCliTransport } from './circle-agent-guarded-cli.mjs';
 import { createGuardedCircleOperations } from './circle-agent-guarded-operations.mjs';
@@ -24,7 +24,7 @@ export function parseGuardedAgentArgs(args) {
   return options;
 }
 export async function runGuardedAgent(options) {
-  if (options.command === 'help') return { help: 'Guarded Arc testnet only. doctor --agent ADDRESS; inspect|purchase|recover|repay --agent ADDRESS --line LINE. Preserve the original --state directory and isolated --runtime. Only purchase and repay with --confirm can sign or send. Price and repayment are exactly 0.005 test USDC. Network fee estimate ceilings are 0.05 test USDC for purchase and 0.02 per repayment operation; these do not guarantee actual fees. Sponsor admission and funding are separate. This is an engineering runner, not a public mainnet release.' };
+  if (options.command === 'help') return { help: 'Guarded Arc testnet only. doctor --agent ADDRESS; inspect|purchase|recover|repay --agent ADDRESS --line LINE. Preserve the original --state directory and isolated --runtime. Only purchase and repay with --confirm can sign or send. Price and repayment are exactly 0.005 test USDC. Network fee estimate ceilings are 0.05 test USDC for purchase and 0.03 per repayment operation; these do not guarantee actual fees. Sponsor admission and funding are separate. This is an engineering runner, not a public mainnet release.' };
   const { agent, line, command } = options;
   const client = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL,
     { expectedChainId: deployment.chainId, fallbackUrls: ['https://rpc.blockdaemon.testnet.arc.io', 'https://rpc.drpc.testnet.arc.io'], timeout: 15000,
@@ -56,7 +56,7 @@ export async function runGuardedAgent(options) {
       const common = { entrypoint, agent, journal, expectedLineId: line, maxAmount: service.principal };
       const scope = { contract: deployment.address, provider: service.provider, endpointHash: keccak256(stringToHex(service.endpoint)) };
       const config = { chainId: deployment.chainId, agent, ...scope, runtimeHash: deployment.runtimeHash,
-        expectedLineId: line, maxAmount: service.principal, maxNetworkFee: '20000000000000000' };
+        expectedLineId: line, maxAmount: service.principal, maxNetworkFee: GUARDED_TESTNET_REPAYMENT_FEE_CAP };
       const transport = await createCircleGuardedTestnetPurchaseTransport({ ...common, ...scope });
       const purchaseExecutor = createCircleGuardedTestnetPurchaser({ client, circle: transport, journal,
         config: { ...config, maxNetworkFee: GUARDED_TESTNET_PURCHASE_FEE_CAP } });
