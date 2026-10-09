@@ -93,14 +93,14 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const recoveryDisabled = !account || !correctNetwork || Boolean(busy);
   const disabled = recoveryDisabled || fundingPending;
   const blocker = !account ? 'Connect the agent wallet to continue.' : !correctNetwork ? `Switch to ${network} to continue.`
-    : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : busy ? busy : setup.error || null;
+    : busy ? busy : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : setup.error || null;
   const signable = record?.stage === 'prepared' || record?.stage === 'accepted';
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
     <h2 id="purchase-title">Buy a service with your agent’s budget</h2>
     <p>{service.name} · {formatUnits(BigInt(service.principal), 6)} {currency}. {service.requestKind === 'arc-wallet' ? 'Receive a report of your connected wallet’s USDC balance, checked at a confirmed block using two RPC providers.' : 'Receive a report verifying a recorded Shadow payment and repayment. This test service uses public transaction data.'}</p>
     <p>Connect the agent’s browser wallet to sign and execute the purchase. It pays {mainnet ? 'mainnet' : 'testnet'} gas in USDC. The sponsor’s line covers the service price and records the repayment obligation.</p>
-    <ol className="purchaseSteps" aria-label="Purchase steps">
+    <ol className="purchaseSteps" role="list" aria-label="Purchase steps">
       <li data-state={!record ? 'current' : 'complete'} aria-current={!record ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">1</span><span className="purchaseStepLabel">Line</span></li>
       <li data-state={record && signable ? reviewing && busy ? 'complete' : 'current' : record ? 'complete' : 'upcoming'} aria-current={record && signable && !(reviewing && busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">2</span><span className="purchaseStepLabel">Review terms</span></li>
       <li data-state={signable ? reviewing && busy ? 'current' : 'upcoming' : record ? 'complete' : 'upcoming'} aria-current={signable && reviewing && Boolean(busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">3</span><span className="purchaseStepLabel">Sign and submit</span></li>
@@ -111,7 +111,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     {!record && <form onSubmit={event => { event.preventDefault(); void action('prepare'); }}>
       <div className="fundingField"><label htmlFor="purchase-line">Funding line ID</label>
         <input id="purchase-line" value={lineId} onChange={event => onLineIdChange(event.target.value)} required disabled={Boolean(busy)} autoComplete="off" spellCheck={false} />
-      </div><div className="fundingActions"><button type="submit" className="fundingPrimary" disabled={disabled} aria-describedby={disabled ? 'purchase-blocker-hint' : undefined}>Review service purchase</button>
+      </div><div className="fundingActions"><button type="submit" className="fundingPrimary" disabled={disabled} aria-describedby={blocker ? 'purchase-blocker-hint' : undefined}>Review service purchase</button>
         {blocker && <small id="purchase-blocker-hint" role="status">{blocker}</small>}</div>
     </form>}
     {record && <>
@@ -130,11 +130,11 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     {result && <details open><summary>Your verified service result</summary><pre className="publicServiceResult">{result}</pre></details>}
     <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="purchase-review-title" aria-describedby="purchase-review-description" onCancel={event => { if (inFlight.current) event.preventDefault(); else setReviewing(false); }}>
       {message && <><h2 id="purchase-review-title">Review this service purchase</h2>
-        <p id="purchase-review-description">Review the purchase terms before signing. A payment does not guarantee service delivery.</p>
-        <dl className="fundingDetails purchaseTerms"><div><dt>Price</dt><dd>{formatUnits(BigInt(message.principal), 6)} {currency}</dd></div><div><dt>Provider</dt><dd><code>{message.provider}</code></dd></div><div><dt>Sponsor</dt><dd><code>{message.sponsor}</code></dd></div><div><dt>Agent</dt><dd><code>{message.agent}</code></dd></div><div><dt>Repayment due</dt><dd>{new Date(Number(message.dueAt) * 1000).toLocaleString()}</dd></div><div><dt>Repayment obligation</dt><dd>Equal to the price. The contract records this debt.</dd></div></dl>
+        <p id="purchase-review-description">Pay {formatUnits(BigInt(message.principal), 6)} {currency} from the sponsor’s line. Review the terms before signing. A payment does not guarantee service delivery.</p>
+        <dl className="fundingDetails"><div><dt>Price</dt><dd>{formatUnits(BigInt(message.principal), 6)} {currency}</dd></div><div><dt>Provider</dt><dd><code>{message.provider}</code></dd></div><div><dt>Sponsor</dt><dd><code>{message.sponsor}</code></dd></div><div><dt>Agent</dt><dd><code>{message.agent}</code></dd></div><div><dt>Repayment due</dt><dd>{new Date(Number(message.dueAt) * 1000).toLocaleString()}</dd></div><div><dt>Repayment obligation</dt><dd>Equal to the price. The contract records this debt.</dd></div></dl>
         <p>Your wallet will request a purchase signature and a separate {network} transaction. Leave other wallet transactions closed until it finishes.</p>
-        <div className="fundingActions"><button type="button" autoFocus disabled={Boolean(busy)} aria-describedby={busy ? 'purchase-back-hint' : undefined} onClick={() => setReviewing(false)}>Back</button><button type="button" className="fundingPrimary" disabled={disabled || !signable} aria-describedby={disabled || !signable ? 'purchase-submit-hint' : undefined} onClick={() => void action('submit')}>Sign & submit in wallet</button>
-          {(disabled || !signable) && <small id="purchase-submit-hint">{blocker ?? 'This saved purchase is not ready to sign.'}</small>}
+        <div className="fundingActions"><button type="button" autoFocus disabled={Boolean(busy)} aria-describedby={busy ? 'purchase-back-hint' : undefined} onClick={() => setReviewing(false)}>Back</button><button type="button" className="fundingPrimary" disabled={disabled || !signable} aria-describedby={busy ? 'purchase-back-hint' : disabled || !signable ? 'purchase-submit-hint' : undefined} onClick={() => void action('submit')}>Sign & submit in wallet</button>
+          {(disabled || !signable) && !busy && <small id="purchase-submit-hint">{blocker ?? 'This saved purchase is not ready to sign.'}</small>}
         </div>
         {busy && <p id="purchase-back-hint" role="status">{busy}</p>}
       </>}
