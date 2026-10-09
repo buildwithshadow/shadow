@@ -4,8 +4,7 @@ import { GUARDED_TESTNET as deployment, GUARDED_TESTNET_SERVICE as service } fro
 
 const must = (ok, message) => { if (!ok) throw new Error(message); };
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
-const amount = BigInt(service.principal);
-const endpointHash = keccak256(stringToHex(service.endpoint));
+import { GUARDED_MAINNET, GUARDED_MAINNET_SERVICE } from '../src/guardedMainnet.ts';
 const kinds = ['purchase', 'approve-repay', 'repay'];
 
 /** Orchestration only. Call inside the original journal's runner lock.
@@ -13,6 +12,16 @@ const kinds = ['purchase', 'approve-repay', 'repay'];
  * their adapter and reviewed draw; recovery never substitutes the current draw.
  */
 export function createGuardedCircleOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }) {
+  return createOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }, deployment, service);
+}
+
+export function createGuardedMainnetCircleOperations(options) {
+  return createOperations(options, GUARDED_MAINNET, GUARDED_MAINNET_SERVICE);
+}
+
+function createOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }, deployment, service) {
+  const amount = BigInt(service.principal);
+  const endpointHash = keccak256(stringToHex(service.endpoint));
   agent = getAddress(agent);
   must(/^0x[0-9a-fA-F]{64}$/.test(line) && !same(line, zeroHash), 'Exact nonzero line required.');
   must(state.chainId === deployment.chainId && same(state.contract, deployment.address)
@@ -90,7 +99,7 @@ export function createGuardedCircleOperations({ agent, line, state, save, purcha
     must(same(current.agent, agent), 'Repayment line belongs to another agent.');
     if (current.principalOutstanding === 0n) return { status: 'no-debt' };
     must([2, 3].includes(Number(current.state)) && current.principalOutstanding === amount,
-      'This runner repays exactly 0.005 test USDC of reviewed agent debt.');
+      'This runner repays exactly 0.005 USDC of reviewed agent debt on its pinned chain.');
     const plan = { version: 1, line, draw: current.drawDigest, amount: service.principal };
     validatePlan(plan);
     if (state.guardedRepayment) must(same(state.guardedRepayment.draw, plan.draw), 'Current debt differs from the original repayment review. Do not rebind it.');

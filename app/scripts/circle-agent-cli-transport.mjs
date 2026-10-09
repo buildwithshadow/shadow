@@ -13,6 +13,7 @@ import approval from './circle-cli-dependency-approval.json' with { type: 'json'
 export const CIRCLE_CLI_SHA256 = approval.cliEntrypointSha256;
 const USDC = '0x3600000000000000000000000000000000000000';
 const CONTRACT = '0xb31d9e17410b10a619b66df0c31f59acbb33b553';
+export const GUARDED_MAINNET_CONTRACT = '0x708c8c987eb4cd14445ac2c65ea712b2084888eb';
 export const GUARDED_TESTNET_CONTRACT = '0xd39d55cc0c84408dcc409badb776459641dfd4be';
 const requireThat = (ok, message) => { if (!ok) throw new Error(message); };
 
@@ -27,7 +28,11 @@ export function guardedTestnetPurchaseCompatibility(source) {
   return rawCalldataForContract(source, GUARDED_TESTNET_CONTRACT, true);
 }
 
-function rawCalldataForContract(source, contract, purchaseOnly = false) {
+export function guardedMainnetPurchaseCompatibility(source) {
+  return rawCalldataForContract(source, GUARDED_MAINNET_CONTRACT, true, 'ARC');
+}
+
+function rawCalldataForContract(source, contract, purchaseOnly = false, network = 'ARC-TESTNET') {
   requireThat(createHash('sha256').update(source).digest('hex') === CIRCLE_CLI_SHA256, `Circle CLI source differs from the tested ${approval.circleVersion} release. Do not patch an unknown version.`);
   const start = source.indexOf('async function handleAgentExecute(');
   const end = source.indexOf('async function handleLocalExecuteEstimate', start);
@@ -35,7 +40,7 @@ function rawCalldataForContract(source, contract, purchaseOnly = false) {
   let section = source.slice(start, end);
   section = section.replace('  const proxyUrl', `  const rawData = readFlagValue(args2, '--shadow-call-data');
   const expectedAgent = readFlagValue(args2, '--shadow-agent');
-  if (!rawData || !/^0x[0-9a-fA-F]+$/.test(rawData) || blockchain !== 'ARC-TESTNET' || !${JSON.stringify(purchaseOnly ? [contract] : [contract, USDC])}.includes(contractAddress.toLowerCase()) || !expectedAgent || wallet.address.toLowerCase() !== expectedAgent.toLowerCase() || value !== '0'${purchaseOnly ? ` || !rawData.toLowerCase().startsWith('${toFunctionSelector(abi.find(f => f.name === 'executeSpend'))}')` : ''}) throw new Error('Shadow testnet compatibility scope mismatch');
+  if (!rawData || !/^0x[0-9a-fA-F]+$/.test(rawData) || blockchain !== '${network}' || !${JSON.stringify(purchaseOnly ? [contract] : [contract, USDC])}.includes(contractAddress.toLowerCase()) || !expectedAgent || wallet.address.toLowerCase() !== expectedAgent.toLowerCase() || value !== '0'${purchaseOnly ? ` || !rawData.toLowerCase().startsWith('${toFunctionSelector(abi.find(f => f.name === 'executeSpend'))}')` : ''}) throw new Error('Shadow compatibility scope mismatch');
   const proxyUrl`);
   const pattern = /abiFunctionSignature,\s*abiParameters: abiParameters.length > 0 \? abiParameters : void 0,/g;
   requireThat([...section.matchAll(pattern)].length === 2, 'Unexpected Circle CLI request shape.');
@@ -49,27 +54,31 @@ export async function createCircleCliTransport({ entrypoint, agent, journal, run
   return createTransport({ entrypoint, agent, journal, runtimeDirectory, run });
 }
 
+export async function createCircleGuardedMainnetPurchaseTransport(options) {
+  return createTransport(options, purchasePolicy(options, true));
+}
+
 export async function createCircleGuardedTestnetPurchaseTransport(options) {
   const policy = purchasePolicy(options);
   return createTransport(options, policy);
 }
 
-function purchasePolicy({ expectedLineId, provider, endpointHash, maxAmount }) {
+function purchasePolicy({ expectedLineId, provider, endpointHash, maxAmount }, mainnet = false) {
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(expectedLineId) && !/^0x0{64}$/.test(expectedLineId), 'Pin the exact nonzero purchase line.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(endpointHash), 'Pin the provider endpoint hash.');
   const amount = BigInt(maxAmount);
-  requireThat(amount > 0n && amount <= 5000n, 'Guarded testnet purchase limit exceeds 0.005 USDC.');
-  return Object.freeze({ expectedLineId: expectedLineId.toLowerCase(), provider: getAddress(provider), endpointHash: endpointHash.toLowerCase(), amount });
+  requireThat(amount > 0n && amount <= 5000n, 'Guarded purchase limit exceeds 0.005 USDC.');
+  return Object.freeze({ expectedLineId: expectedLineId.toLowerCase(), provider: getAddress(provider), endpointHash: endpointHash.toLowerCase(), amount, chainId: mainnet ? 5042 : 5042002, network: mainnet ? 'ARC' : 'ARC-TESTNET', contract: mainnet ? GUARDED_MAINNET_CONTRACT : GUARDED_TESTNET_CONTRACT });
 }
 
-async function createTransport({ entrypoint, agent, journal, runtimeDirectory = journal?.runtimeDirectory, run = runFile }, policy = null) {
+async function createTransport({ entrypoint, agent, journal, runtimeDirectory = journal?.runtimeDirectory, run = runFile, beforeExecute, beforeSign }, policy = null) {
   const address = getAddress(agent);
   const original = resolve(entrypoint);
   const source = await readFile(original, 'utf8');
-  const patched = policy ? guardedTestnetPurchaseCompatibility(source) : rawCalldataCompatibility(source);
+  const patched = policy ? (policy.chainId === 5042 ? guardedMainnetPurchaseCompatibility(source) : guardedTestnetPurchaseCompatibility(source)) : rawCalldataCompatibility(source);
   const compatibility = await freezeCircleCliSource(patched, original, runtimeDirectory);
   entrypoint = await freezeCircleCliSource(source, original, runtimeDirectory);
-  return createDriver({ entrypoint, compatibility, agent: address, journal, run }, policy);
+  return createDriver({ entrypoint, compatibility, agent: address, journal, run, beforeExecute, beforeSign }, policy);
 }
 
 // Split from preparation so transport behavior can be tested without authentication or npm downloads.
@@ -82,14 +91,22 @@ export function createCircleGuardedTestnetPurchaseDriver(options) {
   return createDriver(options, purchasePolicy(options));
 }
 
-function createDriver({ entrypoint, compatibility, agent, journal, run = runFile }, policy = null) {
+export function createCircleGuardedMainnetPurchaseDriver(options) {
+  return createDriver(options, purchasePolicy(options, true));
+}
+
+function createDriver({ entrypoint, compatibility, agent, journal, run = runFile, beforeExecute, beforeSign }, policy = null) {
   const address = getAddress(agent);
-  const deployment = policy ? GUARDED_TESTNET_CONTRACT : CONTRACT;
+  const deployment = policy ? policy.contract : CONTRACT;
+  const network = policy?.network ?? 'ARC-TESTNET';
+  const chainId = policy?.chainId ?? 5042002;
+  const sessionKey = chainId === 5042 ? 'mainnet' : 'testnet';
+  if (chainId === 5042) requireThat(typeof beforeExecute === 'function' && typeof beforeSign === 'function', 'Fresh mainnet signing and pre-send guards are required.');
   function checkPurchase(intent) {
     requireThat(getAddress(intent.agent) === address && getAddress(intent.executor) === address
       && intent.lineId.toLowerCase() === policy.expectedLineId && getAddress(intent.provider) === policy.provider
       && intent.endpointHash.toLowerCase() === policy.endpointHash && BigInt(intent.principal) === policy.amount
-      && BigInt(intent.maximumTotalDebt) === policy.amount, 'Purchase exceeds the pinned guarded testnet policy.');
+      && BigInt(intent.maximumTotalDebt) === policy.amount, 'Purchase exceeds the pinned guarded policy.');
   }
   async function command(args, raw = false) {
     const environment = circleCliEnvironment();
@@ -102,7 +119,7 @@ function createDriver({ entrypoint, compatibility, agent, journal, run = runFile
     }
   }
   function args(request) {
-    requireThat(request.blockchain === 'ARC-TESTNET' && getAddress(request.sourceAddress) === address && request.amount === '0', 'Circle transport identity mismatch.');
+    requireThat(request.blockchain === network && getAddress(request.sourceAddress) === address && request.amount === '0', 'Circle transport identity mismatch.');
     requireThat((policy ? [deployment] : [deployment, USDC]).includes(request.contractAddress.toLowerCase()), 'Unsupported Circle destination.');
     requireThat(/^0x[0-9a-fA-F]+$/.test(request.callData), 'Invalid calldata.');
     if (policy) {
@@ -110,15 +127,15 @@ function createDriver({ entrypoint, compatibility, agent, journal, run = runFile
       requireThat(call.functionName === 'executeSpend' && encodeFunctionData({ abi, ...call }).toLowerCase() === request.callData.toLowerCase(), 'Only canonical guarded purchases are supported.');
       checkPurchase(call.args[0]);
     }
-    return ['wallet', 'execute', 'shadowRawCall()', '--contract', request.contractAddress, '--address', address, '--chain', 'ARC-TESTNET', '--shadow-agent', address, '--shadow-call-data', request.callData];
+    return ['wallet', 'execute', 'shadowRawCall()', '--contract', request.contractAddress, '--address', address, '--chain', network, '--shadow-agent', address, '--shadow-call-data', request.callData];
   }
   async function session() {
     const status = await command(['wallet', 'status', '--type', 'agent']);
-    requireThat(status?.testnet?.tokenStatus === 'VALID', 'No valid Circle testnet session. Run Circle wallet login with --testnet privately.');
-    const listing = await command(['wallet', 'list', '--type', 'agent', '--chain', 'ARC-TESTNET']);
+    requireThat(status?.[sessionKey]?.tokenStatus === 'VALID', `No valid Circle ${sessionKey} session. Restore authentication privately.`);
+    const listing = await command(['wallet', 'list', '--type', 'agent', '--chain', network]);
     const wallets = Array.isArray(listing) ? listing : listing?.wallets;
     requireThat(Array.isArray(wallets) && wallets.some(w => w.address?.toLowerCase() === address.toLowerCase()), 'This address is not in the logged-in Circle Agent Wallet account.');
-    return { agent: address, chainId: 5042002, authenticated: true };
+    return { agent: address, chainId, authenticated: true };
   }
   return {
     session,
@@ -126,8 +143,8 @@ function createDriver({ entrypoint, compatibility, agent, journal, run = runFile
     async estimateActivation() {
       requireThat(!policy, 'Use the existing testnet wallet setup for activation.');
       await session();
-      const result = await command(['wallet', 'transfer', address, '--amount', '0', '--address', address, '--chain', 'ARC-TESTNET', '--estimate']);
-      requireThat(result?.blockchain === 'ARC-TESTNET', 'Unexpected activation estimate network.');
+      const result = await command(['wallet', 'transfer', address, '--amount', '0', '--address', address, '--chain', network, '--estimate']);
+      requireThat(result?.blockchain === network, 'Unexpected activation estimate network.');
       return { networkFee: result?.medium?.networkFee };
     },
     async activate({ idempotencyKey }) {
@@ -135,20 +152,24 @@ function createDriver({ entrypoint, compatibility, agent, journal, run = runFile
       requireThat(typeof idempotencyKey === 'string' && /^[0-9a-f-]{36}$/i.test(idempotencyKey), 'Invalid activation request key.');
       try { await session(); }
       catch { const error = new Error('Circle session check failed before activation submission.'); error.beforeSubmission = true; throw error; }
-      return command(['wallet', 'transfer', address, '--amount', '0', '--address', address, '--chain', 'ARC-TESTNET', '--idempotency-key', idempotencyKey]);
+      return command(['wallet', 'transfer', address, '--amount', '0', '--address', address, '--chain', network, '--idempotency-key', idempotencyKey]);
     },
     async estimate(request) {
       const arguments_ = args(request);
       await session();
       const result = await command([...arguments_, '--estimate'], true);
-      if (policy) requireThat(result?.blockchain === 'ARC-TESTNET', 'Unexpected purchase estimate network.');
+      if (policy) requireThat(result?.blockchain === network, 'Unexpected purchase estimate network.');
       return { networkFee: result?.medium?.networkFee };
     },
     async execute(request) {
       const arguments_ = args(request);
       if (policy) requireThat(/^[0-9a-f-]{36}$/i.test(request.idempotencyKey), 'Invalid original purchase request identity.');
       try { await session(); }
-      catch { const error = new Error('Circle session check failed before submission. Restore the local testnet session and recover the saved request.'); error.beforeSubmission = true; throw error; }
+      catch { const error = new Error('Circle session check failed before submission. Restore the correct local session and recover the saved request.'); error.beforeSubmission = true; throw error; }
+      if (chainId === 5042) {
+        try { await beforeExecute(request); }
+        catch { const error = new Error('Mainnet monitor authorization failed before submission.'); error.beforeSubmission = true; throw error; }
+      }
       const key = `circle-response:${request.idempotencyKey}`;
       const response = await command([...arguments_, '--idempotency-key', request.idempotencyKey], true);
       // Keep a second durable copy before handing the response to the execution adapter.
@@ -160,7 +181,7 @@ function createDriver({ entrypoint, compatibility, agent, journal, run = runFile
       if (!saved || saved.idempotencyKey !== idempotencyKey || (transactionId && saved.id !== transactionId)) return null;
       if (saved.txHash) return saved;
       // History is read-only; bind using the already-persisted Circle ID, never only amount/address.
-      const history = await command(['transaction', 'list', '--address', address, '--chain', 'ARC-TESTNET', '--limit', '50']);
+      const history = await command(['transaction', 'list', '--address', address, '--chain', network, '--limit', '50']);
       const found = history?.transactions?.find(t => t.id === saved.id);
       if (!found) return saved;
       const result = { ...found, idempotencyKey };
@@ -172,12 +193,13 @@ function createDriver({ entrypoint, compatibility, agent, journal, run = runFile
       const typed = JSON.parse(payload), m = typed.message;
       const expectedTypes = abi.find(f => f.name === 'executeSpend').inputs[0].components.map(({ name, type }) => ({ name, type }));
       requireThat(JSON.stringify(typed.types?.SpendIntent) === JSON.stringify(expectedTypes), 'Unexpected SpendIntent schema.');
-      requireThat(typed.primaryType === 'SpendIntent' && typed.domain?.name === 'ShadowFloatMainnet' && typed.domain?.version === '1' && Number(typed.domain.chainId) === 5042002 && getAddress(typed.domain.verifyingContract) === getAddress(contract), 'Unexpected signing domain.');
+      requireThat(typed.primaryType === 'SpendIntent' && typed.domain?.name === 'ShadowFloatMainnet' && typed.domain?.version === '1' && Number(typed.domain.chainId) === chainId && getAddress(typed.domain.verifyingContract) === getAddress(contract), 'Unexpected signing domain.');
       if (policy) {
         requireThat(getAddress(contract) === getAddress(deployment) && getAddress(provider) === policy.provider && endpointHash.toLowerCase() === policy.endpointHash, 'Guarded signing scope changed.');
         checkPurchase(m);
       } else requireThat(getAddress(m.agent) === address && getAddress(m.executor) === address && getAddress(m.provider) === getAddress(provider) && m.endpointHash.toLowerCase() === endpointHash.toLowerCase() && BigInt(m.principal) === 50000n && BigInt(m.maximumTotalDebt) === 50000n, 'Signing request exceeds the bounded test service.');
-      const result = await command(['wallet', 'sign', 'typed-data', payload, '--address', address, '--chain', 'ARC-TESTNET']);
+      if (chainId === 5042) await beforeSign(typed);
+      const result = await command(['wallet', 'sign', 'typed-data', payload, '--address', address, '--chain', network]);
       requireThat(typeof result?.signature === 'string' && /^0x[0-9a-fA-F]+$/.test(result.signature), 'Circle returned no valid signature.');
       return result.signature;
     },

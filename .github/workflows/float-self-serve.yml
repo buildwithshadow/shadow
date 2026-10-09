@@ -44,6 +44,7 @@ on:
       - "ops/public-testnet-observer/**"
       - "app/scripts/shadow-circle-agent.mjs"
       - "app/scripts/shadow-circle-guarded-testnet.mjs"
+      - "app/scripts/shadow-circle-guarded-mainnet.mjs"
       - "app/src/savedTransactionLookup.ts"
       - "app/src/lineRefresh.ts"
       - "app/scripts/line-refresh.test.ts"
