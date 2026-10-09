@@ -26,8 +26,9 @@ export function createMainnetCircleSessionGuard({sessionPath,connection,monitor}
       const prior=session.recorded(digest);
       if(!prior){if(allowUnreserved)return session.reconcile();throw Error('The original execution session reservation is missing. Keep the Circle journal and inspect it.');}
       if(prior.txHash && txHash && !same(prior.txHash,txHash))throw Error('Session transaction identity changed.');
-      if(prior.status==='pending' && prior.txHash===null && txHash)session.beforeSend(digest,txHash);
-      return session.reconcile();
+      if(prior.txHash===null && txHash)session.attachTransactionHash(digest,txHash);
+      const report=await session.reconcile();
+      return {...report,recordedStatus:session.recorded(digest).status};
     });
   }
   return {check:message=>authorize(message),reserve:message=>authorize(message,true),recordOutcome,reconcile:()=>inSession(session=>session.reconcile())};

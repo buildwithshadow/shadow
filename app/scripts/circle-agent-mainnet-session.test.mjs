@@ -44,3 +44,13 @@ test('monitor failure does not reserve a digest and recovery preserves original 
   assert.equal(mainnetCircleSessionIntent(x.intent,x.connection).digest,digest);
  }finally{await x.cleanup();}
 });
+for(const status of [1,2])test(`late original hash is retained after terminal receipt status${status}`,async()=>{
+ const x=await setup();try{
+  const {digest}=await x.guard.reserve(x.intent);x.state.receipts[digest]=status;
+  await x.guard.recordOutcome(digest,undefined);
+  await x.guard.recordOutcome(digest,hash('8'));
+  const ledger=JSON.parse(await readFile(join(x.policy.ledgerDirectory,'ledger.json'),'utf8'));
+  assert.equal(ledger.entries[0].txHash,hash('8'));
+  await assert.rejects(()=>x.guard.recordOutcome(digest,hash('a')),/identity changed/);
+ }finally{await x.cleanup();}
+});

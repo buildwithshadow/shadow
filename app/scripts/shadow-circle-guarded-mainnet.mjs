@@ -14,6 +14,7 @@ import { createCircleGuardedCliTransport } from './circle-agent-guarded-cli.mjs'
 import { createGuardedMainnetCircleOperations } from './circle-agent-guarded-operations.mjs';
 import { createRpcReadTransport } from './rpc-read-transport.mjs';
 import { assertHealthySpendMonitor } from './float-mainnet-monitor-spend-guard.mjs';
+import { reconcileOriginalMainnetCirclePurchase } from './circle-agent-mainnet-recovery.mjs';
 import { createMainnetCircleSessionGuard, mainnetCircleSessionIntent } from './circle-agent-mainnet-session.mjs';
 import { decodeFunctionData } from 'viem';
 import { circleGuardedRepaymentAbi } from './circle-agent-execution.mjs';
@@ -101,10 +102,12 @@ export async function runGuardedMainnetAgent(options) {
         fetchImpl: async (...args) => { await flush(); return fetch(...args); },
         config: { chainId: deployment.chainId, account: agent, contract: deployment.address, runtimeHash: deployment.runtimeHash, ...service } });
       if (command === 'recover') {
-        const record=engine.load(), hadPurchase=Boolean(state.requests.purchase);
-        const recovered=await recoverAgentPurchase({ executor: operations, state, engine, client, save });
-        if(record && hadPurchase)await sessionGuard.recordOutcome(record.intent.digest, recovered.operations.purchase?.txHash, recovered.operations.purchase?.status==='not-submitted');
-        else await sessionGuard.reconcile();
+        const record=engine.load(), originalRequest=state.requests.purchase;
+        const sync=()=>reconcileOriginalMainnetCirclePurchase({journal,requestRecord:originalRequest,purchaseRecord:record,agent,sessionGuard});
+        await sync();
+        let recovered;
+        try { recovered=await recoverAgentPurchase({ executor: operations, state, engine, client, save }); }
+        finally { await sync(); }
         return { ...summary(await readLine()), ...recovered };
       }
       if (command === 'repay') { const repayment = await operations.repay(); return { ...summary(await readLine()), repayment }; }

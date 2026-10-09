@@ -1,3 +1,4 @@
+import { readFailedCircleSessionAttempt } from './circle-agent-mainnet-failure.mjs';
 import { randomUUID } from 'node:crypto';
 import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, formatUnits, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
@@ -171,6 +172,18 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     requireThat(/^0x[0-9a-fA-F]{64}$/.test(txHash), 'Invalid transaction hash.');
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     requireThat(receipt.blockNumber >= BigInt(record.expected.fromBlock), 'Receipt predates the request.');
+    if (purchaseOnly && CHAIN === 5042) {
+      const hasFailure = receipt.status === 'reverted' || receipt.logs.some(log => {
+        if (!same(log.address, entryPoint07Address)) return false;
+        try { const e=decodeEventLog({abi:entryPoint07Abi,data:log.data,topics:log.topics}); return e.eventName==='UserOperationEvent' && e.args.success===false; } catch { return false; }
+      });
+      if (hasFailure) {
+        const decoded=decode({to:record.request.contractAddress,data:record.request.callData,value:record.request.amount});
+        const failed=await readFailedCircleSessionAttempt({client,chainId:5042n,address:contract},
+          {message:decoded.args[0],digest:record.expected.digest,txHash},receipt);
+        if(failed)return {status:failed,txHash,blockHash:receipt.blockHash,blockNumber:receipt.blockNumber.toString()};
+      }
+    }
     requireThat(receipt.status === 'success', 'Transaction reverted.');
     const [finalized, canonical, transaction] = await Promise.all([
       client.getBlock({ blockTag: 'finalized' }),
