@@ -34,6 +34,13 @@ and its line spending ceiling is 0.005. The old public funding page creates
 lines on another contract and cannot supply this runner's line. A successful
 `doctor` result is an identity and session check, not lifecycle clearance.
 
+The opt-in browser route `/guarded-testnet` is built with
+`VITE_SHADOW_GUARDED_TESTNET_CANDIDATE=true`. It shares the pinned deployment
+and service above, starts with the bounded limits and requires sponsor
+admission. Its Circle handoff selects this runner. Browser repayments use
+`repayForDraw`, bound to the purchase shown at review. Gateway funding is not
+enabled on this route. Keep `/start` for the existing self-service deployment.
+
 ## Purchase, recover and repay
 
 Without `--confirm`, purchase and repayment only show the line. With it,

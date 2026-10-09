@@ -6,13 +6,16 @@ import {createPublicClient,createTestClient,createWalletClient,decodeFunctionDat
 import {account,startAnvil,e2eSkip} from './float-mainnet-e2e.mjs'
 import {CANDIDATE_FUNDING as TESTNET_FUNDING,candidateFundingAbi,candidateFundingChain as testnetFundingChain,guardedMainnetChain,createCandidateFundingKit,createGuardedMainnetFundingKit,type CandidateWalletClient,type CandidateOpenInput} from '../src/candidateFunding.ts'
 import {GUARDED_MAINNET} from '../src/guardedMainnet.ts'
+import {GUARDED_TESTNET} from '../src/guardedTestnet.ts'
 const guardedArtifact=JSON.parse(readFileSync(new URL('../../contracts/out/ShadowFloatMainnetGuarded.sol/ShadowFloatMainnetGuarded.json',import.meta.url),'utf8'))
 const input: CandidateOpenInput = { agent:account(2).address,provider:account(3).address,endpoint:'https://provider.example/result',reserve:'0.10',lineSpendCap:'0.15',dailySpendCap:'0.10',providerPerSpendCap:'0.05',providerDailyCap:'0.10',expiryDays:'7',repaymentHours:'24'}
 const typeString='SpendIntent(address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor)'
-for(const mainnet of [false,true]) test(`guarded ${mainnet?'mainnet':'testnet'} participant repayment binds the draw and recovers a lost wallet confirmation without resending`, { skip: e2eSkip, timeout: 60_000 }, async () => {
-  const CANDIDATE_FUNDING = mainnet ? GUARDED_MAINNET : TESTNET_FUNDING
+for(const profile of ['legacy-testnet','guarded-testnet','guarded-mainnet']) test(`${profile} participant repayment binds the draw and recovers a lost wallet confirmation without resending`, { skip: e2eSkip, timeout: 60_000 }, async () => {
+  const mainnet = profile === 'guarded-mainnet'
+  const bounded = profile !== 'legacy-testnet'
+  const CANDIDATE_FUNDING = mainnet ? GUARDED_MAINNET : bounded ? GUARDED_TESTNET : TESTNET_FUNDING
   const candidateFundingChain = mainnet ? guardedMainnetChain : testnetFundingChain
-  const price = mainnet ? 5_000n : 50_000n
+  const price = bounded ? 5_000n : 50_000n
   const anvil = await startAnvil(18581, [], BigInt(CANDIDATE_FUNDING.chainId))
   try {
     const owner = account(0), sponsorAccount = account(6), agentAccount = account(2), providerAccount = account(3)
@@ -76,7 +79,7 @@ for(const mainnet of [false,true]) test(`guarded ${mainnet?'mainnet':'testnet'} 
       return { publicClient, walletClient: injectedWallet(who), account: who, journal }
     }
     const sponsorSession = makeSession(sponsorAccount.address)
-    const localInput = { ...input, ...(mainnet?{lineSpendCap:'0.005',dailySpendCap:'0.005',providerPerSpendCap:'0.005',providerDailyCap:'0.005'}:{}), agent: agentAccount.address, provider: providerAccount.address }
+    const localInput = { ...input, ...(bounded?{lineSpendCap:'0.005',dailySpendCap:'0.005',providerPerSpendCap:'0.005',providerDailyCap:'0.005'}:{}), agent: agentAccount.address, provider: providerAccount.address }
     if(mainnet){
       await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...localInput,provider:CANDIDATE_FUNDING.usdc}),/EOA/);
       await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...localInput,lineSpendCap:'0.005001'}),/limit/);
