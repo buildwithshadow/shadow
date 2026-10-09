@@ -130,19 +130,22 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
     requireThat(audit && Array.isArray(audit.executions), "missing execution audit");
     check(audit.fromBlock === b.executor.fromBlock && audit.toBlock === observed.blockNumber, "EXECUTOR_AUDIT_INCOMPLETE", "executor audit does not cover the approved window");
     for (const event of audit.executions) {
+      const line = b.lines.find(entry => entry.lineId === event.lineId);
+      // Routed operations, including refusals, need the exact line's opt-in
+      // and verified attribution before any direct-executor exemption applies.
+      if (event.route !== undefined || line?.executorPolicy === "circle-agent-v07") {
+        check(["ProviderPaid", "SpendBlocked"].includes(event.event) && line?.executorPolicy === "circle-agent-v07"
+          && event.route === "circle-agent-v07" && lower(event.entryPoint) === lower(entryPoint07Address)
+          && hash(event.userOpHash) && address(event.sender) && lower(event.agent) === line.agent
+          && lower(event.executor) === line.agent,
+        "EXECUTOR_DRIFT", "execution did not prove the approved Circle agent's exact successful user operation");
+        continue;
+      }
       // SpendBlocked is the contract enforcing policy: no provider transfer or
       // debt was created. Preserve it in the snapshot, but do not let an agent
       // turn a refused request into an irreversible global executor incident.
       // Paid and unknown event types retain the strict executor check.
       if (event.event === "SpendBlocked" && typeof event.executor === "string" && isAddress(event.executor)) continue;
-      const line = b.lines.find(entry => entry.lineId === event.lineId);
-      if (event.event === "ProviderPaid" && line?.executorPolicy === "circle-agent-v07") {
-        check(event.route === "circle-agent-v07" && lower(event.entryPoint) === lower(entryPoint07Address)
-          && hash(event.userOpHash) && address(event.sender) && lower(event.agent) === line.agent
-          && lower(event.executor) === line.agent,
-        "EXECUTOR_DRIFT", "payment did not prove the approved Circle agent's exact successful user operation");
-        continue;
-      }
       const expectedExecutor = event.event === "ProviderPaid" && line?.executorPolicy === "agent-self"
         ? line.agent : b.executor.address;
       check(event.route === undefined && lower(event.sender) === expectedExecutor && lower(event.executor) === expectedExecutor,

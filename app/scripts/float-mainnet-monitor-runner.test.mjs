@@ -283,19 +283,21 @@ test("agent-self execution is opt-in for the exact approved line and sender", ()
  assert.throws(()=>validateBaseline(baseline),/executor policy/);
 });
 
-test("Circle bundler attribution requires an explicitly approved line and exact verified route", () => {
+for (const event of ['ProviderPaid', 'SpendBlocked']) test(`Circle ${event} attribution requires an explicitly approved line and exact verified route`, () => {
  const {baseline,snapshot}=fixture();
  const line=baseline.lines[0];
- const paid={event:'ProviderPaid',lineId:line.lineId,sender:addr(99),executor:line.agent,agent:line.agent,
+ const paid={event,lineId:line.lineId,sender:addr(99),executor:line.agent,agent:line.agent,
   route:'circle-agent-v07',entryPoint:'0x0000000071727De22E5E9d8BAf0edAc6f37da032',userOpHash:hash(99)};
  snapshot.executionAudit.executions=[paid];
  assert.ok(codes(evaluateSnapshot(baseline,snapshot,NOW)).includes('EXECUTOR_DRIFT'));
  line.executorPolicy='agent-self';
  assert.ok(codes(evaluateSnapshot(baseline,snapshot,NOW)).includes('EXECUTOR_DRIFT'));
+ line.executorPolicy='dedicated';
+ assert.ok(codes(evaluateSnapshot(baseline,snapshot,NOW)).includes('EXECUTOR_DRIFT'));
  line.executorPolicy='circle-agent-v07';
  assert.equal(evaluateSnapshot(baseline,snapshot,NOW).ok,true);
  for(const mutate of [e=>e.agent=addr(98),e=>e.executor=addr(98),e=>e.userOpHash=null,e=>e.entryPoint=addr(98),
-  e=>e.route='direct',e=>e.lineId=hash(98),e=>e.sender=addr(0)]) {
+  e=>e.route='direct',e=>delete e.route,e=>e.lineId=hash(98),e=>e.sender=addr(0),e=>e.event='UnknownEvent']) {
   const changed=structuredClone(snapshot);mutate(changed.executionAudit.executions[0]);
   assert.ok(codes(evaluateSnapshot(baseline,changed,NOW)).includes('EXECUTOR_DRIFT'));
  }
