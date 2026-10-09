@@ -18,6 +18,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [notice, setNotice] = useState('');
   const [result, setResult] = useState('');
   const [refusedDigest, setRefusedDigest] = useState<string | null>(null);
+  const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const inFlight = useRef(false);
@@ -45,23 +46,42 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   }) : null, error: '' }; } catch (cause) { return { engine: null, error: candidateErrorMessage(cause) }; } }, [account, client, deployment, service, mainnet, chain]);
   const engine = setup.engine;
   useEffect(() => {
-    revision.current++; setReviewing(false); setRecord(null); setResult(''); setRefusedDigest(null); setError(setup.error); setNotice('');
+    revision.current++; setReviewing(false); setRecord(null); setResult(''); setRefusedDigest(null); setReceiptCheck(null); setError(setup.error); setNotice('');
     const refresh = () => { try { setRecord(engine?.load() ?? null); } catch (cause) { setError(candidateErrorMessage(cause)); } };
     refresh(); window.addEventListener('storage', refresh);
     return () => { revision.current++; window.removeEventListener('storage', refresh); };
   }, [engine, correctNetwork, setup.error]);
   useEffect(() => {
     if (!engine || !record || refusedDigest === record.intent.digest) return;
+    const checkKey = `${record.intent.digest}:${record.stage}`;
     let current = true;
     void client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [record.intent.digest] })
-      .then(status => { if (current && Number(status) === 1) { setRefusedDigest(record.intent.digest); setNotice('The contract refused this purchase. No provider payment was made for this intent.'); } })
+      .then(status => {
+        if (!current) return;
+        setReceiptCheck({ key: checkKey, status: Number(status) });
+        if (Number(status) === 1) {
+          setRefusedDigest(record.intent.digest);
+          setReviewing(false);
+          setNotice('The contract refused this purchase. No provider payment was made for this intent.');
+        }
+      })
       .catch(cause => { if (current) setError(candidateErrorMessage(cause)); });
     return () => { current = false; };
   }, [client, deployment.address, engine, record?.intent.digest, record?.stage, refusedDigest]);
-  useEffect(() => { if (reviewing && !dialog.current?.open) dialog.current?.showModal(); else if (!reviewing) dialog.current?.close(); }, [reviewing]);
+  const refused = refusedDigest === record?.intent.digest;
+  const receiptCheckKey = record ? `${record.intent.digest}:${record.stage}` : null;
+  const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey;
+  const receiptUnconfirmed = Boolean(record && !receiptChecked);
+  const reviewable = record?.stage === 'prepared' || record?.stage === 'accepted';
+  const reviewBlocked = Boolean(record && (!receiptChecked || receiptCheck?.status !== 0));
+  const signable = Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused);
+  useEffect(() => {
+    if (reviewing && record && signable && !dialog.current?.open) dialog.current?.showModal();
+    else if (!reviewing || !record || !signable) dialog.current?.close();
+  }, [record?.intent.digest, reviewing, signable]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
-    if (!engine || inFlight.current || busy || !correctNetwork || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
+    if (!engine || inFlight.current || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
     inFlight.current = true;
     const current = revision.current;
     setError(''); setNotice(''); setBusy(kind === 'submit' ? 'Confirm the purchase signature, then the transaction in your wallet…' : 'Checking your purchase…');
@@ -71,13 +91,28 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         await engine.prepare(lineId, service.requestKind === 'arc-wallet' ? `arc-wallet:${job}:${account}` : `report:${job}:${service.sourcePayment}`);
         if (revision.current === current) setReviewing(true);
       } else if (kind === 'submit') {
+        if (!record || !receiptCheckKey) return;
+        const receiptStatus = Number(await client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [record.intent.digest] }));
+        setReceiptCheck({ key: receiptCheckKey, status: receiptStatus });
+        if (receiptStatus === 1) {
+          setRefusedDigest(record.intent.digest);
+          setReviewing(false);
+          setNotice('The contract refused this purchase. No provider payment was made for this intent.');
+          return;
+        }
+        if (receiptStatus !== 0) {
+          setReviewing(false);
+          setNotice('A payment receipt is recorded. Check payment and recover the result before continuing.');
+          return;
+        }
         await engine.submit();
         if (revision.current === current) { setReviewing(false); setNotice('Transaction requested. Check payment and recover the result below; do not submit a new purchase.'); }
       } else if (kind === 'recover') {
         const recovered = await engine.recover();
         if (revision.current === current) {
+          setReceiptCheck({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
           setNotice(recovered.status === 'delivered' ? 'Payment confirmed and the original service result recovered.' : recovered.status === 'blocked' ? 'The contract refused this purchase. No provider payment was made for this intent.' : 'No confirmed payment found yet. Finish any wallet prompt, then check again. This does not resend a transaction.');
-          if (recovered.status === 'blocked') setRefusedDigest(recovered.record.intent.digest);
+          if (recovered.status === 'blocked') { setRefusedDigest(recovered.record.intent.digest); setReviewing(false); }
           if (recovered.bytes) setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes));
         }
       } else {
@@ -90,7 +125,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         try {
           const saved = engine.load();
           setRecord(saved);
-          if (!saved) setRefusedDigest(null);
+          if (!saved) { setRefusedDigest(null); setReceiptCheck(null); }
           // Even a delivery failure can follow a confirmed payment. Refresh from
           // chain after submission/recovery, never infer balances from delivery.
           if (saved && (kind === 'recover' || (kind === 'submit' && saved.txHash))) {
@@ -104,9 +139,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const recoveryDisabled = !account || !correctNetwork || Boolean(busy);
   const disabled = recoveryDisabled || fundingPending;
   const blocker = !account ? 'Connect the agent wallet to continue.' : !correctNetwork ? `Switch to ${network} to continue.`
-    : busy ? busy : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : setup.error || null;
-  const signable = record?.stage === 'prepared' || record?.stage === 'accepted';
-  const refused = refusedDigest === record?.intent.digest;
+    : busy ? busy : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : record && !receiptChecked ? 'Confirm the saved purchase status before wallet review.' : record && receiptChecked && receiptCheck?.status !== 0 && !refused ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
     <h2 id="purchase-title">Buy a service with your agent’s budget</h2>
@@ -114,8 +147,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     <p>Connect the agent’s browser wallet to sign and execute the purchase. It pays {mainnet ? 'mainnet' : 'testnet'} gas in USDC. The sponsor’s line covers the service price and records the repayment obligation.</p>
     <ol className="purchaseSteps" role="list" aria-label="Purchase steps">
       <li data-state={!record ? 'current' : 'complete'} aria-current={!record ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">1</span><span className="purchaseStepLabel">Line</span></li>
-      <li data-state={record && signable ? reviewing && busy ? 'complete' : 'current' : record ? 'complete' : 'upcoming'} aria-current={record && signable && !(reviewing && busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">2</span><span className="purchaseStepLabel">Review terms</span></li>
-      <li data-state={signable ? reviewing && busy ? 'current' : 'upcoming' : record ? 'complete' : 'upcoming'} aria-current={signable && reviewing && Boolean(busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">3</span><span className="purchaseStepLabel">Sign and submit</span></li>
+      <li data-state={reviewBlocked ? 'upcoming' : reviewable ? reviewing && busy ? 'complete' : 'current' : record ? 'complete' : 'upcoming'} aria-current={!reviewBlocked && reviewable && !(reviewing && busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">2</span><span className="purchaseStepLabel">Review terms</span></li>
+      <li data-state={reviewBlocked ? 'upcoming' : reviewable ? reviewing && busy ? 'current' : 'upcoming' : record ? 'complete' : 'upcoming'} aria-current={!reviewBlocked && reviewable && reviewing && Boolean(busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">3</span><span className="purchaseStepLabel">Sign and submit</span></li>
       <li data-state={refused ? 'complete' : record?.stage === 'submitted' ? 'current' : record?.stage === 'delivered' ? 'complete' : 'upcoming'} aria-current={!refused && record?.stage === 'submitted' ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">4</span><span className="purchaseStepLabel">{refused ? 'Payment refused' : 'Payment'}</span></li>
       <li data-state={!refused && record?.stage === 'delivered' ? result ? 'complete' : 'current' : 'upcoming'} aria-current={!refused && record?.stage === 'delivered' && !result ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">5</span><span className="purchaseStepLabel">Result</span></li>
       <li data-state={refused || record?.stage === 'delivered' && result ? 'current' : 'upcoming'} aria-current={refused || record?.stage === 'delivered' && result ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">6</span><span className="purchaseStepLabel">Recover or archive</span></li>
@@ -127,11 +160,11 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       </div><button type="submit" className="fundingPrimary" disabled={disabled} aria-describedby={blocker ? 'purchase-blocker' : undefined}>Review service purchase</button>
     </form>}
     {record && <>
-      <p>Saved purchase: <strong>{refused ? 'Refused by contract' : record.stage === 'submitted' ? 'Awaiting confirmation' : record.stage === 'delivered' ? 'Delivered' : 'Ready for wallet review'}</strong>. Keep this browser’s site data until resolved.</p>
+      <p>Saved purchase: <strong>{refused ? 'Refused by contract' : receiptUnconfirmed ? 'Checking status' : receiptChecked && receiptCheck?.status !== 0 ? 'Payment receipt found' : record.stage === 'submitted' ? 'Awaiting confirmation' : record.stage === 'delivered' ? 'Delivered' : 'Ready for wallet review'}</strong>. Keep this browser’s site data until resolved.</p>
       <dl className="fundingDetails"><div><dt>Line</dt><dd><code>{message?.lineId}</code></dd></div><div><dt>Purchase ID</dt><dd><code>{record.intent.digest}</code></dd></div></dl>
       {record.txHash && <a href={`${chain.blockExplorers.default.url}/tx/${record.txHash}`} target="_blank" rel="noreferrer">View original transaction</a>}
       <div className="fundingActions">
-        {signable && <button type="button" disabled={disabled} aria-describedby={disabled && blocker ? 'purchase-blocker' : undefined} onClick={() => setReviewing(true)}>Review saved purchase</button>}
+        {reviewable && !refused && <button type="button" disabled={disabled || !signable} aria-describedby={(disabled || !signable) && blocker ? 'purchase-blocker' : undefined} onClick={() => setReviewing(true)}>Review saved purchase</button>}
         <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('recover')}>Check payment & recover result</button>
         <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('archive')}>Resolve completed or expired purchase</button>
       </div>
@@ -144,7 +177,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         <p id="purchase-review-description">Pay {formatUnits(BigInt(message.principal), 6)} {currency} from the sponsor’s line. This creates an equal repayment obligation. A payment does not guarantee service delivery.</p>
         <dl className="fundingDetails"><div><dt>Provider</dt><dd><code>{message.provider}</code></dd></div><div><dt>Sponsor</dt><dd><code>{message.sponsor}</code></dd></div><div><dt>Agent / executor</dt><dd><code>{message.agent}</code></dd></div><div><dt>Repayment due</dt><dd>{new Date(Number(message.dueAt) * 1000).toLocaleString()}</dd></div></dl>
         <p>Your wallet will request a purchase signature and a separate {network} transaction. Leave other wallet transactions closed until it finishes.</p>
-        <div className="fundingActions"><button type="button" autoFocus disabled={Boolean(busy)} aria-describedby={busy ? 'purchase-back-hint' : undefined} onClick={() => setReviewing(false)}>Back</button><button type="button" className="fundingPrimary" disabled={disabled || !signable} aria-describedby={busy ? 'purchase-back-hint' : disabled || !signable ? 'purchase-submit-hint' : undefined} onClick={() => void action('submit')}>Sign & submit in wallet</button>
+        <div className="fundingActions"><button type="button" autoFocus disabled={Boolean(busy)} aria-describedby={busy ? 'purchase-back-hint' : undefined} onClick={() => setReviewing(false)}>Back</button>{!refused && <button type="button" className="fundingPrimary" disabled={disabled || !signable} aria-describedby={busy ? 'purchase-back-hint' : disabled || !signable ? 'purchase-submit-hint' : undefined} onClick={() => void action('submit')}>Sign & submit in wallet</button>}
           {(disabled || !signable) && !busy && <small id="purchase-submit-hint">{blocker ?? 'This saved purchase is not ready to sign.'}</small>}
         </div>
         {busy && <p id="purchase-back-hint" role="status">{busy}</p>}
