@@ -50,7 +50,18 @@ export function createCircleGuardedTestnetPurchaser(options) {
   return createExecutor(options, false, TESTNET, true);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false) {
+/** Separate mainnet purchase boundary. The operator supplies the reviewed monitor guard.
+ * Recovery of a saved transaction does not require an unpaused purchase phase.
+ */
+export function createCircleGuardedMainnetPurchaser(options) {
+  requireThat(options.config.chainId === 5042, 'Only Arc mainnet guarded purchases are enabled.');
+  requireThat(same(options.config.contract, '0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB')
+    && same(options.config.runtimeHash, '0x845c0c3e47bbcf75004e5d47a6788585d57026ce70c08593d112966a6245b4ef'), 'Pin the reviewed guarded mainnet deployment.');
+  requireThat(typeof options.authorizePurchase === 'function', 'A mainnet monitor authorization guard is required.');
+  return createExecutor(options, false, 5042, true, options.authorizePurchase);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;
   const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
@@ -124,6 +135,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const status = await client.readContract({ address: contract, abi, functionName: 'receiptStatus', args: [decoded.digest] });
       requireThat(Number(status) === 0, 'Purchase already has an onchain receipt; recover it.');
     }
+    if (authorizePurchase) await authorizePurchase(decoded.args[0]);
     const simulation = await client.simulateContract({ address: decoded.to, abi: decoded.callAbi, functionName: decoded.functionName, args: decoded.args, account: agent });
     if (decoded.functionName === 'executeSpend') requireThat(simulation.result?.[0] === true, 'Shadow policy refused the purchase.');
     const block = await client.getBlock();
