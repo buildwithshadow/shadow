@@ -164,7 +164,9 @@ jobs:
         working-directory: app
         run: pnpm install --frozen-lockfile --ignore-workspace
       - name: Test operational alert semantics
-        run: npm run float:v2-ops:test
+        run: |
+          npm run float:v2-ops:test
+          node --test --test-concurrency=1 app/scripts/float-mainnet-monitor-alerts.test.mjs app/scripts/guarded-testnet-monitor-alerts.test.mjs
       - name: Test Lepton readiness and historical proof fallback
         run: npm run lepton:readiness:test
       - name: Test historical explorer retries, deadlines and empty histories

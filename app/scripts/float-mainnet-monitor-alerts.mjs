@@ -8,6 +8,7 @@ import { heartbeatStatus, loadContext } from './float-mainnet-monitor-runner.mjs
 import { digestJson, evaluateSnapshot } from './float-mainnet-monitor-policy.mjs';
 import { isEntrypoint } from './float-mainnet-preflight.mjs';
 import { sendTelegram } from './public-testnet-observer-alerts.mjs';
+import { GUARDED_TESTNET } from '../guardedTestnetDeployment.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const optionalJson = path => { try { return JSON.parse(readFileSync(path, 'utf8')); } catch { return null; } };
@@ -20,21 +21,49 @@ const optionalRecord = path => {
 };
 
 export function loadMainnetContext(options) {
+  return loadNotificationContext(options, '5042');
+}
+
+function loadNotificationContext(options, chainId) {
   const context = loadContext(options);
   const manifestRaw = readFileSync(context.manifestPath);
   if (hash(manifestRaw) !== context.manifestHash) throw new Error('MANIFEST_CHANGED_DURING_LOAD');
   const manifest = JSON.parse(manifestRaw);
   const identity = context.baseline.identity;
-  if (identity.chainId !== '5042' || String(manifest.chainId) !== '5042' ||
+  if (identity.chainId !== chainId || String(manifest.chainId) !== chainId ||
       identity.usdc !== '0x3600000000000000000000000000000000000000' ||
       manifest.contract?.address?.toLowerCase() !== identity.address ||
       manifest.bytecode?.onchainRuntimeKeccak256?.toLowerCase() !== identity.runtimeCodeHash ||
-      String(manifest.deployment?.blockNumber) !== identity.deployBlock) throw new Error('MAINNET_BINDING_REQUIRED');
+      String(manifest.deployment?.blockNumber) !== identity.deployBlock) throw new Error(chainId === '5042' ? 'MAINNET_BINDING_REQUIRED' : 'NETWORK_BINDING_REQUIRED');
   return context;
 }
 
 export function notificationState(context, now = Date.now()) {
   if (context.baseline.identity.chainId !== '5042') throw new Error('MAINNET_ONLY');
+  return boundNotificationState(context, now);
+}
+
+function requireGuardedTestnet(context) {
+  const identity = context.baseline.identity;
+  if (identity.chainId !== String(GUARDED_TESTNET.chainId) ||
+      identity.address !== GUARDED_TESTNET.address.toLowerCase() ||
+      identity.runtimeCodeHash !== GUARDED_TESTNET.runtimeHash ||
+      identity.usdc !== GUARDED_TESTNET.usdc ||
+      identity.deployBlock !== String(GUARDED_TESTNET.deployBlock)) throw new Error('GUARDED_TESTNET_BINDING_REQUIRED');
+}
+
+export function loadGuardedTestnetContext(options) {
+  const context = loadNotificationContext(options, String(GUARDED_TESTNET.chainId));
+  requireGuardedTestnet(context);
+  return context;
+}
+
+export function guardedTestnetNotificationState(context, now = Date.now()) {
+  requireGuardedTestnet(context);
+  return boundNotificationState(context, now);
+}
+
+function boundNotificationState(context, now) {
   // Read the heartbeat around its snapshot/publication generation. A normal
   // two-file publication can finish between any of these reads.
   const holdPath = resolve(context.stateDir, 'hold.json');
@@ -155,8 +184,16 @@ export function notificationState(context, now = Date.now()) {
 }
 
 export async function notifyMainnet({ context, previous, destinationId, send, save, now = Date.now() }) {
+  return notifyBoundMonitor({ context, previous, destinationId, send, save, now }, notificationState, 'MAINNET');
+}
+
+export async function notifyGuardedTestnet(options) {
+  return notifyBoundMonitor(options, guardedTestnetNotificationState, 'TESTNET');
+}
+
+async function notifyBoundMonitor({ context, previous, destinationId, send, save, now = Date.now() }, readState, networkLabel) {
   if (!/^-?\d+$/.test(String(destinationId || ''))) throw new Error('DESTINATION_REQUIRED');
-  const current = notificationState(context, now);
+  const current = readState(context, now);
   if (!current) return { sent: false, reason: 'scan-in-progress' };
   const binding = hash(JSON.stringify([context.manifestHash, context.baselineHash]));
   const same = previous?.destinationId === String(destinationId) && previous?.binding === binding;
@@ -167,7 +204,7 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
   if (same && previous?.key === current.key && (current.ok || (age >= 0 && age < 21600000))) return { sent: false, reason: 'unchanged' };
   const label = current.ok ? (same && previous?.key?.startsWith('failure:') ? 'RECOVERED' : 'CONNECTED') : 'ATTENTION';
   const address = context.baseline.identity.address;
-  const message = `Shadow Arc MAINNET monitor — ${label}\nContract ${address}\n` +
+  const message = `Shadow Arc ${networkLabel} monitor — ${label}\nContract ${address}\n` +
     (current.ok ? 'The latest complete observation matches the approved baseline; no operational hold remains.' :
       `Observation failed or became stale: ${current.codes.join(', ') || 'STATUS_INVALID'}. Inspect the monitor and reconcile the incident before continuing.`) +
     (current.incidentCodes ? `\nOriginal incident: ${[...new Set(current.incidentCodes)].sort().join(', ')}.` : '') +
@@ -181,14 +218,18 @@ export async function notifyMainnet({ context, previous, destinationId, send, sa
   return { sent: true, state: current.ok ? 'healthy' : 'failure', codes: current.codes };
 }
 
-async function main() {
+export function runGuardedTestnetAlertsCli() {
+  return main(loadGuardedTestnetContext, notifyGuardedTestnet);
+}
+
+async function main(load = loadMainnetContext, notify = notifyMainnet) {
   const { values } = parseArgs({ options: { baseline: { type: 'string' }, manifest: { type: 'string' },
     'observer-dir': { type: 'string' }, 'state-dir': { type: 'string' }, config: { type: 'string' }, 'notification-lock-fd': { type: 'string' } } });
   for (const key of ['baseline', 'manifest', 'observer-dir', 'state-dir', 'config']) if (!values[key]) throw new Error('CONFIG_REQUIRED');
   const observerDir = resolve(values['observer-dir']);
   const dir = resolve(values['state-dir']);
   if (dir === observerDir) throw new Error('SEPARATE_NOTIFICATION_STATE_REQUIRED');
-  const context = loadMainnetContext({ baselinePath: values.baseline, manifestPath: values.manifest, stateDir: observerDir });
+  const context = load({ baselinePath: values.baseline, manifestPath: values.manifest, stateDir: observerDir });
   const config = JSON.parse(readFileSync(resolve(values.config), 'utf8'));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
   // Legacy locks require operator inspection during migration. Never silently
@@ -210,7 +251,7 @@ async function main() {
   if (!opened.isFile() || !named.isFile() || opened.dev !== named.dev || opened.ino !== named.ino ||
       opened.uid !== process.getuid() || (opened.mode & 0o077)) throw new Error('INVALID_NOTIFICATION_LOCK');
   {
-    const result = await notifyMainnet({ context, previous: optionalJson(resolve(dir, 'notification.json')),
+    const result = await notify({ context, previous: optionalJson(resolve(dir, 'notification.json')),
       destinationId: String(config.chatId), send: text => sendTelegram(config, text), save: value => {
         const temporary = resolve(dir, `notification.${randomUUID()}.tmp`);
         try {
