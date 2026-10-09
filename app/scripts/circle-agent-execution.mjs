@@ -42,15 +42,22 @@ export function createCircleGuardedTestnetRepayer(options) {
   return createExecutor(options, true, TESTNET);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET) {
+/** One pinned guarded testnet line. Repayment stays in its separate draw-bound adapter. */
+export function createCircleGuardedTestnetPurchaser(options) {
+  requireThat(options.config.chainId === TESTNET, 'Only Arc testnet guarded purchases are enabled.');
+  return createExecutor(options, false, TESTNET, true);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;
   const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
-  const abi = guarded ? circleGuardedRepaymentAbi : legacyAbi;
+  const abi = guarded || purchaseOnly ? circleGuardedRepaymentAbi : legacyAbi;
   const agent = getAddress(config.agent), contract = getAddress(config.contract);
   const cap = BigInt(config.maxAmount), feeCap = BigInt(config.maxNetworkFee);
-  requireThat(cap > 0n && cap <= (guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= parseUnits(guarded ? '0.02' : '0.1', 18), 'Invalid bounded execution limits.');
+  requireThat(cap > 0n && cap <= (purchaseOnly ? 5_000n : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18), 'Invalid bounded execution limits.');
   if (guarded) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && /^0x[0-9a-fA-F]{64}$/.test(config.expectedDraw) && !/^0x0{64}$/.test(config.expectedDraw), 'Pin the exact line and nonzero reviewed draw.');
+  if (purchaseOnly) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && !/^0x0{64}$/.test(config.expectedLineId), 'Pin the exact nonzero purchase line.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.runtimeHash), 'Pin the deployed runtime hash.');
   requireThat(['get', 'put', 'withLock'].every(k => typeof journal[k] === 'function'), 'A durable locked journal is required.');
   const namespace = hash({ chainId: CHAIN, agent });
@@ -64,6 +71,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
   function decode(request) {
     requireThat(BigInt(request.value ?? 0) === 0n, 'Native value is not permitted.');
     const to = getAddress(request.to);
+    if (purchaseOnly) requireThat(same(to, contract), 'Only a guarded purchase is supported.');
     requireThat(same(to, contract) || same(to, USDC), 'Destination is outside this adapter.');
     const callAbi = same(to, USDC) ? erc20Abi : abi;
     const call = decodeFunctionData({ abi: callAbi, data: request.data });
@@ -79,9 +87,10 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const intent = call.args[0];
       requireThat(same(intent.agent, agent) && same(intent.executor, agent), 'Purchase belongs to another agent or executor.');
       amount = intent.principal; lineId = intent.lineId;
+      if (purchaseOnly) requireThat(same(lineId, config.expectedLineId) && amount === cap && intent.maximumTotalDebt === cap, 'Purchase line or exact amount changed.');
       requireThat(intent.maximumTotalDebt <= cap, 'Debt exceeds adapter limit.');
       requireThat(same(intent.provider, config.provider) && same(intent.endpointHash, config.endpointHash), 'Provider or endpoint is not approved.');
-    } else if (!guarded && call.functionName === 'repay') {
+    } else if (!guarded && !purchaseOnly && call.functionName === 'repay') {
       [lineId, amount] = call.args;
     } else throw new Error('Unsupported Shadow operation.');
     requireThat(amount > 0n && (guarded ? amount === cap : amount <= cap), 'Amount exceeds adapter limit.');
@@ -95,6 +104,11 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       requireThat(await read('repaymentBindingVersion') === 2n && same(await read('currentDrawDigest', [config.expectedLineId]), config.expectedDraw), 'Reviewed draw is stale.');
       const line = await read('getLine', [config.expectedLineId]);
       requireThat(same(line.agent, agent) && [2, 3].includes(Number(line.state)) && line.principalOutstanding >= cap, 'Exact reviewed agent debt required.');
+    } else if (purchaseOnly) {
+      const read = (functionName, args = []) => client.readContract({ address: contract, abi, functionName, args });
+      requireThat(await read('repaymentBindingVersion') === 2n, 'Guarded repayment binding version required.');
+      const line = await read('getLine', [config.expectedLineId]);
+      requireThat(same(line.agent, agent) && Number(line.state) === 1 && line.principalOutstanding === 0n, 'Exact open agent line with no debt required.');
     } else if (decoded.lineId) {
       const line = await client.readContract({ address: contract, abi, functionName: 'lines', args: [decoded.lineId] });
       const owner = Array.isArray(line) ? line[abi.find(x => x.name === 'lines').outputs.findIndex(x => x.name === 'agent')] : line.agent;
@@ -121,13 +135,22 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     requireThat(!record.txHash || !response.txHash || same(record.txHash, response.txHash), 'Circle transaction hash changed.');
   }
   function validateGuardedRecord(record) {
-    if (!guarded) return;
+    if (!guarded && !purchaseOnly) return;
     requireThat(record.request.blockchain === network && same(record.request.sourceAddress, agent), 'Journal network or wallet changed.');
     const decoded = decode({ to: record.request.contractAddress, data: record.request.callData, value: record.request.amount });
+    if (purchaseOnly) {
+      requireThat(record.expected.operation === 'executeSpend' && record.expected.amount === decoded.amount.toString() && same(record.expected.lineId, config.expectedLineId), 'Journal purchase attribution changed.');
+      return;
+    }
     requireThat(record.expected.operation === decoded.functionName && record.expected.amount === decoded.amount.toString() && same(record.expected.digest, config.expectedDraw) && (decoded.lineId ? same(record.expected.lineId, decoded.lineId) : record.expected.lineId === null), 'Journal repayment attribution changed.');
   }
   async function verifyReceipt(record, txHash) {
     validateGuardedRecord(record);
+    if (purchaseOnly) {
+      const decoded = decode({ to: record.request.contractAddress, data: record.request.callData, value: record.request.amount });
+      const digest = await client.readContract({ address: contract, abi, functionName: 'hashSpendIntent', args: [decoded.args[0]] });
+      requireThat(same(digest, record.expected.digest), 'Journal purchase digest changed.');
+    }
     requireThat(/^0x[0-9a-fA-F]{64}$/.test(txHash), 'Invalid transaction hash.');
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     requireThat(receipt.blockNumber >= BigInt(record.expected.fromBlock), 'Receipt predates the request.');

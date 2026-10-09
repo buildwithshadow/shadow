@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import approval from './circle-cli-dependency-approval.json' with { type: 'json' };
 import { inspectCircleCliDependencies, freezeCircleCliSource } from './circle-agent-cli-runtime.mjs';
-import { rawCalldataCompatibility, CIRCLE_CLI_SHA256 } from './circle-agent-cli-transport.mjs';
+import { rawCalldataCompatibility, guardedTestnetPurchaseCompatibility, CIRCLE_CLI_SHA256 } from './circle-agent-cli-transport.mjs';
 import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 
 const runtime = fileURLToPath(new URL('../../tooling/circle-cli-runtime/', import.meta.url));
@@ -33,6 +33,10 @@ test('the frozen vendor and scoped compatibility copy boot without credentials a
     const source = await readFile(entrypoint, 'utf8');
     const original = await freezeCircleCliSource(source, entrypoint, join(dir, 'cache'));
     const compatible = await freezeCircleCliSource(rawCalldataCompatibility(source), entrypoint, join(dir, 'cache'));
+    const guardedSource = guardedTestnetPurchaseCompatibility(source);
+    const guarded = await freezeCircleCliSource(guardedSource, entrypoint, join(dir, 'cache'));
+    assert.match(guardedSource, /\["0xd39d55cc0c84408dcc409badb776459641dfd4be"\]\.includes\(contractAddress/);
+    assert.match(guardedSource, /rawData\.toLowerCase\(\)\.startsWith/);
     const environment = circleCliEnvironment({ HOME: dir, CIRCLE_CLI_HOME: join(dir, 'profile') });
     const run = (file, args) => execFileSync(process.execPath, [file, ...args], {
       env: environment, cwd: dir, encoding: 'utf8', timeout: 30_000,
@@ -40,6 +44,7 @@ test('the frozen vendor and scoped compatibility copy boot without credentials a
     });
     assert.equal(run(original, ['--version']).trim(), approval.circleVersion);
     assert.equal(run(compatible, ['--version']).trim(), approval.circleVersion);
+    assert.equal(run(guarded, ['--version']).trim(), approval.circleVersion);
     assert.match(run(original, ['wallet', 'execute', '--help']), /--idempotency-key/);
     assert.match(run(compatible, ['wallet', 'execute', '--help']), /--estimate/);
     assert.match(run(original, ['wallet', 'login', '--help']), /Mainnet \(default\) and testnet.*?session/s);

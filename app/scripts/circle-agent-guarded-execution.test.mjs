@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
-import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleAgentExecutor } from './circle-agent-execution.mjs';
+import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor } from './circle-agent-execution.mjs';
 
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 const agent = `0x${'11'.repeat(20)}`, contract = `0x${'22'.repeat(20)}`, provider = `0x${'33'.repeat(20)}`;
@@ -280,4 +280,72 @@ test('disk-backed lost repayment survives independent journal/adapter recreation
     await assert.rejects(()=>restored.execute({...repay,operationId:'repay:replacement'}),/previous Circle operation/);
     assert.equal((await restored.reconcile(first.key)).status,'confirmed');assert.equal(x.state.sends,1);
   } finally {await rm(sandbox,{recursive:true,force:true});}
+});
+
+
+const purchaseIntent = {agent, sponsor: provider, lineId, lineEpoch:1n, termsHash:digest, provider, endpointHash, principal:5000n, maximumTotalDebt:5000n, dueAt:1000n, nonce:0n, signatureExpiry:900n, executor:agent};
+const purchaseRequest = {operationId:'guarded-purchase:one',to:contract,data:encodeFunctionData({abi,functionName:'executeSpend',args:[purchaseIntent,'0x1234']})};
+function setupPurchase() {
+  const x=setup({config:testnetConfig},createCircleGuardedTestnetPurchaser);
+  x.state.lineState=1;x.state.outstanding=0n;
+  x.state.receipt.logs=[eventLog('ProviderPaid',{digest,lineId,provider,principal:5000n,dueAt:1000n})];
+  return x;
+}
+test('guarded testnet purchase recovers one exact user operation after lost confirmation',async()=>{
+  const x=setupPurchase();x.state.lose=true;
+  const held=await x.adapter.execute(purchaseRequest);assert.equal(held.status,'unknown');
+  const resumed=createCircleGuardedTestnetPurchaser(x.options);
+  assert.equal((await resumed.execute(purchaseRequest)).status,'unknown');
+  assert.equal((await resumed.reconcile(held.key)).status,'confirmed');
+  assert.equal((await resumed.execute(purchaseRequest)).status,'confirmed');
+  assert.equal(x.state.sends,1);assert.equal(x.state.request.blockchain,'ARC-TESTNET');
+});
+test('guarded purchase disallows mainnet, extra value, changed line/provider/price and all repayment or allowance calls',async()=>{
+  assert.throws(()=>createCircleGuardedTestnetPurchaser({config}),/Only Arc testnet/);
+  for(const patch of [{maxAmount:'5001'},{expectedLineId:`0x${'00'.repeat(32)}`},{maxNetworkFee:parseUnits('0.021',18).toString()}]) {
+    assert.throws(()=>setup({config:{...testnetConfig,...patch}},createCircleGuardedTestnetPurchaser));
+  }
+  const x=setupPurchase();
+  for(const patch of [{lineId:endpointHash},{provider:agent},{principal:4999n},{maximumTotalDebt:5001n},{executor:provider}]) {
+    await assert.rejects(()=>x.adapter.execute({...purchaseRequest,data:encodeFunctionData({abi,functionName:'executeSpend',args:[{...purchaseIntent,...patch},'0x1234']})}));
+  }
+  for(const request of [repay,{...purchaseRequest,value:1n},{...purchaseRequest,data:purchaseRequest.data+'00'},
+    {...purchaseRequest,to:usdc,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})}]) await assert.rejects(()=>x.adapter.execute(request));
+  assert.equal(x.state.sends,0);assert.equal(x.state.estimates,0);
+});
+test('guarded purchase refuses non guarded deployments and changed debt both before and after fee estimation',async()=>{
+  for(const stage of ['before','estimate']) {
+    const x=setupPurchase();const change=()=>{x.state.lineState=2;x.state.outstanding=5000n;};
+    if(stage==='before')change();else x.options.circle.estimate=async()=>{change();return {networkFee:'0.01'};};
+    await assert.rejects(()=>x.adapter.execute(purchaseRequest),/open agent line/);assert.equal(x.state.sends,0);
+  }
+  const x=setupPurchase(),read=x.options.client.readContract;
+  x.options.client.readContract=async args=>args.functionName==='repaymentBindingVersion'?1n:read(args);
+  await assert.rejects(()=>x.adapter.execute(purchaseRequest),/binding version/);assert.equal(x.state.estimates,0);
+});
+test('unresolved guarded purchase blocks repayment and a new legacy testnet operation',async()=>{
+  const x=setupPurchase();x.state.lose=true;const held=await x.adapter.execute(purchaseRequest);
+  const repayer=createCircleGuardedTestnetRepayer(x.options);
+  await assert.rejects(()=>repayer.execute(repay),/previous Circle operation/);
+  await assert.rejects(()=>repayer.reconcile(held.key),/Unsupported Shadow operation/);
+  const legacy=createCircleAgentExecutor(x.options);
+  await assert.rejects(()=>legacy.execute({operationId:'other',to:usdc,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})}),/previous Circle operation/);
+  assert.equal(x.state.sends,1);
+});
+test('guarded purchaser cannot reinterpret a legacy allowance journal or another deployment',async()=>{
+  const x=setupPurchase();x.state.lose=true;
+  const legacy=createCircleAgentExecutor(x.options);
+  const held=await legacy.execute({operationId:'legacy:approval',to:usdc,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})});
+  const snapshot=structuredClone([...x.values]);
+  await assert.rejects(()=>x.adapter.reconcile(held.key),/Only a guarded purchase/);
+  await assert.rejects(()=>x.adapter.execute(purchaseRequest),/previous Circle operation/);
+  assert.deepEqual([...x.values],snapshot);
+});
+test('guarded purchase completion cannot borrow a different digest or a neighboring user operation',async()=>{
+  const x=setupPurchase();x.state.receipt.logs=[eventLog('ProviderPaid',{digest:endpointHash,lineId,provider,principal:5000n,dueAt:1000n})];
+  await assert.rejects(()=>x.adapter.execute(purchaseRequest),/exact requested operation/);
+  const held=await x.adapter.execute(purchaseRequest);assert.equal(held.status,'unknown');
+  const before=eventLog('BeforeExecution',{},entryPoint07Address,entryPoint07Abi);
+  x.state.bundleLogs=[before,eventLog('ProviderPaid',{digest,lineId,provider,principal:5000n,dueAt:1000n}),x.state.boundary(endpointHash,true),x.state.boundary(digest,true)];
+  await assert.rejects(()=>x.adapter.reconcile(held.key),/exact requested operation/);assert.equal(x.state.sends,1);
 });
