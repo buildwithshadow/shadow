@@ -2,6 +2,7 @@ import { arcTestnetRpcUrl, arcTestnetWalletParameters } from "../arcTestnetNetwo
 import { useEffect, useMemo, useState } from "react";
 import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
 import { GUARDED_MAINNET, GUARDED_MAINNET_SERVICE } from "./guardedMainnet";
+import { GUARDED_TESTNET, GUARDED_TESTNET_SERVICE } from "./guardedTestnet";
 import { PUBLIC_TESTNET, PUBLIC_TEST_SERVICE } from "./publicTestnet";
 import { HomePage } from "./HomePage";
 import { CandidateFundingDesk } from "./CandidateFundingDesk";
@@ -1454,6 +1455,7 @@ const ROUTE_TITLES: Record<string, string> = {
   "/builders": "Builders | Shadow",
   "/builders/v2": "Float V2 tools | Shadow",
   "/start": "Fund an agent | Shadow",
+  "/guarded-testnet": "Guarded testnet funding | Shadow",
   "/funding": "Earlier candidate | Shadow",
   "/roadmap": "Roadmap | Shadow",
 };
@@ -1469,7 +1471,8 @@ function App() {
   const isEvidenceRoute = route === "/evidence";
   const usesFloatV2State = isEvidenceRoute || route === "/builders/v2";
   const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
-  const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet";
+  const isGuardedTestnetRoute = route === "/guarded-testnet" && import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true";
+  const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet" || isGuardedTestnetRoute;
   const [account, setAccount] = useState<Address>();
   const [action, setAction] = useState<ActionState>({ label: "ready" });
   const [selectedSource, setSelectedSource] = useState<Address | null>(null);
@@ -1754,7 +1757,7 @@ function App() {
             <span className="navWalletDot" />
             {account ? shortAddress(account) : "Wallet"}
           </button>}
-          <Link to={isGuardedMainnetRoute ? "/mainnet" : "/start"} className="navCta">
+          <Link to={isGuardedMainnetRoute ? "/mainnet" : isGuardedTestnetRoute ? "/guarded-testnet" : "/start"} className="navCta">
             Fund an agent
           </Link>
         </div>
@@ -1777,6 +1780,7 @@ function App() {
         <Route path="/builders/v2" element={floatV2ToolsPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
         {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="guarded-mainnet" deployment={GUARDED_MAINNET} service={GUARDED_MAINNET_SERVICE} />} />}
+        {import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true" && <Route path="/guarded-testnet" element={<CandidateFundingDesk key="guarded-testnet" deployment={GUARDED_TESTNET} service={GUARDED_TESTNET_SERVICE} />} />}
         <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
         <Route path="/archive" element={<EvidenceRedirect />} />

@@ -50,6 +50,7 @@ function Field({ label, name, value, onChange, hint, error: fieldError, decimal 
 export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: { deployment?: CandidateDeployment; service?: PublicService }) {
   const CANDIDATE_FUNDING = deployment;
   const mainnet = deployment.chainId === 5042;
+  const guardedTestnet = !mainnet && deployment.drawBoundRepayment === true;
   const chain = useMemo(() => candidateChainFor(deployment), [deployment]);
   const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
   const explorer = chain.blockExplorers.default.url;
@@ -58,10 +59,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const client = useMemo(() => mainnet ? createPublicClient({ chain, transport: createRpcReadTransport('https://rpc.mainnet.arc.io', {
     timeout: 15_000, fallbackUrls: ['https://rpc.blockdaemon.mainnet.arc.io'], expectedChainId: 5042,
     queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
+  }) }) : guardedTestnet ? createPublicClient({ chain, transport: createRpcReadTransport('https://rpc.quicknode.testnet.arc.io', {
+    timeout: 15_000, fallbackUrls: ['https://rpc.drpc.testnet.arc.io', ARC_TESTNET_RPC_URL], expectedChainId: deployment.chainId,
+    queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
   }) }) : deployment.selfRegistration ? createPublicClient({ chain: candidateFundingChain,
     transport: createRpcReadTransport("https://rpc.drpc.testnet.arc.io", { timeout: 15_000,
       fallbackUrls: ["https://rpc.blockdaemon.testnet.arc.io", ARC_TESTNET_RPC_URL], expectedChainId: deployment.chainId,
-      queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment, chain, mainnet]);
+      queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment, chain, mainnet, guardedTestnet]);
   const [mode, setMode] = useState<"open" | "manage">(() => {
     const params = new URLSearchParams(window.location.search);
     return params.has("line") || (service && !params.has("agent") && params.get("role") === "agent") ? "manage" : "open";
@@ -76,7 +80,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [form, setForm] = useState(() => ({ ...initialForm,
     agent: service ? new URLSearchParams(window.location.search).get("agent") || "" : "",
     ...(service ? { provider: service.provider, endpoint: service.endpoint } : {}),
-    ...(mainnet ? { lineSpendCap: '0.005', dailySpendCap: '0.005', providerPerSpendCap: '0.005', providerDailyCap: '0.005' } : {}),
+    ...(mainnet || guardedTestnet ? { lineSpendCap: '0.005', dailySpendCap: '0.005', providerPerSpendCap: '0.005', providerDailyCap: '0.005' } : {}),
   }));
   const [providerAgreed, setProviderAgreed] = useState(false);
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
@@ -88,7 +92,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [pending, setPending] = useState<CandidatePending | null>(null);
   const [journalError, setJournalError] = useState("");
   const [gatewayHeld, setGatewayHeld] = useState(false);
-  const gatewayEnabled = Boolean(!mainnet && service && import.meta.env.VITE_SHADOW_GATEWAY_TESTNET === "true");
+  const gatewayEnabled = Boolean(!mainnet && !guardedTestnet && service && import.meta.env.VITE_SHADOW_GATEWAY_TESTNET === "true");
   const [recoveryHash, setRecoveryHash] = useState("");
   const [prepared, setPrepared] = useState<CandidatePrepared | null>(null);
   const [reviewInput, setReviewInput] = useState<CandidateOpenInput | null>(null);
@@ -470,7 +474,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
 
   return <div className="routePage fundingDesk">
     <header className="fundingHead">
-      <div><p className="pageEyebrow">{mainnet ? "Arc mainnet · Controlled participant candidate" : service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
+      <div><p className="pageEyebrow">{mainnet ? "Arc mainnet · Controlled participant candidate" : guardedTestnet ? "Arc testnet · Guarded funding rehearsal" : service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
         <h1>{service ? <>Fund an agent.<br />Keep the limits.</> : "Earlier candidate"}</h1>
         <p>{service ? "Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet." : <>Shadow’s earlier testnet contract. Approved sponsors can open lines here and manage existing ones. To fund an agent without operator approval and buy a service, use <Link to="/start">Fund an agent</Link>.</>}</p>
       </div>
@@ -497,8 +501,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div>}
     </div>}
 
-    <p className="fundingScope">{mainnet ? "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
-    {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase. Repayment needs separate test USDC from the repaying wallet—the line’s reserve cannot repay its own debt.</p>}
+    <p className="fundingScope">{mainnet ? "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : guardedTestnet ? "Test USDC only. This guarded rehearsal is limited to admitted sponsors, a 0.10 test USDC reserve and 0.005 test USDC total purchases per line. Repayment is bound to the exact purchase reviewed. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
+    {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase. Repayment needs separate test USDC from the repaying wallet. The line’s reserve cannot repay its own debt.</p>}
     {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
       <span id="funding-role-title">Which are you?</span>
       <button type="button" aria-pressed={role === "sponsor"} onClick={() => setRole(role === "sponsor" ? null : "sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
@@ -611,7 +615,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
             <div><dt>Line daily limit</dt><dd>{usdc(line.dailySpendCap)} USDC</dd></div><div><dt>Line epoch</dt><dd>{line.epoch.toString()}</dd></div></dl>
           <p>{service ? "The agent buys the service below, signing with its own wallet; this line pays the price. This section manages funding, repayment and reclaim." : <>The agent signs a purchase and an executor submits it using the <a href="https://github.com/buildwithshadow/shadow/blob/main/docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md" target="_blank" rel="noreferrer">candidate participant tools</a>. This page manages funding, repayment and reclaim.</>}</p>
         </details>
-        {service && !mainnet && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} />}
+        {service && !mainnet && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} route={guardedTestnet ? 'guarded-testnet' : 'public-testnet'} />}
       </div>}
     </section>}
 

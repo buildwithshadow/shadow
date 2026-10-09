@@ -71,6 +71,19 @@ test('website commands contain only validated public identifiers and recovery is
   assert.throws(()=>circleAgentCommands(line+';touch /tmp/injected',agent));assert.throws(()=>circleAgentCommands(line,agent+'$(echo bad)'));
 });
 
+test('guarded website handoff selects the guarded runner without changing the public runner',()=>{
+  const ordinary = circleAgentCommands(line, agent);
+  const guarded = circleAgentCommands(line, agent, 'guarded-testnet');
+  for (const action of ['inspect', 'purchase', 'recover', 'repay']) {
+    assert(ordinary[action].startsWith(`node app/scripts/shadow-circle-agent.mjs ${action} `));
+    assert(guarded[action].startsWith(`node app/scripts/shadow-circle-guarded-testnet.mjs ${action} `));
+    const args = guarded[action].split(' ').slice(2);
+    assert.equal(parseAgentArgs(args).confirm, action === 'purchase' || action === 'repay');
+    assert(!guarded[action].includes('--state'));
+  }
+  assert.throws(() => circleAgentCommands(line, agent, 'mainnet'), /Unsupported/);
+});
+
 test('runner reaches recovery after preflight rejection and releases only expired unpaid authorization',async()=>{
   let now=9n,archives=0,saves=0,recoveries=0;
   const state={requests:{purchase:{key:'never-sent'}}};

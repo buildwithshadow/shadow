@@ -57,6 +57,8 @@ on:
       - "app/src/PublicPurchase.tsx"
       - "app/src/publicTestnet.ts"
       - "app/src/guardedMainnet.ts"
+      - "app/src/guardedTestnet.ts"
+      - "app/guardedTestnetDeployment.d.mts"
       - "contracts/deployments/public-testnet/**"
       - "app/scripts/self-service-purchase*.test.mjs"
       - "app/scripts/shadow-v2-cycle-service.test.mjs"
@@ -194,6 +196,8 @@ jobs:
         run: npm run app:build
       - name: Build opt-in guarded mainnet participant candidate
         run: VITE_SHADOW_GUARDED_MAINNET_CANDIDATE=true npm run app:build
+      - name: Build opt-in guarded testnet funding with Gateway enabled elsewhere
+        run: VITE_SHADOW_GUARDED_TESTNET_CANDIDATE=true VITE_SHADOW_GATEWAY_TESTNET=true npm run app:build
       - name: Build opt-in Gateway browser candidate
         run: VITE_SHADOW_GATEWAY_TESTNET=true npm run app:build
 
