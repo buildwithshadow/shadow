@@ -15,6 +15,14 @@ export type AgentLineOpenedLog = {
 
 export type AgentLineDiscoveryClient = Pick<PublicClient, "getBlockNumber" | "getLogs">;
 
+export type AgentLineDiscoveryProgress = { searchedBlocks: bigint; totalBlocks: bigint };
+
+export type AgentLineDiscoveryOptions = {
+  isActive: () => boolean;
+  onProgress?: (progress: AgentLineDiscoveryProgress) => void;
+};
+
+// Mirrors isLogRangeLimit in app/scripts/float-mainnet-cli.mjs; this adds "ranges over N blocks". Keep both in sync.
 function isLogRangeLimit(error: unknown): boolean {
   const seen = new Set<object>();
   let rangeLimit = false;
@@ -54,22 +62,30 @@ export function parseAgentLineLogs(logs: readonly AgentLineOpenedLog[], agent: A
 export async function discoverAgentLineIds(
   client: AgentLineDiscoveryClient,
   deployment: { address: Address; agent: Address; deployBlock: bigint },
+  { isActive, onProgress }: AgentLineDiscoveryOptions,
 ): Promise<Hash[]> {
   if (deployment.deployBlock < 0n) throw new RangeError("The deployment block cannot be negative.");
+  if (!isActive()) return [];
   const head = await client.getBlockNumber();
+  if (!isActive()) return [];
   if (head < deployment.deployBlock) throw new Error("The current block is before the funding contract deployment block.");
 
   let cursor = head;
   let span = AGENT_LINE_DISCOVERY_CHUNK_BLOCKS;
   let requests = 0n;
-  const maxRequests = ((head - deployment.deployBlock) / AGENT_LINE_DISCOVERY_CHUNK_BLOCKS + 1n) * 16n + 16n;
+  const chunks = (head - deployment.deployBlock) / AGENT_LINE_DISCOVERY_CHUNK_BLOCKS + 1n;
+  const maxRequests = chunks * 2n + 16n;
+  const totalBlocks = head - deployment.deployBlock + 1n;
+  let searchedBlocks = 0n;
   const seen = new Set<string>();
   const lineIds: Hash[] = [];
+  onProgress?.({ searchedBlocks, totalBlocks });
   while (cursor >= deployment.deployBlock && lineIds.length < MAX_AGENT_LINE_DISCOVERY_RESULTS) {
     const fromBlock = cursor - span + 1n > deployment.deployBlock
       ? cursor - span + 1n
       : deployment.deployBlock;
     if (++requests > maxRequests) throw new Error("Agent line discovery is incomplete because its bounded RPC request budget was exhausted.");
+    if (!isActive()) return lineIds;
     let logs: readonly AgentLineOpenedLog[];
     try {
       logs = await client.getLogs({
@@ -86,13 +102,16 @@ export async function discoverAgentLineIds(
       }
       throw error;
     }
+    if (!isActive()) return lineIds;
     for (const lineId of parseAgentLineLogs(logs, deployment.agent)) {
       if (seen.has(lineId)) continue;
       seen.add(lineId);
       lineIds.push(lineId);
       if (lineIds.length === MAX_AGENT_LINE_DISCOVERY_RESULTS) break;
     }
+    searchedBlocks += cursor - fromBlock + 1n;
     cursor = fromBlock - 1n;
+    onProgress?.({ searchedBlocks, totalBlocks });
   }
   return lineIds;
 }
