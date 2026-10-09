@@ -15,7 +15,7 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
-import { ensureWalletChain } from "./walletNetwork";
+import { ensureWalletChain, walletRequestHelp } from "./walletNetwork";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -286,7 +286,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       // A refresh of the same account must still reload its balance and
       // sponsor permissions, including changes made in another tab.
       setWalletSnapshotRevision((previous) => previous + 1);
-    } catch (cause) { setError(messageOf(cause)); }
+    } catch (cause) { setError(walletRequestHelp(cause) ?? messageOf(cause)); }
     finally { setBusy(""); }
   }
 
@@ -302,7 +302,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       });
       invalidate();
       setChainId(selectedChain);
-    } catch (cause) { setError(messageOf(cause)); }
+    } catch (cause) { setError(walletRequestHelp(cause) ?? messageOf(cause)); }
     finally { setBusy(""); }
   }
 

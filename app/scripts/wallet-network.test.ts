@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { ensureWalletChain, walletErrorCode, walletRequestHelp, type WalletRequester } from '../src/walletNetwork.ts';
+import { candidateErrorMessage } from '../src/candidateFunding.ts';
 import { arcTestnetWalletParameters } from '../arcTestnetNetwork.mjs';
 
 const chain = arcTestnetWalletParameters();
@@ -102,4 +103,13 @@ test('bounded nested code discovery handles cycles and preserves explicit reject
   assert.equal(walletErrorCode(cycle), -32603);
   assert.equal(walletErrorCode({ code: 4001, cause: { code: 4902 } }), 4001);
   assert.equal(walletErrorCode({ cause: { error: { data: { originalError: { code: -32002 } } } } }), -32002);
+});
+
+
+test('public RPC and simulation codes are not misattributed to a wallet request', () => {
+  for (const code of [-32002, -32601, -32603, 3]) {
+    const rpcFailure = Object.assign(new Error('RPC simulation failed: execution reverted'), { code });
+    assert.equal(candidateErrorMessage(rpcFailure), 'RPC simulation failed: execution reverted');
+    assert.doesNotMatch(candidateErrorMessage({ code }), /wallet|waiting|pending transaction/);
+  }
 });
