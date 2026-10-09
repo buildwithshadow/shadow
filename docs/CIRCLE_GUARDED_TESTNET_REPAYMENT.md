@@ -25,7 +25,9 @@ transport factory; the exported driver functions are test injection boundaries.
 
 `maxAmount` is in six-decimal USDC atomic units and is capped at `50000` (0.05 USDC).
 Each allowance or repayment must equal that pinned amount. `maxNetworkFee` is in
-18-decimal native gas units and is capped at `20000000000000000` (0.02 USDC).
+native gas units with 18 decimals and is capped at `30000000000000000` (0.03 test USDC).
+Lower configured limits still apply. This checks an estimate and does not guarantee
+the actual network fee. Guarded mainnet repayment retains its separate 0.02 USDC limit.
 The executor verifies the current draw and agent debt before and after estimating
 fees, then verifies the exact finalized user operation and repayment events.
 
