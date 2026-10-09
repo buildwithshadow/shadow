@@ -16,16 +16,33 @@ const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLow
 
 /** Uses ordinary scalar CLI arguments, without patching its raw calldata handling. */
 export async function createCircleGuardedCliTransport(options) {
+  return createVerifiedTransport(options, createCircleGuardedCliDriver);
+}
+
+/** Explicit testnet transport; never changes the existing mainnet entry point. */
+export async function createCircleGuardedTestnetCliTransport(options) {
+  return createVerifiedTransport(options, createCircleGuardedTestnetCliDriver);
+}
+
+async function createVerifiedTransport(options, createDriver) {
   const original = resolve(options.entrypoint);
   const source = await readFile(original);
   must(createHash('sha256').update(source).digest('hex') === CIRCLE_CLI_SHA256,
     'Circle CLI differs from the reviewed runtime; review the new version before use.');
   const entrypoint = await freezeCircleCliSource(source, original, options.runtimeDirectory ?? options.journal?.runtimeDirectory);
-  return createCircleGuardedCliDriver({ ...options, entrypoint });
+  return createDriver({ ...options, entrypoint });
 }
 
 /** Injection boundary for tests. CLI authentication and policies remain external. */
-export function createCircleGuardedCliDriver({ entrypoint, agent, contract, maxAmount, expectedLineId, expectedDraw, journal, run = runFile }) {
+export function createCircleGuardedCliDriver(options) {
+  return createGuardedCliDriver(options, { blockchain: 'ARC', chainId: 5042, sessionKey: 'mainnet' });
+}
+
+export function createCircleGuardedTestnetCliDriver(options) {
+  return createGuardedCliDriver(options, { blockchain: 'ARC-TESTNET', chainId: 5042002, sessionKey: 'testnet' });
+}
+
+function createGuardedCliDriver({ entrypoint, agent, contract, maxAmount, expectedLineId, expectedDraw, journal, run = runFile }, { blockchain, chainId, sessionKey }) {
   const address = getAddress(agent), shadow = getAddress(contract);
   const cap = BigInt(maxAmount);
   must(cap > 0n && cap <= 50_000n && /^0x[0-9a-fA-F]{64}$/.test(expectedLineId)
@@ -44,7 +61,7 @@ export function createCircleGuardedCliDriver({ entrypoint, agent, contract, maxA
     }
   }
   function argumentsFor(request) {
-    must(request.blockchain === 'ARC' && same(request.sourceAddress, address) && request.amount === '0', 'Circle mainnet transport identity mismatch.');
+    must(request.blockchain === blockchain && same(request.sourceAddress, address) && request.amount === '0', `Circle ${sessionKey} transport identity mismatch.`);
     const token = same(request.contractAddress, USDC);
     must(token || same(request.contractAddress, shadow), 'Unsupported Circle destination.');
     const abi = token ? erc20Abi : circleGuardedRepaymentAbi;
@@ -56,15 +73,15 @@ export function createCircleGuardedCliDriver({ entrypoint, agent, contract, maxA
     if (!token) must(same(call.args[0], expectedLineId) && same(call.args[1], expectedDraw), 'Reviewed repayment line or draw changed.');
     const signature = token ? 'approve(address,uint256)' : 'repayForDraw(bytes32,bytes32,uint256)';
     return ['wallet', 'execute', signature, ...call.args.map(String), '--contract', request.contractAddress,
-      '--address', address, '--chain', 'ARC', '--amount', '0'];
+      '--address', address, '--chain', blockchain, '--amount', '0'];
   }
   async function session() {
     const status = await command(['wallet', 'status', '--type', 'agent']);
-    must(status?.mainnet?.tokenStatus === 'VALID', 'No valid Circle mainnet session. Authenticate privately in Terminal.');
-    const listing = await command(['wallet', 'list', '--type', 'agent', '--chain', 'ARC']);
+    must(status?.[sessionKey]?.tokenStatus === 'VALID', `No valid Circle ${sessionKey} session. Authenticate privately in Terminal.`);
+    const listing = await command(['wallet', 'list', '--type', 'agent', '--chain', blockchain]);
     const wallets = Array.isArray(listing) ? listing : listing?.wallets;
     must(Array.isArray(wallets) && wallets.some(w => same(w.address, address)), 'Wallet is not in this Circle account.');
-    return { authenticated: true, chainId: 5042, agent: address };
+    return { authenticated: true, chainId, agent: address };
   }
   return {
     session,
@@ -72,7 +89,7 @@ export function createCircleGuardedCliDriver({ entrypoint, agent, contract, maxA
       const args = argumentsFor(request);
       await session();
       const result = await command([...args, '--estimate']);
-      must(result?.blockchain === 'ARC', 'Circle fee estimate network mismatch.');
+      must(result?.blockchain === blockchain, 'Circle fee estimate network mismatch.');
       return { networkFee: result?.medium?.networkFee };
     },
     async execute(request) {
@@ -80,7 +97,7 @@ export function createCircleGuardedCliDriver({ entrypoint, agent, contract, maxA
       must(/^[0-9a-f-]{36}$/i.test(request.idempotencyKey), 'Invalid original request identity.');
       try { await session(); }
       catch {
-        const error = new Error('Circle mainnet authentication failed before submission. Restore access privately.');
+        const error = new Error(`Circle ${sessionKey} authentication failed before submission. Restore access privately.`);
         error.beforeSubmission = true; throw error;
       }
       const result = await command([...args, '--idempotency-key', request.idempotencyKey]);
@@ -93,7 +110,7 @@ export function createCircleGuardedCliDriver({ entrypoint, agent, contract, maxA
       if (!saved) return null; // No supported remote lookup by key is assumed.
       must(saved.idempotencyKey === idempotencyKey && (!transactionId || saved.id === transactionId), 'Saved Circle response identity mismatch.');
       if (saved.txHash) return saved;
-      const history = await command(['transaction', 'list', '--address', address, '--chain', 'ARC', '--limit', '50']);
+      const history = await command(['transaction', 'list', '--address', address, '--chain', blockchain, '--limit', '50']);
       const found = history?.transactions?.find(t => t.id === saved.id);
       if (!found) return saved;
       const result = { ...found, idempotencyKey };

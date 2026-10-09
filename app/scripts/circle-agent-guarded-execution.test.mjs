@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
-import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleAgentExecutor } from './circle-agent-execution.mjs';
+import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleAgentExecutor } from './circle-agent-execution.mjs';
 
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 const agent = `0x${'11'.repeat(20)}`, contract = `0x${'22'.repeat(20)}`, provider = `0x${'33'.repeat(20)}`;
@@ -20,10 +20,11 @@ function eventLog(eventName, args, address = contract, eventAbi = abi) {
   const event = eventAbi.find(x => x.type === 'event' && x.name === eventName);
   return { address, topics: encodeEventTopics({ abi: eventAbi, eventName, args }), data: encodeAbiParameters(event.inputs.filter(x => !x.indexed), event.inputs.filter(x => !x.indexed).map(x => args[x.name])) };
 }
-function setup(overrides = {}) {
+function setup(overrides = {}, factory = createCircleGuardedRepayer) {
+  const activeConfig = overrides.config ?? config;
   const values = new Map(); let locked = false;
   const journal = { get: async k => structuredClone(values.get(k) ?? null), put: async(k,v) => { values.set(k, structuredClone(v)); }, withLock: async(_k,f) => { assert(!locked); locked=true; try{return await f();}finally{locked=false;} } };
-  const state = { sends: 0, estimates: 0, reads: 0, lose: false, pending: false, fee: '0.01', chainId: 5042, policy: true, receiptStatus: 0, lineAgent: agent, code,
+  const state = { sends: 0, estimates: 0, reads: 0, lose: false, pending: false, fee: '0.01', chainId: activeConfig.chainId, policy: true, receiptStatus: 0, lineAgent: agent, code,
     finalized: 110n, canonicalHash: blockHash, userOpSuccess: true,
     receipt: { status: 'success', blockNumber: 101n, logs: [eventLog('Repaid', { lineId, payer: agent, amount: 5000n, principalRemaining: 0n }),eventLog('DrawRepaid',{lineId,drawDigest:digest,payer:agent,amount:5000n,principalRemaining:0n}),eventLog('Transfer',{from:agent,to:contract,value:5000n},usdc,erc20Abi)] } };
   const operation = () => ({sender:agent,nonce:1n,initCode:'0x',callData:encodeFunctionData({abi:accountAbi,functionName:'execute',args:[state.request.contractAddress,0n,state.request.callData]}),accountGasLimits:`0x${'00'.repeat(32)}`,preVerificationGas:1n,gasFees:`0x${'00'.repeat(32)}`,paymasterAndData:'0x',signature:'0x1234'});
@@ -38,14 +39,14 @@ function setup(overrides = {}) {
     simulateContract: async()=>({result:[state.policy,0]}),
     getTransactionReceipt: async()=>({...state.receipt,blockHash,logs:state.bundleLogs??[before(),...state.receipt.logs,boundary()]}),
   };
-  const response = request => ({ idempotencyKey: request.idempotencyKey, id:'circle-tx-1', state:'COMPLETE', blockchain:'ARC', sourceAddress:agent, contractAddress:request.contractAddress, txHash });
+  const response = request => ({ idempotencyKey: request.idempotencyKey, id:'circle-tx-1', state:'COMPLETE', blockchain:activeConfig.chainId===5042?'ARC':'ARC-TESTNET', sourceAddress:agent, contractAddress:request.contractAddress, txHash });
   const circle = {
     estimate: async r=>{state.estimates++; assert(!('abiParameters' in r)); return { networkFee:state.fee };},
     execute: async r=>{ state.sends++;state.request=r;if(state.lose)throw new Error('response lost');return {...response(r),...(state.pending?{txHash:undefined,state:'PENDING'}:{})};},
     lookup: async r=>{state.reads++;assert.equal(r.idempotencyKey,state.request.idempotencyKey);return state.mismatch??response(state.request);},
   };
   const options = { client, circle, journal, config, ...overrides };
-  return {state,values,options,adapter:createCircleGuardedRepayer(options)};
+  return {state,values,options,adapter:factory(options)};
 }
 test('raw calldata execution confirms exact repayment and does not resend the same operation',async()=>{
   const {adapter,state}=setup();const first=await adapter.execute(repay);assert.equal(first.status,'confirmed');assert.equal(state.request.callData,repay.data);
@@ -187,6 +188,58 @@ test('legacy factory still refuses mainnet; guarded factory refuses testnet and 
   for (const patch of [{chainId:5042002},{maxAmount:'50001'},{maxNetworkFee:parseUnits('0.021',18).toString()},{expectedDraw:`0x${'00'.repeat(32)}`}]) {
     assert.throws(() => setup({config:{...config,...patch}}));
   }
+});
+
+const testnetConfig = { ...config, chainId: 5042002 };
+const setupTestnet = () => setup({config:testnetConfig},createCircleGuardedTestnetRepayer);
+
+test('guarded testnet repayment confirms the exact draw and preserves the original operation on restart',async()=>{
+  const x=setupTestnet();x.state.lose=true;
+  const first=await x.adapter.execute(repay);
+  assert.equal(first.status,'unknown');assert.equal(x.state.request.blockchain,'ARC-TESTNET');
+  const legacy=createCircleAgentExecutor(x.options);
+  await assert.rejects(()=>legacy.execute({operationId:'legacy-new-approval',to:usdc,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})}),/previous Circle operation/);
+  const originalKey=x.state.request.idempotencyKey;
+  const restarted=createCircleGuardedTestnetRepayer(x.options);
+  assert.equal((await restarted.execute(repay)).status,'unknown');
+  await assert.rejects(()=>restarted.execute({...repay,operationId:'another'}),/previous Circle operation/);
+  assert.equal((await restarted.reconcile(first.key)).status,'confirmed');
+  assert.equal((await restarted.execute(repay)).status,'confirmed');
+  assert.equal(x.state.sends,1);assert.equal(x.state.request.idempotencyKey,originalKey);
+});
+
+test('guarded testnet shares the legacy testnet wallet barrier and cannot recover it with changed semantics',async()=>{
+  const x=setupTestnet();x.state.lose=true;
+  const legacy=createCircleAgentExecutor(x.options);
+  const approval={operationId:'legacy-approval',to:usdc,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})};
+  const unknown=await legacy.execute(approval);
+  assert.equal(unknown.status,'unknown');
+  assert.equal(legacy.operationKey(approval),x.adapter.operationKey(approval));
+  const snapshot=structuredClone([...x.values]);
+  await assert.rejects(()=>x.adapter.execute(repay),/previous Circle operation/);
+  await assert.rejects(()=>x.adapter.reconcile(unknown.key),/Journal repayment attribution/);
+  assert.deepEqual([...x.values],snapshot);assert.equal(x.state.sends,1);assert.equal(x.state.reads,0);
+});
+
+test('guarded testnet refuses mainnet responses and keeps the unresolved wallet hold',async()=>{
+  const x=setupTestnet();x.state.lose=true;const unknown=await x.adapter.execute(repay);
+  x.state.mismatch={...x.state.request,id:'circle-tx-1',txHash,blockchain:'ARC'};
+  await assert.rejects(()=>x.adapter.reconcile(unknown.key),/Circle response identity/);
+  await assert.rejects(()=>x.adapter.execute({...repay,operationId:'another'}),/previous Circle operation/);
+  assert.equal(x.state.sends,1);
+});
+
+test('explicit guarded testnet entry point retains guarded caps, network checks and stale-draw refusal',async()=>{
+  for(const patch of [{chainId:5042},{chainId:1},{maxAmount:'50001'},{maxNetworkFee:parseUnits('0.021',18).toString()}]){
+    assert.throws(()=>setup({config:{...testnetConfig,...patch}},createCircleGuardedTestnetRepayer));
+  }
+  for(const patch of [{chainId:5042},{draw:endpointHash}]){
+    const x=setupTestnet();Object.assign(x.state,patch);
+    await assert.rejects(()=>x.adapter.execute(repay));assert.equal(x.state.sends,0);assert.equal(x.state.estimates,0);
+  }
+  const x=setupTestnet();
+  const mainnet=createCircleGuardedRepayer({...x.options,config});
+  assert.notEqual(mainnet.operationKey(repay),x.adapter.operationKey(repay));
 });
 
 test('guarded path never sends generic repayment, purchases, or owner controls', async () => {
