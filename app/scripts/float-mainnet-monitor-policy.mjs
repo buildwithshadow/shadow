@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { isAddress, zeroAddress } from "viem";
+import { entryPoint07Address } from "viem/account-abstraction";
 import { reconcileState } from "./float-mainnet-monitor.mjs";
 
 const LIMITS = ["protocolReserve", "lineReserve", "lineSpend", "perSpend", "dailySpend"];
@@ -47,7 +48,7 @@ export function validateBaseline(raw) {
   const ids = new Set();
   for (const line of b.lines) {
     keys(line, ["lineId", "sponsor", "agent", "epoch", "reserveCap", "lineSpendCap", "dailySpendCap", "maximumRepaymentWindow", "termsVersion", "expiry", "allowedStates", "providers", ...(Object.hasOwn(line, "executorPolicy") ? ["executorPolicy"] : [])], "line");
-    requireThat(line.executorPolicy === undefined || ["dedicated", "agent-self"].includes(line.executorPolicy), "invalid line executor policy");
+    requireThat(line.executorPolicy === undefined || ["dedicated", "agent-self", "circle-agent-v07"].includes(line.executorPolicy), "invalid line executor policy");
     requireThat(hash(line.lineId) && !ids.has(line.lineId), "unique line IDs required"); ids.add(line.lineId);
     requireThat(address(line.sponsor) && address(line.agent) && ["epoch", "reserveCap", "lineSpendCap", "dailySpendCap", "maximumRepaymentWindow", "termsVersion", "expiry"].every((key) => uint(line[key])), "invalid line policy");
     requireThat(Array.isArray(line.allowedStates) && line.allowedStates.length > 0 && line.allowedStates.every((state) => ["OPEN", "DRAWN", "CLOSED", "DEFAULTED"].includes(state)) && new Set(line.allowedStates).size === line.allowedStates.length, "explicit allowed line states required");
@@ -135,9 +136,16 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
       // Paid and unknown event types retain the strict executor check.
       if (event.event === "SpendBlocked" && typeof event.executor === "string" && isAddress(event.executor)) continue;
       const line = b.lines.find(entry => entry.lineId === event.lineId);
+      if (event.event === "ProviderPaid" && line?.executorPolicy === "circle-agent-v07") {
+        check(event.route === "circle-agent-v07" && lower(event.entryPoint) === lower(entryPoint07Address)
+          && hash(event.userOpHash) && address(event.sender) && lower(event.agent) === line.agent
+          && lower(event.executor) === line.agent,
+        "EXECUTOR_DRIFT", "payment did not prove the approved Circle agent's exact successful user operation");
+        continue;
+      }
       const expectedExecutor = event.event === "ProviderPaid" && line?.executorPolicy === "agent-self"
         ? line.agent : b.executor.address;
-      check(lower(event.sender) === expectedExecutor && lower(event.executor) === expectedExecutor,
+      check(event.route === undefined && lower(event.sender) === expectedExecutor && lower(event.executor) === expectedExecutor,
         "EXECUTOR_DRIFT", "execution did not prove the sender and nonzero signed executor approved for this line");
     }
     for (const entry of s.alerts) {
