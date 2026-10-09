@@ -6332,6 +6332,6 @@ function ModularWalletCard() {
 
 createRoot(document.getElementById("root")!).render(
   <BrowserRouter>
-    {window.location.pathname === "/wallet-check" ? <CircleWalletDiagnostic /> : <App />}
+    {window.location.pathname.replace(/\/$/, "") === "/wallet-check" ? <CircleWalletDiagnostic /> : <App />}
   </BrowserRouter>
 );
