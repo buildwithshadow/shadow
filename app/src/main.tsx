@@ -1451,6 +1451,7 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
 }
 
 const ROUTE_TITLES: Record<string, string> = routeMetadata.routeTitles;
+const ROUTE_DESCRIPTIONS: Record<string, string> = routeMetadata.socialDescriptions;
 
 function EvidenceRedirect({ fallbackHash = "" }: { fallbackHash?: string }) {
   const hash = useLocation().hash;
@@ -1482,14 +1483,24 @@ function App() {
   const [treasuryError, setTreasuryError] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = ROUTE_TITLES[route] ?? ROUTE_TITLES["/"];
+    const metadataRoute = ROUTE_TITLES[route] && ROUTE_DESCRIPTIONS[route] ? route : "/";
+    const title = ROUTE_TITLES[metadataRoute];
+    const description = ROUTE_DESCRIPTIONS[metadataRoute];
+    const url = `${SHADOW_ORIGIN}${metadataRoute}`;
+    document.title = title;
+    document.head.querySelector<HTMLMetaElement>('meta[name="description"]')!.content = description;
+    document.head.querySelector<HTMLMetaElement>('meta[property="og:title"]')!.content = title;
+    document.head.querySelector<HTMLMetaElement>('meta[property="og:description"]')!.content = description;
+    document.head.querySelector<HTMLMetaElement>('meta[property="og:url"]')!.content = url;
+    document.head.querySelector<HTMLMetaElement>('meta[name="twitter:title"]')!.content = title;
+    document.head.querySelector<HTMLMetaElement>('meta[name="twitter:description"]')!.content = description;
     let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
     if (!canonical) {
       canonical = document.createElement("link");
       canonical.rel = "canonical";
       document.head.append(canonical);
     }
-    canonical.href = `${SHADOW_ORIGIN}${route}`;
+    canonical.href = url;
   }, [route]);
 
 

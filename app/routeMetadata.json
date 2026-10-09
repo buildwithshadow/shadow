@@ -10,10 +10,13 @@
     "/roadmap": "Roadmap | Shadow"
   },
   "socialDescriptions": {
+    "/": "Arc testnet, test USDC only. Set aside USDC and limits for your agent. It signs each purchase from its own wallet; the contract pays the provider only inside those limits and records what is owed.",
     "/start": "Arc testnet, test USDC only. Set aside USDC for an agent's purchases. Track what it owes and reclaim eligible funds from your own wallet.",
     "/evidence": "This page brings the Float board and supporting records together.",
     "/builders": "The public browser flow starts at /start on Arc testnet: a sponsor funds a line, an agent submits and repays a purchase, then the sponsor closes the line and reclaims the remaining reserve.",
     "/builders/v2": "These tools are for the earlier Float V2 contract; the current public testnet browser flow starts at /start.",
+    "/funding": "Earlier candidate funding information for Shadow. The current public browser flow starts at /start on Arc testnet.",
+    "/guarded-testnet": "Guarded testnet funding for Shadow. This route is for the controlled Arc testnet flow.",
     "/roadmap": "Shadow product status. Today's browser flow is self-service; see current use, history, and open work."
   }
 }

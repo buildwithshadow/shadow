@@ -39,6 +39,7 @@ function replaceMeta(html, name, value) {
 }
 
 for (const [route, description] of Object.entries(routeMetadata.socialDescriptions)) {
+  if (route === "/") continue;
   const title = routeMetadata.routeTitles[route];
   if (!title) throw new Error(`Missing route title for ${route}`);
   const url = `${SHADOW_ORIGIN}${route}`;
