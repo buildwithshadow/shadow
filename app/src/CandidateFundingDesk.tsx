@@ -16,7 +16,8 @@ import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
-import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryCursor, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
+import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
+import { mergeAgentLineDiscoveryCache, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -34,14 +35,6 @@ type Provider = NonNullable<Window["ethereum"]> & {
   on?: (event: string, listener: (...args: unknown[]) => void) => void;
   removeListener?: (event: string, listener: (...args: unknown[]) => void) => void;
 };
-type AgentLineDiscoveryCache = {
-  lineIds: Hash[];
-  lines: CandidateLine[];
-  headBlock: bigint;
-  historyCursor: AgentLineDiscoveryCursor | null;
-  forwardCursor: AgentLineDiscoveryCursor | null;
-};
-
 function Field({ label, name, value, onChange, hint, error: fieldError, decimal = false, required = true, disabled = false }: {
   label: string; name: string; value: string; onChange: (value: string) => void; hint?: string; error?: string; decimal?: boolean; required?: boolean; disabled?: boolean;
 }) {
@@ -234,7 +227,6 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     const currentAccount = account;
     const accountKey = currentAccount.toLowerCase();
     const cached = discoveredLinesByAccount.current.get(accountKey);
-    const continuingHistory = Boolean(action === "continue" && cached?.historyCursor);
     const continuation = action === "continue" ? cached?.historyCursor ?? cached?.forwardCursor ?? undefined : undefined;
     if (action === "continue" && !continuation) return;
     const fromBlock = action === "again" ? (cached?.headBlock ?? BigInt(publicTestnetManifest.deployment.blockNumber)) + 1n : undefined;
@@ -272,23 +264,15 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         },
       });
       if (!isActive() || result.headBlock === null) return;
-      const existingIds = cached?.lineIds ?? [];
-      const orderedIds = action === "continue" ? [...existingIds, ...result.lineIds]
-        : action === "again" ? [...result.lineIds, ...existingIds] : result.lineIds;
-      const lineIds = [...new Set(orderedIds)];
-      const nextCache: AgentLineDiscoveryCache = {
-        lineIds,
-        lines: cached?.lines ?? [],
-        headBlock: action === "again" ? result.headBlock : cached?.headBlock ?? result.headBlock,
-        historyCursor: action === "initial" ? result.cursor
-          : action === "continue" && continuingHistory ? result.cursor : cached?.historyCursor ?? null,
-        forwardCursor: action === "again" ? result.cursor
-          : action === "continue" && !continuingHistory ? result.cursor : cached?.forwardCursor ?? null,
-      };
+      const nextCache = mergeAgentLineDiscoveryCache(action, cached, {
+        lineIds: result.lineIds,
+        headBlock: result.headBlock,
+        cursor: result.cursor,
+      });
       discoveredLinesByAccount.current.set(accountKey, nextCache);
-      setLineDiscoveryLoadingStates(Boolean(lineIds.length));
+      setLineDiscoveryLoadingStates(Boolean(nextCache.lineIds.length));
       const knownLines = new Map((cached?.lines ?? []).map(value => [value.lineId, value]));
-      const linesToRead = lineIds.filter(id => !knownLines.has(id)).slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
+      const linesToRead = nextCache.lineIds.filter(id => !knownLines.has(id)).slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
       for (const id of linesToRead) {
         if (!isActive()) return;
         const value = await readCandidateLine(client, id);
@@ -296,7 +280,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         if (value.agent.toLowerCase() === accountKey) knownLines.set(id, value);
       }
       if (!isActive()) return;
-      const values = lineIds.map(id => knownLines.get(id)).filter((value): value is CandidateLine => value !== undefined);
+      const values = nextCache.lineIds.map(id => knownLines.get(id)).filter((value): value is CandidateLine => value !== undefined);
       const completeCache = { ...nextCache, lines: values };
       discoveredLinesByAccount.current.set(accountKey, completeCache);
       setDiscoveredLines(values);

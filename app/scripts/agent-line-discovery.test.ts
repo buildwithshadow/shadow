@@ -10,6 +10,7 @@ import {
   type AgentLineDiscoveryClient,
   type AgentLineOpenedLog,
 } from "../src/agentLineDiscovery.ts";
+import { mergeAgentLineDiscoveryCache } from "../src/agentLineDiscoveryCache.ts";
 
 const contract = "0x1111111111111111111111111111111111111111" as Address;
 const agent = "0x2222222222222222222222222222222222222222" as Address;
@@ -246,6 +247,51 @@ test("search again checks blocks after an empty cached result", async () => {
     { fromBlock: 1n, toBlock: 100n },
     { fromBlock: 101n, toBlock: 120n },
   ]);
+});
+
+test("restarting a budgeted forward scan keeps the original head until its gap is searched", async () => {
+  const oldHead = 100_000n;
+  const firstHead = oldHead + 80_001n;
+  const secondHead = firstHead + 100n;
+  const deployment = { address: contract, agent, deployBlock: 1n };
+  const clientAt = (headBlock: bigint): AgentLineDiscoveryClient => ({
+    getBlockNumber: async () => headBlock,
+    getLogs: async () => [],
+  });
+  const initial = mergeAgentLineDiscoveryCache("initial", undefined, {
+    lineIds: [], headBlock: oldHead, cursor: null,
+  });
+
+  const first = await discoverAgentLineIds(clientAt(firstHead), deployment, {
+    ...activeDiscovery,
+    fromBlock: initial.headBlock + 1n,
+  });
+  assert.notEqual(first.cursor, null);
+  assert.equal(first.searchedBlocks, 75_000n);
+  assert.equal(first.cursor?.startBlock, oldHead + 1n);
+  assert.ok(first.headBlock !== null);
+  const afterFirst = mergeAgentLineDiscoveryCache("again", initial, {
+    lineIds: first.lineIds, headBlock: first.headBlock, cursor: first.cursor,
+  });
+
+  assert.equal(afterFirst.headBlock, oldHead);
+  assert.equal(afterFirst.forwardCursor?.headBlock, firstHead);
+
+  const second = await discoverAgentLineIds(clientAt(secondHead), deployment, {
+    ...activeDiscovery,
+    fromBlock: afterFirst.headBlock + 1n,
+  });
+  assert.notEqual(second.cursor, null);
+  assert.equal(second.searchedBlocks, 75_000n);
+  assert.equal(second.cursor?.startBlock, oldHead + 1n);
+  assert.equal(second.cursor?.headBlock, secondHead);
+  assert.ok(second.headBlock !== null);
+  const afterSecond = mergeAgentLineDiscoveryCache("again", afterFirst, {
+    lineIds: second.lineIds, headBlock: second.headBlock, cursor: second.cursor,
+  });
+
+  assert.equal(afterSecond.headBlock, oldHead);
+  assert.notEqual(afterSecond.forwardCursor, null);
 });
 
 test("cancellation stops before the next getLogs request", async () => {
