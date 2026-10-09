@@ -95,6 +95,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [discoveredLines, setDiscoveredLines] = useState<CandidateLine[]>([]);
   const [lineDiscoveryStatus, setLineDiscoveryStatus] = useState<"idle" | "loading" | "ready" | "empty" | "failed">("idle");
   const [lineDiscoveryProgress, setLineDiscoveryProgress] = useState<AgentLineDiscoveryProgress | null>(null);
+  const [lineDiscoveryLoadingStates, setLineDiscoveryLoadingStates] = useState(false);
   const [lineDiscoveryUsedCache, setLineDiscoveryUsedCache] = useState(false);
   const [lineRefreshError, setLineRefreshError] = useState("");
   const [pending, setPending] = useState<CandidatePending | null>(null);
@@ -177,6 +178,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     lineDiscoveryActive.current = false;
     lineDiscoveryRun.current++;
     setLineDiscoveryProgress(null);
+    setLineDiscoveryLoadingStates(false);
     setLineDiscoveryStatus(status => status === "idle" ? status : "idle");
   }, [account, role, mode, pending, journalError, gatewayHeld, unresolvedPurchase, showAgentLineDiscovery]);
 
@@ -240,6 +242,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     const cachedIds = discoveredLineIdsByAccount.current.get(accountKey);
     setDiscoveredLines([]);
     setLineDiscoveryProgress(null);
+    setLineDiscoveryLoadingStates(false);
     setLineDiscoveryUsedCache(cachedIds !== undefined);
     setLineDiscoveryStatus("loading");
     try {
@@ -261,6 +264,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         if (!isActive()) return;
         if (ids.length) discoveredLineIdsByAccount.current.set(accountKey, ids);
       }
+      setLineDiscoveryLoadingStates(Boolean(ids.length));
       const values: CandidateLine[] = [];
       for (const id of ids) {
         if (!isActive()) return;
@@ -270,10 +274,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       }
       if (!isActive()) return;
       setDiscoveredLines(values);
+      setLineDiscoveryLoadingStates(false);
       setLineDiscoveryStatus(values.length ? "ready" : "empty");
     } catch {
       if (isActive()) {
         setDiscoveredLines([]);
+        setLineDiscoveryLoadingStates(false);
         setLineDiscoveryStatus("failed");
       }
     } finally {
@@ -287,6 +293,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     lineDiscoveryActive.current = false;
     lineDiscoveryRun.current++;
     setLineDiscoveryProgress(null);
+    setLineDiscoveryLoadingStates(false);
     setLineDiscoveryStatus("idle");
   }
   function selectDiscoveredLine(id: Hash) {
@@ -702,7 +709,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         <button type="submit" disabled={Boolean(busy)}>Load line</button>
       </form>
       {showAgentLineDiscovery && lineDiscoveryStatus !== "idle" && <div className="agentLineDiscovery" aria-live="polite">
-        {lineDiscoveryStatus === "loading" && <p role="status">{lineDiscoveryProgress
+        {lineDiscoveryStatus === "loading" && <p role="status">{lineDiscoveryLoadingStates
+          ? "Loading the current state of the lines found…"
+          : lineDiscoveryProgress
           ? `Searched ${lineDiscoveryProgress.searchedBlocks.toLocaleString()} of ${lineDiscoveryProgress.totalBlocks.toLocaleString()} blocks.`
           : lineDiscoveryUsedCache ? "Refreshing the lines found earlier in this session. Reload the page to search the chain again." : "Checking the current block…"}</p>}
         {lineDiscoveryStatus === "ready" && <><p role="status">Choose a funding line for this wallet.</p>

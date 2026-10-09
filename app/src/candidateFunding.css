@@ -83,6 +83,11 @@
   .fundingMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .fundingDetails > div { grid-template-columns: 1fr; gap: 6px; }
 }
+@media (min-width: 521px) and (max-width: 760px) {
+  .fundingLookup .fundingField { order: 0; flex: 1 1 0; }
+  .fundingLookup > button[type="submit"] { order: 1; }
+  .fundingLookup > button[type="button"] { order: 2; flex: 0 0 100%; }
+}
 @media (max-width: 520px) {
   .fundingGrid { grid-template-columns: 1fr; }
   .fundingModes > button { flex: 1; }
