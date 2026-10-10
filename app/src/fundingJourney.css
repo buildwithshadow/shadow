@@ -1,0 +1,335 @@
+.fundingJourney {
+  max-width: 1120px;
+  padding: 48px 0 36px;
+}
+.journeyHeading {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 24px;
+  margin-bottom: 36px;
+}
+.journeyHeading h1 {
+  margin: 18px 0 14px;
+  font-size: clamp(34px, 4.4vw, 52px);
+  line-height: 1.1;
+  text-wrap: balance;
+}
+.journeyHeading h1:focus {
+  outline: none;
+}
+.journeyHeading > div > p:last-child {
+  color: var(--ink-soft);
+  max-width: 610px;
+  line-height: 1.65;
+  margin: 0;
+  font-size: 17px;
+  text-wrap: pretty;
+}
+.journeyHeading .pageEyebrow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.journeyNetworkDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.journeyTestLabel {
+  color: var(--ink-soft);
+  padding-left: 12px;
+  border-left: 1px solid var(--border-strong);
+}
+.journeyWallet {
+  display: grid;
+  gap: 6px;
+  text-align: right;
+  min-width: 170px;
+}
+.journeyWallet small {
+  color: var(--ink-soft);
+}
+.journeyWallet button {
+  padding: 8px 12px;
+}
+.journeyProgress {
+  margin-bottom: 32px;
+  padding-bottom: 24px;
+  border-bottom: 1px solid var(--border-strong);
+}
+.journeyProgress ol {
+  display: flex;
+  justify-content: space-between;
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  gap: 12px;
+}
+.journeyProgress li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--ink-soft);
+  font-size: 14px;
+}
+.journeyProgress .current {
+  color: var(--ink);
+  font-weight: 700;
+}
+.journeyStepNumber {
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  flex: 0 0 30px;
+  border: 1px solid var(--border-strong);
+  border-radius: 50%;
+  font-variant-numeric: tabular-nums;
+}
+.journeyProgress .current .journeyStepNumber {
+  color: var(--cta-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.journeyProgress button {
+  border: 0;
+  background: transparent;
+  padding: 8px 0;
+  color: var(--ink-soft);
+}
+.journeyMobileProgress {
+  display: none;
+}
+.journeyLayout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 290px;
+  gap: 36px;
+  align-items: start;
+}
+.journeySolo {
+  grid-template-columns: minmax(0, 1fr);
+}
+.journeyMain {
+  min-width: 0;
+}
+.journeyMain > .fundingPanel {
+  padding: 32px;
+}
+.journeyMain h2 {
+  text-wrap: balance;
+}
+.journeyMain .fundingWallet {
+  background: none;
+  border: 0;
+  padding: 0;
+  min-width: 0;
+}
+.journeyMain .fundingWallet > span {
+  display: none;
+}
+.journeyMain .fundingWallet button {
+  justify-self: start;
+}
+.journeySummary {
+  padding: 8px 0 8px 24px;
+  border-left: 1px solid var(--border-strong);
+}
+.journeySummary h2 {
+  margin: 0 0 20px;
+  font-size: 17px;
+}
+.journeySummary dl {
+  display: grid;
+  gap: 22px;
+  margin: 0;
+}
+.journeySummary dt {
+  color: var(--ink-soft);
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.journeySummary dd {
+  margin: 0;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+.journeySummary p {
+  color: var(--ink-soft);
+  font-size: 13px;
+  line-height: 1.6;
+  padding-top: 20px;
+  border-top: 1px solid var(--border-strong);
+  margin-top: 24px;
+}
+.journeyChoices {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+}
+.journeyChoice {
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: 14px;
+  padding: 32px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+.journeyChoice:first-child {
+  border-top: 3px solid var(--accent);
+}
+.journeyChoice h2 {
+  font-size: 26px;
+  margin: 0 0 14px;
+}
+.journeyChoice p {
+  margin: 0 0 26px;
+  line-height: 1.65;
+  color: var(--ink-soft);
+  max-width: 430px;
+}
+.journeyChoice button {
+  margin-top: auto;
+}
+.journeyRoleLabel {
+  color: var(--ink-soft);
+  font: 12px var(--mono);
+  margin-bottom: 24px;
+}
+.journeyMain .fundingGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.journeyMain .fundingThree {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.journeyMain .fundingField {
+  margin-top: 16px;
+}
+.journeyNext {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-top: 28px;
+  padding-top: 24px;
+  border-top: 1px solid var(--border-strong);
+}
+.journeyHint {
+  font-size: 14px;
+  color: var(--ink-soft);
+  line-height: 1.6;
+}
+.journeyMain .fundingPanel > .fundingDetails {
+  padding: 16px 0;
+  border-top: 1px solid var(--border-strong);
+  border-bottom: 1px solid var(--border-strong);
+}
+.journeySuccess {
+  border-left: 3px solid var(--copy);
+  padding: 12px 16px;
+  color: var(--ink);
+  background: var(--surface-2);
+}
+.journeyFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+  margin-top: 32px;
+  color: var(--ink-soft);
+  font-size: 13px;
+}
+.journeyFooter button {
+  border: 0;
+  padding: 10px 0;
+  background: transparent;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+@media (max-width: 820px) {
+  .journeyLayout {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 24px;
+  }
+  .journeySummary {
+    border-left: 0;
+    border-top: 1px solid var(--border-strong);
+    padding: 24px 0 0;
+  }
+  .journeySummary dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .journeyProgress ol {
+    gap: 8px;
+  }
+  .journeyProgress li {
+    flex-direction: column;
+    text-align: center;
+    gap: 6px;
+  }
+}
+@media (max-width: 520px) {
+  .fundingJourney {
+    padding-top: 28px;
+  }
+  .journeyHeading {
+    flex-direction: column;
+    margin-bottom: 24px;
+  }
+  .journeyHeading > div > p:last-child {
+    font-size: 16px;
+  }
+  .journeyWallet {
+    text-align: left;
+    width: 100%;
+  }
+  .journeyMain > .fundingPanel,
+  .journeyChoice {
+    padding: 22px 18px;
+  }
+  .journeyChoices,
+  .journeyMain .fundingGrid,
+  .journeyMain .fundingThree {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .journeyProgress ol {
+    display: none;
+  }
+  .journeyMobileProgress {
+    display: block;
+    margin: 0;
+    font-size: 14px;
+    color: var(--ink-soft);
+  }
+  .journeyNext {
+    flex-wrap: wrap;
+  }
+  .journeyNext .fundingPrimary {
+    flex: 1;
+  }
+  .journeyTestLabel {
+    display: block;
+  }
+  .journeySummary dl {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.fundingJourney .journeyHeading h1 {
+  letter-spacing: -0.035em;
+}
+.fundingJourney .journeyProgress button {
+  border: 0;
+  background: transparent;
+  padding: 8px 0;
+  box-shadow: none;
+}
+.fundingJourney .journeyFooter button {
+  border: 0;
+  background: transparent;
+  padding: 10px 0;
+}

@@ -1,91 +1,70 @@
-# Shadow design system
+---
+version: alpha
+name: Shadow
+description: Sponsor funded agent services on Arc, with spending limits and repayment tracking.
+colors:
+  bg: "#07111f"
+  bg-2: "#0b1728"
+  surface: "#0f1d31"
+  surface-2: "#14243a"
+  surface-3: "#1b2c47"
+  border: "rgba(184, 211, 255, 0.1)"
+  border-strong: "rgba(184, 211, 255, 0.18)"
+  ink: "#f3f7ff"
+  ink-soft: "#aebbd0"
+  ink-faint: "#8895a9"
+  accent: "#34e5ff"
+  signal: "#34e5ff"
+  copy: "#4df0a8"
+  block: "#ff5f7e"
+  warn: "#ffd166"
+  cta-bg: "#34e5ff"
+  cta-fg: "#06101d"
+typography:
+  body:
+    fontFamily: Bricolage Grotesque
+  mono:
+    fontFamily: IBM Plex Mono
+omitted:
+  - spacing
+  - rounded
+  - components
+---
 
-This covers the public site and participant app in `app/src`. It records the system as it is and the rules every change must keep. Tokens live in `:root` in `app/src/styles.css`. The site is dark only.
+## Overview
 
-## Colour
+Shadow helps people fund agent service purchases, set limits, track repayment and reclaim eligible funds. The participant experience leads with the action the person needs to complete. The public site and participant app use the same dark visual language.
 
-### Surfaces
+## Colors
 
-| Token | Value | Use |
-| --- | --- | --- |
-| `--bg` | `#07111f` | Page background |
-| `--bg-2` | `#0b1728` | Inputs and inset areas |
-| `--surface` | `#0f1d31` | Panels |
-| `--surface-2` | `#14243a` | Raised panels, secondary buttons |
-| `--surface-3` | `#1b2c47` | The lightest surface; text must pass on it |
+Use the background and inset surface for page structure, with raised surfaces for forms and contextual information. Use the accent for the primary action, links and focus. Success uses copy, refusal or failure uses block, and unresolved outcomes use warn. Color always accompanies text or an icon that names the state.
 
-Borders use `--border` and `--border-strong`, both translucent.
+Calculate contrast against the actual surface, including composited transparency. Maintain 4.5:1 for body text and 3:1 for large text and information carrying boundaries. New colors and surfaces require measured contrast before release. The existing primary button pair exceeds those requirements.
 
-### Text and state
+## Typography
 
-| Token | Value | Role |
-| --- | --- | --- |
-| `--ink` | `#f3f7ff` | Primary text |
-| `--ink-soft` | `#aebbd0` | Secondary text, body copy on panels |
-| `--ink-faint` | `#8895a9` | Labels, captions, counts |
-| `--accent` / `--signal` | `#34e5ff` | Brand colour: links, focus rings, emphasis. Not a state |
-| `--copy` | `#4df0a8` | Paid, confirmed, success |
-| `--block` | `#ff5f7e` | Refused, blocked, failed |
-| `--warn` | `#ffd166` | Needs attention: pending, expiring, unresolved |
-
-The primary button uses `--cta-bg` with `--cta-fg` text (12.55:1).
-
-Some older rules use `--accent` for a settled or successful state; new work uses the state tokens.
-
-**Colour never carries meaning alone.** A state colour always comes with the word or icon that names the state.
-
-### Contrast
-
-Contrast is computed, never estimated, against every surface the text can sit on. Body text needs 4.5:1. Large text (24px, or 18.66px bold) and information carrying UI boundaries need 3:1.
-
-| Token | `--bg` | `--bg-2` | `--surface` | `--surface-2` | `--surface-3` |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| `--ink` `#f3f7ff` | 17.64 | 16.75 | 15.77 | 14.56 | 13.06 |
-| `--ink-soft` `#aebbd0` | 9.76 | 9.27 | 8.72 | 8.05 | 7.22 |
-| `--ink-faint` `#8895a9` | 6.24 | 5.93 | 5.58 | 5.15 | 4.62 |
-| `--accent` `#34e5ff` | 12.44 | 11.82 | 11.12 | 10.27 | 9.21 |
-| `--copy` `#4df0a8` | 12.94 | 12.29 | 11.56 | 10.68 | 9.58 |
-| `--block` `#ff5f7e` | 6.48 | 6.16 | 5.80 | 5.35 | 4.80 |
-| `--warn` `#ffd166` | 13.13 | 12.48 | 11.74 | 10.84 | 9.72 |
-
-Ratios use WCAG relative luminance on linearised sRGB: `L = 0.2126R + 0.7152G + 0.0722B`, and `(L1 + 0.05) / (L2 + 0.05)` with `L1` the lighter. Translucent backgrounds are composited over the surface beneath before measuring. A new text colour, or a new surface, needs its row or column added here before it ships.
-
-## Type
-
-| Family | Job |
-| --- | --- |
-| Bricolage Grotesque | Display and body text |
-| IBM Plex Mono (`--mono`) | Data, labels, addresses, hashes, amounts and code |
-
-Mono is for data and labels, not prose. Older pages use it more widely than that; new and rebuilt screens follow the rule, and pages are brought in line as they are rebuilt. Two families is the limit; a third needs a role neither of these can do.
-
-## Motion
-
-1. Nothing on the site loops.
-2. Hover and state transitions are short, mostly 140 to 160ms. Any entrance animation is finite, and visibility never depends on an animation's end state: reduced motion removes the animation, so an element that starts hidden and relies on `forwards` would stay hidden.
-3. Under `prefers-reduced-motion: reduce`, all animation and transition stops and smooth scrolling turns off. The global rule sits at the end of `styles.css`. Scripted scrolls never pass `behavior: "smooth"`; the default, `auto`, follows the rule.
+Use the body family for headings and prose. Reserve mono for data, labels, wallet addresses, hashes and amounts. Keep the two existing families; do not introduce a third without a distinct role. Amounts and changing metrics use tabular figures.
 
 ## Layout
 
-Every page works at 320 CSS pixels wide with no horizontal scrolling and no lost content or function. Check at 320px, not only at desktop widths.
+Every page must work at 320 CSS pixels without horizontal scrolling, lost content or lost function. Rebuilt participant controls use 44px touch targets. Existing surfaces must at least preserve the WCAG 2.2 AA target size or spacing floor.
 
-Touch targets aim for 44px (WCAG 2.5.5). The funding desk (nav, buttons, inputs, checkbox rows) and the Builders action buttons are built to it. Elsewhere most controls fall short: nav links (15px), footer links (17px), the nav Wallet and Fund an agent buttons (34px), page call to action links (32 to 43px), standalone links inside panels, and the Builders text inputs (41px) and 16px confirm checkbox. They are brought up as pages are rebuilt. The floor every page must keep is WCAG 2.2 AA (2.5.8): a target is at least 24px, or its centre is at least 24px from its neighbours' centres. On phones the nav's 10px row gap is what keeps its 15px links above that floor.
+Give each onboarding stage its own route and one primary action. Completing a stage leads to the next page; browser Back preserves entered details. Show progress and a contextual summary without repeating the full form on every page. Use a compact mobile progress view rather than compressing desktop navigation into unreadable text.
 
-## Participant screens
+## Components
 
-These rules protect money, so they outrank visual changes.
+The participant journey separates wallet connection, sponsor registration, agent selection, budget settings, funding review and line management. Registration labels must describe the actual sponsor transaction. Registered sponsors can continue without registering again. Agent users can open an existing line without traversing sponsor setup.
 
-1. Show the real chain and service state. Never present a simulated or assumed success.
-2. When an outcome is unknown, never offer a new payment. Offer recovery of the original.
-3. State the limits and the repayment terms where the decision is made, not only in help text.
-4. Each wallet action has its own review step, and a declined or failed prompt says what happened and what was not sent.
-5. `/start` (the self service testnet contract) and `/funding` (the earlier candidate) stay distinct.
-6. One wallet control per screen.
+Keep one wallet control per screen. Place network and registration prerequisites before funding fields. Give disconnected, loading, paused, pending and failed states a specific explanation and next action. Show repayment terms, provider identity and sponsor risk at the funding decision.
 
-## Custom properties
+Advance registration or funding only after confirmed state. Each financial action retains its own review and wallet confirmation. Explain declined and failed prompts without claiming a transaction was not sent when its outcome is unknown. Unknown outcomes show recovery of the original request and block a new payment.
 
-Every `var(--name)` must be defined. Before shipping a style change, list the properties that are used but never defined, and the result must be empty:
+Keep the public self service contract and earlier candidate distinct. A friendly agent label must not replace wallet identity or funding line authorization. Show real chain and service state rather than simulated success.
 
-```sh
-python3 -c "import re,glob;s=''.join(open(f,encoding='utf-8').read() for f in glob.glob('app/src/*.css')+glob.glob('app/src/*.tsx'));print(sorted(set(re.findall(r'var\((--[\w-]+)',s))-set(re.findall(r'(--[\w-]+)\s*:',s))))"
-```
+## Do's and Don'ts
+
+Keep animation finite and optional. Do not introduce looping motion. Visibility must not depend on an animation ending. Under reduced motion, disable transitions and animations and turn off smooth scrolling; scripted scrolls use the default behavior. Preserve the existing short interaction transitions.
+
+Do not present a requested wallet action as completed. Do not use state color without a matching label. Do not offer a retry as a new payment while the original outcome is unknown. Do not weaken repayment, wallet or transaction recovery controls for visual convenience.
+
+Every referenced custom property must be defined. Verify actual desktop and mobile flows, keyboard focus, disabled reasons and reduced motion before release.
