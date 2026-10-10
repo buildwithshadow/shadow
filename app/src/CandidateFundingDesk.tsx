@@ -18,7 +18,7 @@ import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
-import { discoverAgentLineIds, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
+import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
 import { getAgentLineDiscoveryContinuationCursor, hasResumableDiscoveryProgress, mergeAgentLineDiscoveryCache, refreshAgentLineDiscoveryCachePage, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
 import { ensureWalletChain, walletRequestHelp } from "./walletNetwork";
 
@@ -314,7 +314,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     const accountKey = currentAccount.toLowerCase();
     const cached = discoveredLinesByAccount.current.get(accountKey);
     const continuation = action === "continue" ? getAgentLineDiscoveryContinuationCursor(cached) ?? undefined : undefined;
-    if (action === "continue" && !continuation) return;
+    if (action === "continue" && !continuation && !cached?.pendingPageIds?.length) return;
     const fromBlock = action === "again" ? (cached?.headBlock ?? BigInt(publicTestnetManifest.deployment.blockNumber)) + 1n : undefined;
     const discoveryDeployment = {
       address: deployment.address,
@@ -336,7 +336,18 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setLineDiscoveryAction(action);
     setLineDiscoveryStatus("loading");
     try {
-        let lastProgressUpdate: bigint | null = null;
+      // Finish the unread page before moving either scan cursor further.
+      if (cached?.pendingPageIds?.length) {
+        const refreshed = await refreshAgentLineDiscoveryCachePage(cached, cached.pendingPageIds,
+          currentAccount, id => readCandidateLine(client, id), isActive);
+        if (!refreshed || !isActive()) return;
+        discoveredLinesByAccount.current.set(accountKey, refreshed);
+        setDiscoveredLines(refreshed.lines);
+        setLineDiscoveryLoadingStates(false);
+        setLineDiscoveryStatus(refreshed.historyCursor || refreshed.forwardCursor ? "partial" : refreshed.lines.length ? "ready" : "empty");
+        return;
+      }
+      let lastProgressUpdate: bigint | null = null;
       const result = await discoverAgentLineIds(discoveryClient, discoveryDeployment, {
         isActive,
         ...(continuation ? { cursor: continuation } : {}),
@@ -357,19 +368,19 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         headBlock: result.headBlock,
         cursor: result.cursor,
       });
-      if (stoppedByUser) {
-        discoveredLinesByAccount.current.set(accountKey, nextCache);
-        // An explicit stop keeps the blocks already searched and sends no further requests.
-        setDiscoveredLines(nextCache.lines);
-        setLineDiscoveryStatus(nextCache.historyCursor || nextCache.forwardCursor ? "partial" : nextCache.lines.length ? "ready" : "idle");
-        return;
-      }
-      setLineDiscoveryLoadingStates(Boolean(nextCache.lineIds.length));
-      // A continuation shows the next page, rather than rereading every earlier page.
-      // A repeat search shows the newest known page, including newly opened lines.
+      // Preserve completed scans independently from the pending balance reads.
       const pageIds = action === "continue" && result.lineIds.length
         ? result.lineIds : nextCache.lineIds;
-      const completeCache = await refreshAgentLineDiscoveryCachePage(nextCache, pageIds, currentAccount,
+      const stagedCache = { ...nextCache, lines: [], pendingPageIds: [...new Set(pageIds)].slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS) };
+      discoveredLinesByAccount.current.set(accountKey, stagedCache);
+      if (stoppedByUser) {
+        setDiscoveredLines([]);
+        setLineDiscoveryLoadingStates(false);
+        setLineDiscoveryStatus(stagedCache.pendingPageIds.length || stagedCache.historyCursor || stagedCache.forwardCursor ? "partial" : "empty");
+        return;
+      }
+      setLineDiscoveryLoadingStates(Boolean(stagedCache.pendingPageIds.length));
+      const completeCache = await refreshAgentLineDiscoveryCachePage(stagedCache, stagedCache.pendingPageIds, currentAccount,
         id => readCandidateLine(client, id), isActive);
       if (!completeCache || !isActive()) return;
       const values = completeCache.lines;
@@ -383,6 +394,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         setLineDiscoveryStatus("failed");
       }
     } finally {
+      if (lineDiscoveryStoppedRun.current === run && inContext() && discoveredLinesByAccount.current.get(accountKey)?.pendingPageIds?.length) {
+        setLineDiscoveryLoadingStates(false);
+        setLineDiscoveryStatus("partial");
+      }
       if (lineDiscoveryRun.current === run) {
         lineDiscoveryActive.current = false;
         setLineDiscoveryProgress(null);
@@ -712,7 +727,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     : gatewayHeld ? "Resolve Gateway funding above before continuing." : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
   const cachedLineDiscovery = account ? discoveredLinesByAccount.current.get(account.toLowerCase()) : undefined;
   const incompleteLineDiscoveryCursor = getAgentLineDiscoveryContinuationCursor(cachedLineDiscovery);
-  const canContinueLineDiscovery = Boolean(cachedLineDiscovery?.historyCursor || cachedLineDiscovery?.forwardCursor);
+  const canContinueLineDiscovery = Boolean(cachedLineDiscovery?.pendingPageIds?.length || cachedLineDiscovery?.historyCursor || cachedLineDiscovery?.forwardCursor);
   const incompleteLineDiscoveryProgress = incompleteLineDiscoveryCursor
     ? ` Searched ${incompleteLineDiscoveryCursor.searchedBlocks.toLocaleString()} of ${incompleteLineDiscoveryCursor.totalBlocks.toLocaleString()} blocks.` : "";
 

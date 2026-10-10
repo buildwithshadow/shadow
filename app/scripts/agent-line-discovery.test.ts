@@ -552,26 +552,39 @@ test("cancelled page refresh stops before further reads and never publishes part
 });
 
 
-test("failed continuation state refresh retains the committed cursor and retries the unread page", async () => {
-  const olderCursor = { nextBlock: 500n } as any;
-  let committed: AgentLineDiscoveryCache = { lineIds: [lineId(1)], lines: [], headBlock: 1000n, forwardWindowCount: 0, forwardCursor: null, historyCursor: olderCursor };
+test("failed continuation refresh retains an unread page alongside completed scan progress", async () => {
   const pageIds = [lineId(11), lineId(12)];
-  const proposed = mergeAgentLineDiscoveryCache("continue", committed, { lineIds: pageIds, headBlock: 1000n, cursor: { ...olderCursor, nextBlock: 400n } });
+  const staged: AgentLineDiscoveryCache = { lineIds: [lineId(1), ...pageIds], lines: [], headBlock: 1000n, forwardWindowCount: 0, forwardCursor: null, historyCursor: { nextBlock: 400n } as any, pendingPageIds: pageIds };
   const reads: Hash[] = [];
-  await assert.rejects(async () => {
-    const refreshed = await refreshAgentLineDiscoveryCachePage(proposed, pageIds, agent, async id => {
-      reads.push(id);
-      if (id === lineId(12)) throw new Error("temporary RPC failure");
-      return { lineId: id, agent } as any;
-    }, () => true);
-    if (refreshed) committed = refreshed;
-  }, /temporary RPC failure/);
-  assert.equal(committed.historyCursor, olderCursor);
-  assert.deepEqual(committed.lineIds, [lineId(1)]);
-  const retry = await refreshAgentLineDiscoveryCachePage(proposed, pageIds, agent, async id => {
+  await assert.rejects(refreshAgentLineDiscoveryCachePage(staged, staged.pendingPageIds!, agent, async id => {
+    reads.push(id); if (id === lineId(12)) throw new Error("temporary RPC failure");
+    return { lineId: id, agent } as any;
+  }, () => true), /temporary RPC failure/);
+  assert.deepEqual(staged.pendingPageIds, pageIds);
+  assert.equal(staged.historyCursor?.nextBlock, 400n);
+  const retry = await refreshAgentLineDiscoveryCachePage(staged, staged.pendingPageIds!, agent, async id => {
     reads.push(id); return { lineId: id, agent } as any;
   }, () => true);
   assert.deepEqual(retry?.lines.map(line => line.lineId), pageIds);
+  assert.deepEqual(retry?.pendingPageIds, []);
   assert.equal(retry?.historyCursor?.nextBlock, 400n);
   assert.deepEqual(reads, [...pageIds, ...pageIds]);
+});
+
+test("Stop during a page refresh preserves completed scan progress and an unread retry page", async () => {
+  const pageIds = [lineId(11), lineId(12)];
+  const staged: AgentLineDiscoveryCache = { lineIds: pageIds, lines: [], headBlock: 1000n, forwardWindowCount: 0, forwardCursor: null, historyCursor: { nextBlock: 400n } as any, pendingPageIds: pageIds };
+  let active = true;
+  let calls = 0;
+  const stopped = await refreshAgentLineDiscoveryCachePage(staged, pageIds, agent, async id => {
+    calls++; active = false; return { lineId: id, agent } as any;
+  }, () => active);
+  assert.equal(stopped, null);
+  assert.equal(calls, 1);
+  assert.deepEqual(staged.pendingPageIds, pageIds);
+  assert.equal(staged.historyCursor?.nextBlock, 400n);
+  const resumed = await refreshAgentLineDiscoveryCachePage(staged, pageIds, agent, async id => ({ lineId: id, agent } as any), () => true);
+  assert.deepEqual(resumed?.lines.map(line => line.lineId), pageIds);
+  assert.deepEqual(resumed?.pendingPageIds, []);
+  assert.equal(resumed?.historyCursor?.nextBlock, 400n);
 });

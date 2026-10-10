@@ -4,6 +4,7 @@ import type { CandidateLine } from "./candidateFunding";
 
 export type AgentLineDiscoveryCache = {
   lineIds: Hash[];
+  pendingPageIds?: Hash[];
   forwardWindowCount: number;
   lines: CandidateLine[];
   headBlock: bigint;
@@ -85,5 +86,5 @@ export async function refreshAgentLineDiscoveryCachePage(
   isActive: () => boolean,
 ): Promise<AgentLineDiscoveryCache | null> {
   const lines = await refreshAgentLineDiscoveryPage(pageIds, agent, readLine, isActive);
-  return lines === null ? null : { ...proposed, lines };
+  return lines === null ? null : { ...proposed, lines, pendingPageIds: [] };
 }
