@@ -98,7 +98,6 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [snapshot, setSnapshot] = useState<CandidateSnapshot | null>(null);
   const [walletSnapshotRevision, setWalletSnapshotRevision] = useState(0);
   const [snapshotError, setSnapshotError] = useState("");
-  const [hasLineQuery] = useState(() => new URLSearchParams(window.location.search).has("line"));
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
   const [lineInputError, setLineInputError] = useState("");
   const [line, setLine] = useState<CandidateLine | null>(null);
@@ -123,7 +122,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const showAgentLineDiscovery = Boolean(service && publicTestnetDeployment && (role === "agent" || guided && (requestedStep === "line" || requestedStep === "purchase")) && mode === "manage" && account
-    && !busy && !hasLineQuery && !lineId.trim() && !pending && !journalError && !gatewayHeld && !unresolvedPurchase);
+    && !busy && !lineId.trim() && !pending && !journalError && !gatewayHeld && !unresolvedPurchase);
   const discoveryClient = useMemo(() => showAgentLineDiscovery ? createPublicClient({ chain: candidateFundingChain,
     transport: createRpcReadTransport("https://rpc.blockdaemon.testnet.arc.io", { timeout: 15_000,
       fallbackUrls: [ARC_TESTNET_RPC_URL], expectedChainId: Number(publicTestnetManifest.chainId),
@@ -367,7 +366,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       }
       setLineDiscoveryLoadingStates(Boolean(nextCache.lineIds.length));
       const knownLines = new Map((cached?.lines ?? []).map(value => [value.lineId, value]));
-      const linesToRead = nextCache.lineIds.filter(id => !knownLines.has(id)).slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
+      const newLineIds = nextCache.lineIds.filter(id => !knownLines.has(id)).slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
+      // Re-read lines found earlier too, so a repeat search shows their current state.
+      const linesToRead = [...knownLines.keys(), ...newLineIds];
       for (const id of linesToRead) {
         if (!isActive()) return;
         const value = await readCandidateLine(client, id);
@@ -806,7 +807,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </form>
       {lineLoading && <p role="status">Loading the line from your link…</p>}
       {lineDiscoveryResults}
-      {mainnet && role === "agent" && account && !hasLineQuery && !lineId.trim() && <p className="agentLineDiscovery" role="status">Enter a funding line ID on this route to load a mainnet line.</p>}
+      {mainnet && role === "agent" && account && !lineId.trim() && <p className="agentLineDiscovery" role="status">Enter a funding line ID on this route to load a mainnet line.</p>}
       {line && <div className="fundingLine">
         <div className="fundingPanelHead"><h3 id="funding-loaded-line-heading" tabIndex={-1}>{line.stateName === "DRAWN" ? "Purchase awaiting repayment" : line.stateName === "OPEN" ? "Line open" : line.stateName === "CLOSED" ? "Line closed" : "Line defaulted"}</h3>
           <span>Updated at block {line.observedBlock.toString()}</span></div>
