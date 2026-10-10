@@ -1,5 +1,5 @@
 import type { Hash } from "viem";
-import type { AgentLineDiscoveryCursor } from "./agentLineDiscovery";
+import { MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryCursor } from "./agentLineDiscovery.ts";
 import type { CandidateLine } from "./candidateFunding";
 
 export type AgentLineDiscoveryCache = {
@@ -55,4 +55,22 @@ export function mergeAgentLineDiscoveryCache(
     forwardCursor: action === "again" ? result.cursor
       : action === "continue" && !continuingHistory ? result.cursor : cached?.forwardCursor ?? null,
   };
+}
+
+// Keep each visible page fresh without rereading the accumulated history.
+export async function refreshAgentLineDiscoveryPage(
+  ids: readonly Hash[],
+  agent: string,
+  readLine: (id: Hash) => Promise<CandidateLine>,
+  isActive: () => boolean,
+): Promise<CandidateLine[] | null> {
+  const lines: CandidateLine[] = [];
+  const pageIds = [...new Set(ids)].slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
+  for (const id of pageIds) {
+    if (!isActive()) return null;
+    const line = await readLine(id);
+    if (!isActive()) return null;
+    if (line.agent.toLowerCase() === agent.toLowerCase()) lines.push(line);
+  }
+  return lines;
 }

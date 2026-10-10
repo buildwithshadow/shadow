@@ -14,6 +14,7 @@ import {
   getAgentLineDiscoveryContinuationCursor,
   hasResumableDiscoveryProgress,
   mergeAgentLineDiscoveryCache,
+  refreshAgentLineDiscoveryPage,
   type AgentLineDiscoveryCache,
 } from "../src/agentLineDiscoveryCache.ts";
 
@@ -513,4 +514,38 @@ test("uses only the read client methods and never calls a write method", async (
 
   assert.deepEqual((await discoverAgentLineIds(client, { address: contract, agent, deployBlock: 1n }, activeDiscovery)).lineIds, [lineId(1)]);
   assert.deepEqual(calls, ["getBlockNumber", "getLogs"]);
+});
+
+
+test("refreshing a large cached history reads only ten displayed lines and replaces old states", async () => {
+  const ids = Array.from({ length: 100 }, (_, i) => lineId(i + 1));
+  const reads: Hash[] = [];
+  const lines = await refreshAgentLineDiscoveryPage(ids, agent, async id => {
+    reads.push(id);
+    return { lineId: id, agent, stateName: "CLOSED", availableReserve: 0n, principalOutstanding: 0n } as any;
+  }, () => true);
+  assert.equal(reads.length, MAX_AGENT_LINE_DISCOVERY_RESULTS);
+  assert.deepEqual(reads, ids.slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS));
+  assert.equal(lines?.length, MAX_AGENT_LINE_DISCOVERY_RESULTS);
+  assert.ok(lines?.every(line => line.stateName === "CLOSED" && line.availableReserve === 0n && line.principalOutstanding === 0n));
+});
+
+test("refreshing the next discovery page does not reread earlier pages", async () => {
+  const ids = Array.from({ length: 30 }, (_, i) => lineId(i + 1));
+  const page = ids.slice(10, 20);
+  const reads: Hash[] = [];
+  await refreshAgentLineDiscoveryPage(page, agent, async id => {
+    reads.push(id); return { lineId: id, agent } as any;
+  }, () => true);
+  assert.deepEqual(reads, page);
+});
+
+test("cancelled page refresh stops before further reads and never publishes partial stale states", async () => {
+  let active = true;
+  const reads: Hash[] = [];
+  const lines = await refreshAgentLineDiscoveryPage([lineId(1), lineId(2)], agent, async id => {
+    reads.push(id); active = false; return { lineId: id, agent } as any;
+  }, () => active);
+  assert.deepEqual(reads, [lineId(1)]);
+  assert.equal(lines, null);
 });

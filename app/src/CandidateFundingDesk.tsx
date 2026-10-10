@@ -18,8 +18,8 @@ import { CircleAgentHandoff } from "./CircleAgentHandoff";
 import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
-import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
-import { getAgentLineDiscoveryContinuationCursor, hasResumableDiscoveryProgress, mergeAgentLineDiscoveryCache, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
+import { discoverAgentLineIds, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
+import { getAgentLineDiscoveryContinuationCursor, hasResumableDiscoveryProgress, mergeAgentLineDiscoveryCache, refreshAgentLineDiscoveryPage, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
 import { ensureWalletChain, walletRequestHelp } from "./walletNetwork";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
@@ -330,7 +330,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         && context.mode === "manage" && context.showAgentLineDiscovery;
     };
     const isActive = () => lineDiscoveryActive.current && lineDiscoveryRun.current === run && inContext();
-    setDiscoveredLines(action === "initial" ? [] : cached?.lines ?? []);
+    setDiscoveredLines([]);
     setLineDiscoveryProgress(null);
     setLineDiscoveryLoadingStates(Boolean(cached?.lineIds.length));
     setLineDiscoveryAction(action);
@@ -365,18 +365,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         return;
       }
       setLineDiscoveryLoadingStates(Boolean(nextCache.lineIds.length));
-      const knownLines = new Map((cached?.lines ?? []).map(value => [value.lineId, value]));
-      const newLineIds = nextCache.lineIds.filter(id => !knownLines.has(id)).slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
-      // Re-read lines found earlier too, so a repeat search shows their current state.
-      const linesToRead = [...knownLines.keys(), ...newLineIds];
-      for (const id of linesToRead) {
-        if (!isActive()) return;
-        const value = await readCandidateLine(client, id);
-        if (!isActive()) return;
-        if (value.agent.toLowerCase() === accountKey) knownLines.set(id, value);
-      }
-      if (!isActive()) return;
-      const values = nextCache.lineIds.map(id => knownLines.get(id)).filter((value): value is CandidateLine => value !== undefined);
+      // A continuation shows the next page, rather than rereading every earlier page.
+      // A repeat search shows the newest known page, including newly opened lines.
+      const pageIds = action === "continue" && result.lineIds.length
+        ? result.lineIds : nextCache.lineIds;
+      const values = await refreshAgentLineDiscoveryPage(pageIds, currentAccount,
+        id => readCandidateLine(client, id), isActive);
+      if (!values || !isActive()) return;
       const completeCache = { ...nextCache, lines: values };
       discoveredLinesByAccount.current.set(accountKey, completeCache);
       setDiscoveredLines(values);
@@ -782,7 +777,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {(lineDiscoveryStatus === "ready" || lineDiscoveryStatus === "partial" || (lineDiscoveryStatus === "loading" && discoveredLines.length > 0)) && <>
           {lineDiscoveryStatus === "ready" && <p role="status">Choose a funding line for this wallet.</p>}
           {lineDiscoveryStatus === "partial" && <p role="status">{`Search incomplete.${incompleteLineDiscoveryProgress} ${discoveredLines.length
-            ? "Choose a line already found or continue searching earlier blocks."
+            ? "Choose a line on this page or continue searching more blocks."
             : "Continue searching to check more blocks, or enter a line ID below."}`}</p>}
           <ul className="agentLineChoices">{discoveredLines.map((candidateLine) => <li key={candidateLine.lineId}>
             <button className="agentLineChoice" type="button" disabled={Boolean(busy)} onClick={() => selectDiscoveredLine(candidateLine.lineId)}>
