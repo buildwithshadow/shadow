@@ -1,7 +1,9 @@
-# Draw-bound repayment candidate
+# Draw-bound repayment contract
 
-`ShadowFloatMainnetGuarded` is a separate, undeployed immutable candidate. It does
-not modify a deployed `ShadowFloatMainnet` contract. It starts with both openings
+`ShadowFloatMainnetGuarded` is a separate immutable contract. The guarded Arc
+mainnet deployment, chain 5042, is
+`0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB`. It does not modify the older
+`ShadowFloatMainnet` deployment. It starts with both openings
 and purchases paused. Its spending domain remains `ShadowFloatMainnet` version
 `1`; the verifying contract address separates signatures from every earlier
 instance. Addresses, code hashes, deployment manifests and signing intents must

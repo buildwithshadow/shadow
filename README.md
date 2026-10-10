@@ -39,6 +39,12 @@ The public browser flow at [Start](https://www.shadowbuild.xyz/start) is **Arc t
 
 Repayment is unsecured: unpaid principal remains the sponsor's credit risk. Reclaim rights apply only to eligible funds and do not guarantee recovery of spent principal.
 
+Current guarded implementation guidance: [draw bound repayment](docs/SHADOW_FLOAT_MAINNET_GUARDED_REPAYMENT.md) and [controlled Circle mainnet runner](docs/CIRCLE_GUARDED_MAINNET_RUNNER.md).
+
+### Historical V1 design and testnet materials
+
+The following documents describe the earlier unguarded contract and testnet candidate. They are historical design and test material, not operating instructions for the guarded mainnet address above. In particular, legacy `repay` guidance must not be used in place of guarded `repayForDraw`.
+
 - Specification: [`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md)
 - Threat model: [`docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md`](docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md)
 - Invariant and test matrix: [`docs/SHADOW_FLOAT_MAINNET_TEST_MATRIX.md`](docs/SHADOW_FLOAT_MAINNET_TEST_MATRIX.md)
