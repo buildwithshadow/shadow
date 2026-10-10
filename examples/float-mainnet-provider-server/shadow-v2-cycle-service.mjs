@@ -170,7 +170,10 @@ export function createShadowV2CycleService({ paymentTx, repaymentTx, clients } =
   }
   const paymentHash = paymentTx.toLowerCase();
   const repaymentHash = repaymentTx.toLowerCase();
-  const rpcClients = clients ?? ["https://rpc.testnet.arc.io", "https://rpc.drpc.testnet.arc.io"]
+  // Historical report checks need two independent archive-capable providers.
+  // Keep both receipt and canonical-block checks; the primary public endpoint
+  // can rate limit historical lookups before a purchase is accepted.
+  const rpcClients = clients ?? ["https://rpc.quicknode.testnet.arc.io", "https://rpc.drpc.testnet.arc.io"]
     .map((url) => createPublicClient({ transport: http(url, { timeout: 8_000 }) }));
   if (rpcClients.length !== 2 || rpcClients[0] === rpcClients[1]) throw new Error("two independent Arc RPC clients are required");
   const service = async () => { throw new Error("V2 cycle report must be prepared before provider acceptance"); };

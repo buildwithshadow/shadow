@@ -1,3 +1,4 @@
+import { readFailedCircleSessionAttempt } from './circle-agent-mainnet-failure.mjs';
 import { randomUUID } from 'node:crypto';
 import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, formatUnits, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
@@ -50,7 +51,18 @@ export function createCircleGuardedTestnetPurchaser(options) {
   return createExecutor(options, false, TESTNET, true);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false) {
+/** Separate mainnet purchase boundary. The operator supplies the reviewed monitor guard.
+ * Recovery of a saved transaction does not require an unpaused purchase phase.
+ */
+export function createCircleGuardedMainnetPurchaser(options) {
+  requireThat(options.config.chainId === 5042, 'Only Arc mainnet guarded purchases are enabled.');
+  requireThat(same(options.config.contract, '0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB')
+    && same(options.config.runtimeHash, '0x845c0c3e47bbcf75004e5d47a6788585d57026ce70c08593d112966a6245b4ef'), 'Pin the reviewed guarded mainnet deployment.');
+  requireThat(typeof options.authorizePurchase === 'function', 'A mainnet monitor authorization guard is required.');
+  return createExecutor(options, false, 5042, true, options.authorizePurchase);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;
   const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
@@ -124,6 +136,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const status = await client.readContract({ address: contract, abi, functionName: 'receiptStatus', args: [decoded.digest] });
       requireThat(Number(status) === 0, 'Purchase already has an onchain receipt; recover it.');
     }
+    if (authorizePurchase) await authorizePurchase(decoded.args[0]);
     const simulation = await client.simulateContract({ address: decoded.to, abi: decoded.callAbi, functionName: decoded.functionName, args: decoded.args, account: agent });
     if (decoded.functionName === 'executeSpend') requireThat(simulation.result?.[0] === true, 'Shadow policy refused the purchase.');
     const block = await client.getBlock();
@@ -159,6 +172,18 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     requireThat(/^0x[0-9a-fA-F]{64}$/.test(txHash), 'Invalid transaction hash.');
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     requireThat(receipt.blockNumber >= BigInt(record.expected.fromBlock), 'Receipt predates the request.');
+    if (purchaseOnly && CHAIN === 5042) {
+      const hasFailure = receipt.status === 'reverted' || receipt.logs.some(log => {
+        if (!same(log.address, entryPoint07Address)) return false;
+        try { const e=decodeEventLog({abi:entryPoint07Abi,data:log.data,topics:log.topics}); return e.eventName==='UserOperationEvent' && e.args.success===false; } catch { return false; }
+      });
+      if (hasFailure) {
+        const decoded=decode({to:record.request.contractAddress,data:record.request.callData,value:record.request.amount});
+        const failed=await readFailedCircleSessionAttempt({client,chainId:5042n,address:contract},
+          {message:decoded.args[0],digest:record.expected.digest,txHash},receipt);
+        if(failed)return {status:failed,txHash,blockHash:receipt.blockHash,blockNumber:receipt.blockNumber.toString()};
+      }
+    }
     requireThat(receipt.status === 'success', 'Transaction reverted.');
     const [finalized, canonical, transaction] = await Promise.all([
       client.getBlock({ blockTag: 'finalized' }),
