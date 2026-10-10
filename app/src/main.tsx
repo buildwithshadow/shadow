@@ -1472,7 +1472,7 @@ function App() {
   const usesFloatV2State = isEvidenceRoute || route === "/builders/v2";
   const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
   const isGuardedTestnetRoute = route === "/guarded-testnet" && import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true";
-  const isFundingDeskRoute = route === "/funding" || route === "/start" || route === "/mainnet" || isGuardedTestnetRoute;
+  const isFundingDeskRoute = route === "/funding" || (route === "/start" || route.startsWith("/start/")) || route === "/mainnet" || isGuardedTestnetRoute;
   const [account, setAccount] = useState<Address>();
   const [action, setAction] = useState<ActionState>({ label: "ready" });
   const [selectedSource, setSelectedSource] = useState<Address | null>(null);
@@ -1490,7 +1490,7 @@ function App() {
   const [treasuryError, setTreasuryError] = useState<string | null>(null);
 
   useEffect(() => {
-    document.title = ROUTE_TITLES[route] ?? HOME_TITLE;
+    document.title = (route.startsWith("/start/") ? ROUTE_TITLES["/start"] : ROUTE_TITLES[route]) ?? HOME_TITLE;
     let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
     if (!canonical) {
       canonical = document.createElement("link");
@@ -1781,7 +1781,7 @@ function App() {
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
         {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="guarded-mainnet" deployment={GUARDED_MAINNET} service={GUARDED_MAINNET_SERVICE} />} />}
         {import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true" && <Route path="/guarded-testnet" element={<CandidateFundingDesk key="guarded-testnet" deployment={GUARDED_TESTNET} service={GUARDED_TESTNET_SERVICE} />} />}
-        <Route path="/start" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
+        <Route path="/start/*" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
         <Route path="/archive" element={<EvidenceRedirect />} />
         <Route path="*" element={<Navigate to="/" replace />} />
