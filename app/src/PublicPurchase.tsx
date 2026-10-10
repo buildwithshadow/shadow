@@ -5,9 +5,9 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { createSelfServicePurchase, createGuardedMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string; requestKind?: 'arc-wallet' }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, active = true }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; active?: boolean;
 }) {
   const mainnet = deployment.chainId === 5042;
   const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
@@ -22,6 +22,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [reviewing, setReviewing] = useState(false);
   const dialog = useRef<HTMLDialogElement>(null);
   const inFlight = useRef(false);
+  const visible = useRef(active);
+  visible.current = active;
   const revision = useRef(0);
   const setup = useMemo(() => { try { return { engine: account && window.ethereum ? (mainnet ? createGuardedMainnetPurchase : createSelfServicePurchase)({
     client, wallet: createWalletClient({ chain, transport: custom(window.ethereum), account }),
@@ -80,6 +82,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     if (reviewing && record && signable && !dialog.current?.open) dialog.current?.showModal();
     else if (!reviewing || !record || !signable) dialog.current?.close();
   }, [record?.intent.digest, reviewing, signable]);
+  useEffect(() => { if (!active) setReviewing(false); }, [active]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
     if (!engine || inFlight.current || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
@@ -90,7 +93,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       if (kind === 'prepare') {
         const job = Array.from(crypto.getRandomValues(new Uint8Array(16)), x => x.toString(16).padStart(2, '0')).join('');
         await engine.prepare(lineId, service.requestKind === 'arc-wallet' ? `arc-wallet:${job}:${account}` : `report:${job}:${service.sourcePayment}`);
-        if (revision.current === current) setReviewing(true);
+        if (revision.current === current && visible.current) setReviewing(true);
       } else if (kind === 'submit') {
         if (!record || !receiptCheckKey) return;
         const receiptStatus = Number(await client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [record.intent.digest] }));

@@ -1,7 +1,9 @@
-# Draw-bound repayment candidate
+# Draw-bound repayment contract
 
-`ShadowFloatMainnetGuarded` is a separate, undeployed immutable candidate. It does
-not modify a deployed `ShadowFloatMainnet` contract. It starts with both openings
+`ShadowFloatMainnetGuarded` is a separate immutable contract. The guarded Arc
+mainnet deployment, chain 5042, is
+`0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB`. It does not modify the older
+`ShadowFloatMainnet` deployment. It starts with both openings
 and purchases paused. Its spending domain remains `ShadowFloatMainnet` version
 `1`; the verifying contract address separates signatures from every earlier
 instance. Addresses, code hashes, deployment manifests and signing intents must
@@ -23,7 +25,7 @@ matching `DrawRepaid` event. No public deployment configuration is switched by
 this change. Legacy testnet lines remain generic-current-debt repayments; their
 review text explicitly warns that a delayed approval can pay a newer purchase.
 
-The repayment CLI requires `--expected-draw <digest>` for the new candidate.
+The repayment CLI requires `--expected-draw <digest>` for the guarded contract.
 Legacy operation requires explicit `--allow-current-line-debt` consent, including
 in simulation and calldata modes; these alternatives are mutually exclusive.
 Neither browser freshness checks nor a brief wallet prompt fix legacy calldata.
@@ -56,12 +58,10 @@ A server administrator can compromise local journals; checksums detect corruptio
 not a malicious administrator. Unknown payment or external-work outcomes remain
 held for reconciliation rather than blindly repeated.
 
-An operational release needs its own reviewed deployment/verification, role and
-credential recovery checks, participant terms, and isolated lifecycle rehearsal.
-Tests and automated review do not establish an independent security audit.
+## Deployed source and review status
 
-The existing pinned review-package builder remains scoped to the legacy V1
-sources and test suites. It does not audit or archive the guarded candidate.
-The full repository contract gate runs both versions separately. Prepare a
-version-specific source/compilation review package before deploying the guarded
-candidate; never relabel the legacy package as its review.
+The deployed instance has a separate guarded source and compilation review packet. Its public [deployment identity](../contracts/deployments/float-mainnet-guarded/arc-mainnet.identity.json) records the actual creation transaction, block, runtime hash, compiler version and source blob. The runtime hash is `0x845c0c3e47bbcf75004e5d47a6788585d57026ce70c08593d112966a6245b4ef`; the source merged at `f908cf3622611281695692972d5d3ee24491b097` remains unchanged in the repository. This identity record is informational and cannot replace an execution manifest or current live checks.
+
+The founder mainnet lifecycle has completed. As checked on 10 October 2026, both pauses are active, the completed line is closed, and debt, committed capital and contract USDC balance are zero. Qualified independent human security review remains pending. Automated reviews, local tests and founder rehearsals do not establish an independent security audit or clearance for funded participants.
+
+For future instances, prepare a version specific guarded source and compilation packet before deployment, then verify the new onchain identity, roles and credential recovery, participant terms and isolated lifecycle. The older pinned review package builder targets legacy V1 sources and suites; never relabel that package as a review of the guarded version. The full repository contract gate runs both versions separately.

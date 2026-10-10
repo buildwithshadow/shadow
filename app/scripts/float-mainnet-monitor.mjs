@@ -19,6 +19,7 @@ import { isEntrypoint } from "./float-mainnet-preflight.mjs";
 import { readExecutionTransaction } from "./float-mainnet-monitor-execution-transaction.mjs";
 import { readCircleExecutionAttribution } from "./float-mainnet-monitor-circle-execution.mjs";
 import { entryPoint07Address } from "viem/account-abstraction";
+import { discoverApprovedHistory } from "./float-mainnet-approved-history.mjs";
 
 // Read-only pilot monitor and reconciliation for the ShadowFloatMainnet
 // candidate. Every read is pinned to one block. check exits 1 on a critical
@@ -42,7 +43,7 @@ function requireManifest(values) {
 // missing operator/policy changes need not affect the accounting totals. Scan
 // the complete canonical range independently; --index supplies lag and reorg
 // diagnostics only, never the events that determine alerts or reconciliation.
-async function discover(connection, indexPath, pinned) {
+async function discover(connection, indexPath, pinned, historyValues = {}) {
   const events = [];
   const from = connection.deployBlock;
   let index = null;
@@ -77,7 +78,8 @@ async function discover(connection, indexPath, pinned) {
     }
   }
   const scanned = from <= pinned.number ? { fromBlock: from, toBlock: pinned.number } : null;
-  const logs = scanned ? await findLogs(connection, undefined, undefined, from, pinned.number) : [];
+  const history = scanned ? await discoverApprovedHistory(connection, pinned, historyValues) : { logs: [] };
+  const logs = history.logs;
   for (const log of logs) {
     const { eventName, args } = decodeEventLog({ abi: floatEventAbi, data: log.data, topics: log.topics });
     events.push({ event: eventName, args, blockNumber: log.blockNumber, blockHash: log.blockHash,
@@ -94,7 +96,7 @@ async function discover(connection, indexPath, pinned) {
     if (event === "SponsorClaimed" && sponsorClaimed.has(args.lineId)) sponsorClaimed.set(args.lineId, sponsorClaimed.get(args.lineId) + BigInt(args.amount));
   }
   const operatorSets = events.filter((entry) => entry.event === "OperatorSet");
-  return { lineIds, providers, sponsorClaimed, operatorSets, sponsorSets: events.filter((entry) => entry.event === "SponsorAllowed"), executions: events.filter((entry) => ["ProviderPaid", "SpendBlocked"].includes(entry.event)), index, scanned };
+  return { lineIds, providers, sponsorClaimed, operatorSets, sponsorSets: events.filter((entry) => entry.event === "SponsorAllowed"), executions: events.filter((entry) => ["ProviderPaid", "SpendBlocked"].includes(entry.event)), index, scanned, ...(history.approvedHistory ? { approvedHistory: history.approvedHistory } : {}) };
 }
 
 // State reads are pinned by block number; a reorg of that block during the run
@@ -115,7 +117,7 @@ async function check(values, { snapshot = false } = {}) {
   const connection = await connect(values, { readOnly: true });
   const pinned = await connection.client.getBlock();
   const at = (functionName, args) => read(connection, functionName, args, pinned.number);
-  const found = await discover(connection, values.index, pinned);
+  const found = await discover(connection, values.index, pinned, snapshot ? values : {});
   const unknown = (only ?? []).filter((lineId) => !found.lineIds.includes(lineId));
   if (unknown.length) throw new Error(`no LineOpened for --line-id ${unknown.join(", ")} in blocks ${connection.deployBlock}-${pinned.number}`);
 
@@ -358,7 +360,7 @@ async function check(values, { snapshot = false } = {}) {
       pendingCapIncreases,
       operators,
     },
-    discovery: { lines: found.lineIds.length, index: found.index, scanned: found.scanned },
+    discovery: { lines: found.lineIds.length, index: found.index, scanned: found.scanned, ...(found.approvedHistory ? { approvedHistory: found.approvedHistory } : {}) },
     lines,
   };
 }
@@ -514,7 +516,7 @@ export async function monitorSnapshot(values) {
 }
 
 const COMMANDS = {
-  snapshot: { options: { index: { type: "string" }, "warn-before": { type: "string" }, "max-index-lag": { type: "string" }, "executor-from-block": { type: "string" } }, run: monitorSnapshot },
+  snapshot: { options: { "approved-history": { type: "string" }, "approved-history-digest": { type: "string" }, index: { type: "string" }, "warn-before": { type: "string" }, "max-index-lag": { type: "string" }, "executor-from-block": { type: "string" } }, run: monitorSnapshot },
   check: {
     options: {
       index: { type: "string" },
@@ -532,7 +534,7 @@ const USAGE = [
   "snapshot includes full check, sponsor membership, accounting and direct-call executor observations at the same canonical block; routed execution has executor:null and must not be assumed approved.",
   `${TOOL} check --manifest <path> [--index <index.json>] [--warn-before <seconds>] [--max-index-lag <seconds>] [--line-id <bytes32> ...]`,
   `${TOOL} reconcile --manifest <path> [--index <index.json>]`,
-  "Both read one pinned block and discover events with a complete canonical log scan from deployment. --index (float-mainnet-indexer.mjs) supplies checkpoint lag/reorg diagnostics only; cached events never determine alerts or reconciliation.",
+  "Both read one pinned block. Default discovery is a complete canonical log scan from deployment; snapshot additionally supports an explicitly approved immutable history prefix and complete canonical suffix. --index (float-mainnet-indexer.mjs) supplies checkpoint lag/reorg diagnostics only; cached events never determine alerts or reconciliation.",
   `check reports each line, the pauses, pending cap increases, operators and owner, and alerts: DEFAULT_ELIGIBLE and DISCOVERY_INCOMPLETE (critical: exit 1), MATURITY_SOON, LINE_EXPIRY_SOON, POLICY_EXPIRY_SOON, SPENDS_PAUSED, OPENINGS_PAUSED, CAP_INCREASE_PENDING, OWNERSHIP_PENDING, OPERATOR_CHANGED, PROTOCOL_CAP_EXCEEDED, SPONSOR_REMOVED, INDEX_LAG. --warn-before (default ${DEFAULT_WARN_BEFORE}) is the warning horizon in seconds for maturities, expiries and the end of purchases before a line's expiry; --max-index-lag (default ${DEFAULT_MAX_INDEX_LAG}) is the largest index lag in seconds before INDEX_LAG; --line-id limits the lines checked and skips the DISCOVERY_INCOMPLETE guard.`,
   "reconcile compares the Float's USDC balance with totalSponsorObligations (CAP-02, surplus reported), totalSponsorObligations with the lines' availableReserve + recoveryAvailable, totalCommittedCapital with their availableReserve + principalOutstanding + recoveryAvailable, and each line with its reserveCap for its state (a DEFAULTED line with its SponsorClaimed amounts); any mismatch exits 1.",
 ];
