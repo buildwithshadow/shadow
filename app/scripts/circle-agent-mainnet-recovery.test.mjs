@@ -34,3 +34,13 @@ for(const status of ['reverted','failed-user-operation'])test(`${status} recover
  await recoverAgentPurchase(options);assert.equal(archives,0);assert(state.requests.purchase);
  options.client.getBlock=async()=>({timestamp:901n});await recoverAgentPurchase(options);assert.equal(archives,1);assert.equal(saves,1);assert.equal(state.requests.purchase,undefined);
 });
+
+
+test('a durable exact pre-send failure reconciles without attaching a transaction',async()=>{
+ const x=setup();delete x.saved.txHash;x.saved.notSubmitted=true;
+ await reconcileOriginalMainnetCirclePurchase(x.options);
+ assert.deepEqual(x.calls,[[x.digest,undefined,true]]);
+ x.options.journal.get=async()=>null;
+ await assert.rejects(()=>reconcileOriginalMainnetCirclePurchase(x.options),/record is missing/);
+ assert.equal(x.calls.length,1);
+});

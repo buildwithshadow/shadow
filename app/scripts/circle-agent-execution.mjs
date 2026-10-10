@@ -288,12 +288,20 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       }
       const expected = await prepare(request);
       const payload = envelope(request, randomUUID());
-      const estimate = await circle.estimate(payload);
-      requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
-      requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, `Estimated fee exceeds execution budget. Quote: ${estimate.networkFee} USDC; cap: ${formatUnits(feeCap, 18)} USDC.`);
-      // Refresh policy after the remote estimate. No spend request if conditions changed.
-      await prepare(request);
       const record = { version: 1, namespace, operationId: request.operationId, request: payload, requestHash: hash(payload), expected, createdAt: new Date().toISOString() };
+      try {
+        // Estimate is read only. Preserve definite pre-send failures with the
+        // exact original request so runner recovery never relies on absence.
+        const estimate = await circle.estimate(payload);
+        requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
+        requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, `Estimated fee exceeds execution budget. Quote: ${estimate.networkFee} USDC; cap: ${formatUnits(feeCap, 18)} USDC.`);
+        // Refresh policy after the remote estimate. No spend request if conditions changed.
+        await prepare(request);
+      } catch (error) {
+        record.notSubmitted = true;
+        await journal.put(key, record);
+        throw error;
+      }
       // Save the barrier first. A crash between these two writes fails closed.
       await journal.put(activeKey, key);
       await journal.put(key, record); // A crash/timeout from here never permits automatic resubmission.
