@@ -74,6 +74,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const receiptUnconfirmed = Boolean(record && !receiptChecked);
   const reviewable = record?.stage === 'prepared' || record?.stage === 'accepted';
   const signable = Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused);
+  const checkingStatus = reviewable && !refused && receiptUnconfirmed;
+  const paidPending = Boolean(record && !refused && record.stage !== 'delivered' && receiptChecked && receiptCheck?.status === 2);
   useEffect(() => {
     if (reviewing && record && signable && !dialog.current?.open) dialog.current?.showModal();
     else if (!reviewing || !record || !signable) dialog.current?.close();
@@ -146,10 +148,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     <p>Connect the agent’s browser wallet to sign and execute the purchase. It pays {mainnet ? 'mainnet' : 'testnet'} gas in USDC. The sponsor’s line covers the service price and records the repayment obligation.</p>
     <ol className="purchaseSteps" role="list" aria-label="Purchase steps">
       <li data-state={!record ? 'current' : 'complete'} aria-current={!record ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">1</span><span className="purchaseStepLabel">Line</span></li>
-      <li data-state={signable ? reviewing && busy ? 'complete' : 'current' : !record || reviewable && !refused && receiptUnconfirmed ? 'upcoming' : 'complete'} aria-current={signable && !(reviewing && busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">2</span><span className="purchaseStepLabel">Review terms</span></li>
+      <li data-state={signable ? reviewing && busy ? 'complete' : 'current' : checkingStatus ? 'current' : !record ? 'upcoming' : 'complete'} aria-current={signable && !(reviewing && busy) || checkingStatus ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">2</span><span className="purchaseStepLabel">{checkingStatus ? 'Checking status' : 'Review terms'}</span></li>
       <li data-state={signable && reviewing && busy ? 'current' : !record || reviewable && !refused && (signable || receiptUnconfirmed) ? 'upcoming' : 'complete'} aria-current={signable && reviewing && Boolean(busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">3</span><span className="purchaseStepLabel">Sign and submit</span></li>
-      <li data-state={refused ? 'complete' : record?.stage === 'submitted' ? 'current' : record?.stage === 'delivered' ? 'complete' : 'upcoming'} aria-current={!refused && record?.stage === 'submitted' ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">4</span><span className="purchaseStepLabel">{refused ? 'Payment refused' : 'Payment'}</span></li>
-      <li data-state={!refused && record?.stage === 'delivered' ? result ? 'complete' : 'current' : 'upcoming'} aria-current={!refused && record?.stage === 'delivered' && !result ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">5</span><span className="purchaseStepLabel">Result</span></li>
+      <li data-state={refused || paidPending ? 'complete' : record?.stage === 'submitted' ? 'current' : record?.stage === 'delivered' ? 'complete' : 'upcoming'} aria-current={!refused && !paidPending && record?.stage === 'submitted' ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">4</span><span className="purchaseStepLabel">{refused ? 'Payment refused' : 'Payment'}</span></li>
+      <li data-state={!refused && record?.stage === 'delivered' ? result ? 'complete' : 'current' : paidPending ? 'current' : 'upcoming'} aria-current={!refused && record?.stage === 'delivered' && !result || paidPending ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">5</span><span className="purchaseStepLabel">Result</span></li>
       <li data-state={refused || record?.stage === 'delivered' && result ? 'current' : 'upcoming'} aria-current={refused || record?.stage === 'delivered' && result ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">6</span><span className="purchaseStepLabel">Recover or archive</span></li>
     </ol>
     {blocker && <p id="purchase-blocker" role="status">{blocker}</p>}
