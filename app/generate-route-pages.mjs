@@ -1,4 +1,4 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile, rm } from "node:fs/promises";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { SHADOW_ORIGIN } from "./shadowUrls.js";
@@ -7,6 +7,13 @@ const routeMetadata = JSON.parse(
   await readFile(new URL("./routeMetadata.json", import.meta.url), "utf8"),
 );
 const template = await readFile(new URL("./dist/index.html", import.meta.url), "utf8");
+// Consume the exact flags Vite resolved, including the selected mode's env files.
+const flagsPath = new URL("./dist/.shadow-route-flags.json", import.meta.url);
+const flags = JSON.parse(await readFile(flagsPath, "utf8"));
+if (flags.schemaVersion !== 1 || typeof flags.mainnet !== "boolean" || typeof flags.guardedTestnet !== "boolean") {
+  throw new Error("Missing or invalid Vite route flags");
+}
+await rm(flagsPath);
 
 const homeTitle = routeMetadata.routeTitles["/"];
 const templateTitle = template.match(/<title>([^<]*)<\/title>/)?.[1];
@@ -40,8 +47,8 @@ function replaceMeta(html, name, value) {
 
 for (const [route, description] of Object.entries(routeMetadata.socialDescriptions)) {
   if (route === "/") continue;
-  if (route === "/guarded-testnet" && process.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE !== "true") continue;
-  if (route === "/mainnet" && process.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE !== "true") continue;
+  if (route === "/guarded-testnet" && !flags.guardedTestnet) continue;
+  if (route === "/mainnet" && !flags.mainnet) continue;
   const title = routeMetadata.routeTitles[route];
   if (!title) throw new Error(`Missing route title for ${route}`);
   const url = `${SHADOW_ORIGIN}${route}`;

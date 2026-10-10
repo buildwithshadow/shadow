@@ -7,6 +7,7 @@ import { defineConfig, type Plugin } from "vite";
 function gatedMainnetMetadata(): Plugin {
   const metadataPath = fileURLToPath(new URL("./routeMetadata.json", import.meta.url));
   let enabled = false;
+  let guardedTestnet = false;
   let building = false;
   let outputDirectory = "";
   return {
@@ -14,6 +15,7 @@ function gatedMainnetMetadata(): Plugin {
     enforce: "pre",
     configResolved(config) {
       enabled = config.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
+      guardedTestnet = config.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true";
       building = config.command === "build";
       outputDirectory = resolve(config.root, config.build.outDir);
     },
@@ -22,6 +24,13 @@ function gatedMainnetMetadata(): Plugin {
       const metadata = JSON.parse(source);
       for (const name of ["routeTitles", "socialDescriptions", "socialImages"]) delete metadata[name]["/mainnet"];
       return { code: JSON.stringify(metadata), map: null };
+    },
+    generateBundle() {
+      this.emitFile({
+        type: "asset",
+        fileName: ".shadow-route-flags.json",
+        source: JSON.stringify({ schemaVersion: 1, mainnet: enabled, guardedTestnet }),
+      });
     },
     async closeBundle() {
       if (!building || enabled) return;
