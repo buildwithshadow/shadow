@@ -70,7 +70,13 @@ for (const [route, description] of Object.entries(routeMetadata.socialDescriptio
   if (!headClose.test(html)) throw new Error("Missing head close tag in build output");
   html = html.replace(headClose, () => `\n    <link rel="canonical" href="${escapeHtml(url)}" />\n  </head>`);
 
-  const destination = fileURLToPath(new URL(`./dist${route}/index.html`, import.meta.url));
-  await mkdir(dirname(destination), { recursive: true });
-  await writeFile(destination, html);
+  // Journey invitations keep their step URL, but share /start metadata/canonical.
+  const destinations = route === "/start"
+    ? [route, ...["wallet", "register", "agent", "budget", "fund", "line", "purchase"].map(step => `/start/${step}`)]
+    : [route];
+  for (const path of destinations) {
+    const destination = fileURLToPath(new URL(`./dist${path}/index.html`, import.meta.url));
+    await mkdir(dirname(destination), { recursive: true });
+    await writeFile(destination, html);
+  }
 }
