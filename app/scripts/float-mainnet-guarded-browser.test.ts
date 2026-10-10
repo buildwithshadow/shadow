@@ -4,14 +4,16 @@ import test from 'node:test'
 import {createPublicClient,createTestClient,createWalletClient,decodeFunctionData,getAddress,http,keccak256,stringToHex,toHex,zeroHash,zeroAddress,type Address} from 'viem'
 // @ts-expect-error shared Anvil fixture is JavaScript
 import {account,startAnvil,e2eSkip} from './float-mainnet-e2e.mjs'
-import {CANDIDATE_FUNDING as TESTNET_FUNDING,candidateFundingAbi,candidateFundingChain as testnetFundingChain,guardedMainnetChain,createCandidateFundingKit,createGuardedMainnetFundingKit,type CandidateWalletClient,type CandidateOpenInput} from '../src/candidateFunding.ts'
+import {CANDIDATE_FUNDING as TESTNET_FUNDING,candidateFundingAbi,candidateFundingChain as testnetFundingChain,guardedMainnetChain,createCandidateFundingKit,createGuardedMainnetFundingKit,createPublicMainnetFundingKit,type CandidateWalletClient,type CandidateOpenInput} from '../src/candidateFunding.ts'
 import {GUARDED_MAINNET} from '../src/guardedMainnet.ts'
 import {GUARDED_TESTNET} from '../src/guardedTestnet.ts'
-const guardedArtifact=JSON.parse(readFileSync(new URL('../../contracts/out/ShadowFloatMainnetGuarded.sol/ShadowFloatMainnetGuarded.json',import.meta.url),'utf8'))
+const existingGuardedArtifact=JSON.parse(readFileSync(new URL('../../contracts/out/ShadowFloatMainnetGuarded.sol/ShadowFloatMainnetGuarded.json',import.meta.url),'utf8'))
 const input: CandidateOpenInput = { agent:account(2).address,provider:account(3).address,endpoint:'https://provider.example/result',reserve:'0.10',lineSpendCap:'0.15',dailySpendCap:'0.10',providerPerSpendCap:'0.05',providerDailyCap:'0.10',expiryDays:'7',repaymentHours:'24'}
 const typeString='SpendIntent(address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor)'
-for(const profile of ['legacy-testnet','guarded-testnet','guarded-mainnet']) test(`${profile} participant repayment binds the draw and recovers a lost wallet confirmation without resending`, { skip: e2eSkip, timeout: 60_000 }, async () => {
-  const mainnet = profile === 'guarded-mainnet'
+for(const profile of ['legacy-testnet','guarded-testnet','guarded-mainnet','public-mainnet']) test(`${profile} participant repayment binds the draw and recovers a lost wallet confirmation without resending`, { skip: e2eSkip, timeout: 60_000 }, async () => {
+  const publicMainnet = profile === 'public-mainnet'
+  const guardedArtifact = publicMainnet ? JSON.parse(readFileSync(new URL('../../contracts/out/ShadowFloatMainnetPublic.sol/ShadowFloatMainnetPublic.json',import.meta.url),'utf8')) : existingGuardedArtifact
+  const mainnet = profile.endsWith('mainnet')
   const bounded = profile !== 'legacy-testnet'
   const CANDIDATE_FUNDING = mainnet ? GUARDED_MAINNET : bounded ? GUARDED_TESTNET : TESTNET_FUNDING
   const candidateFundingChain = mainnet ? guardedMainnetChain : testnetFundingChain
@@ -54,15 +56,15 @@ for(const profile of ['legacy-testnet','guarded-testnet','guarded-mainnet']) tes
     await copyDeployment(deployedAddress, CANDIDATE_FUNDING.address)
     assert.equal(await publicClient.readContract({address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,functionName:'openingsPaused'}),true);
     assert.equal(await publicClient.readContract({address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,functionName:'spendsPaused'}),true);
-    const deployment = {...CANDIDATE_FUNDING, runtimeHash:keccak256((await publicClient.getCode({address:CANDIDATE_FUNDING.address}))!), drawBoundRepayment:true};
-    const {verifyCandidate, createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, readCandidateLine, reconcileCandidatePending} = (mainnet ? createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment);
+    const deployment = {...CANDIDATE_FUNDING, ...(publicMainnet ? {selfRegistration:true} : {}), runtimeHash:keccak256((await publicClient.getCode({address:CANDIDATE_FUNDING.address}))!), drawBoundRepayment:true};
+    const {verifyCandidate, createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateReclaim, readCandidateLine, reconcileCandidatePending, prepareCandidateRegistration} = (mainnet ? publicMainnet ? createPublicMainnetFundingKit : createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment);
     await verifyCandidate(publicClient)
     if(mainnet){
       assert.throws(()=>createCandidateFundingKit(deployment),/testnet/);
       for(const patch of [{drawBoundRepayment:false},{selfRegistration:true},{maxReserve:100001n},{maxPerSpend:5001n},{maxLineSpend:5001n}]){
         assert.throws(()=>createGuardedMainnetFundingKit({...deployment,...patch}));
       }
-      await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...input,provider:providerAccount.address}),/enabled|paused/);
+      await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...input,provider:providerAccount.address}),publicMainnet ? /Register this wallet/ : /enabled|paused/);
     }
     async function write(who: any, request: any) {
       const hash = await localWallet(who).writeContract(request)
@@ -72,13 +74,20 @@ for(const profile of ['legacy-testnet','guarded-testnet','guarded-mainnet']) tes
     await write(owner, {address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,functionName:'setOpeningsPaused',args:[false]});
     await write(owner, {address:CANDIDATE_FUNDING.address,abi:guardedArtifact.abi,functionName:'setSpendsPaused',args:[false]});
     for (const who of [sponsorAccount, agentAccount]) await write(owner, { address: CANDIDATE_FUNDING.usdc, abi: tokenArtifact.abi, functionName: 'mint', args: [who.address, 1_000_000n] })
-    await write(owner, { address: CANDIDATE_FUNDING.address, abi: candidateFundingAbi, functionName: 'setSponsorAllowed', args: [sponsorAccount.address, true] })
+    if (!publicMainnet) await write(owner, { address: CANDIDATE_FUNDING.address, abi: candidateFundingAbi, functionName: 'setSponsorAllowed', args: [sponsorAccount.address, true] })
     function makeSession(who: Address) {
       const map = new Map<string, string>()
       const journal = createCandidateJournal({ getItem: key => map.get(key) ?? null, setItem: (key, value) => { map.set(key, value) }, removeItem: key => { map.delete(key) } }, who)
       return { publicClient, walletClient: injectedWallet(who), account: who, journal }
     }
     const sponsorSession = makeSession(sponsorAccount.address)
+    if(publicMainnet){
+      for(const patch of [{drawBoundRepayment:false},{selfRegistration:false},{maxReserve:100001n},{maxPerSpend:5001n}]) assert.throws(()=>createPublicMainnetFundingKit({...deployment,...patch}));
+      const registration=await prepareCandidateRegistration(publicClient,sponsorAccount.address);
+      assert.equal(registration.kind,'register');assert.equal(registration.amount,0n);
+      assert.match(registration.summary,/Arc mainnet gas/);
+      assert.equal((await executeCandidateCall(sponsorSession,registration)).status,'confirmed');
+    }
     const localInput = { ...input, ...(bounded?{lineSpendCap:'0.005',dailySpendCap:'0.005',providerPerSpendCap:'0.005',providerDailyCap:'0.005'}:{}), agent: agentAccount.address, provider: providerAccount.address }
     if(mainnet){
       await assert.rejects(()=>prepareCandidateOpen(publicClient,sponsorAccount.address,{...localInput,provider:CANDIDATE_FUNDING.usdc}),/EOA/);

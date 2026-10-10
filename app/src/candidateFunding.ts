@@ -70,7 +70,7 @@ export interface CandidateDeployment {
 export const guardedMainnetChain = defineChain({ id: 5042, name: 'Arc Mainnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.quicknode.mainnet.arc.io', 'https://rpc.drpc.mainnet.arc.io'] } }, blockExplorers: { default: { name: 'Arc explorer', url: 'https://explorer.arc.io' } } })
 export function candidateChainFor(deployment: CandidateDeployment) {
   if (deployment.chainId === 5042002) return candidateFundingChain
-  if (deployment.chainId === 5042 && deployment.drawBoundRepayment && !deployment.selfRegistration) return guardedMainnetChain
+  if (deployment.chainId === 5042 && deployment.drawBoundRepayment) return guardedMainnetChain
   throw new Error('Unsupported funding deployment.')
 }
 export function createGuardedMainnetFundingKit(deployment: CandidateDeployment) {
@@ -78,6 +78,14 @@ export function createGuardedMainnetFundingKit(deployment: CandidateDeployment) 
       || deployment.maxReserve <= 0n || deployment.maxReserve > 100_000n
       || [deployment.maxLineSpend, deployment.maxDailySpend, deployment.maxPerSpend].some(cap => cap <= 0n || cap > 5_000n)) {
     throw new Error('Guarded mainnet requires draw-bound repayment, admitted sponsors and the bounded release limits.')
+  }
+  return createFundingKit(deployment)
+}
+export function createPublicMainnetFundingKit(deployment: CandidateDeployment) {
+  if (deployment.chainId !== 5042 || !deployment.drawBoundRepayment || deployment.selfRegistration !== true
+      || deployment.maxReserve <= 0n || deployment.maxReserve > 100_000n
+      || [deployment.maxLineSpend, deployment.maxDailySpend, deployment.maxPerSpend].some(cap => cap <= 0n || cap > 5_000n)) {
+    throw new Error('Public mainnet requires self registration, draw-bound repayment and the bounded release limits.')
   }
   return createFundingKit(deployment)
 }
@@ -538,7 +546,7 @@ async function prepareCandidateRegistration(client: CandidateReadClient, rawAcco
   return { kind: 'register', account, to: CANDIDATE_FUNDING.address,
     data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'registerSponsor' }), value: '0', amount: 0n,
     lineId: null, agent: null, expectedEpoch: null, observedBlock: snapshot.observedBlock,
-    summary: 'Register your wallet to fund your own agent lines. This does not transfer or approve tokens; testnet gas applies.' }
+    summary: `Register your wallet to fund your own agent lines. This does not transfer or approve tokens; ${network} gas applies.` }
 }
 
 return { verifyCandidate, readCandidateLine, readCandidateSnapshot, prepareCandidateOpen, prepareCandidateRepay, prepareCandidateDefault, prepareCandidateReclaim, createCandidateJournal, executeCandidateCall, reconcileCandidatePending, candidateErrorMessage, prepareCandidateRegistration }
