@@ -1452,6 +1452,7 @@ function startVisiblePolling(task: () => void | Promise<void>, intervalMs: numbe
 
 const ROUTE_TITLES: Record<string, string> = routeMetadata.routeTitles;
 const ROUTE_DESCRIPTIONS: Record<string, string> = routeMetadata.socialDescriptions;
+const ROUTE_IMAGES: Record<string, { image: string; alt: string }> = routeMetadata.socialImages;
 
 function EvidenceRedirect({ fallbackHash = "" }: { fallbackHash?: string }) {
   const hash = useLocation().hash;
@@ -1487,6 +1488,7 @@ function App() {
     const title = ROUTE_TITLES[metadataRoute];
     const description = ROUTE_DESCRIPTIONS[metadataRoute];
     const url = `${SHADOW_ORIGIN}${metadataRoute}`;
+    const socialImage = ROUTE_IMAGES[metadataRoute] ?? ROUTE_IMAGES["/"];
     document.title = title;
     document.head.querySelector<HTMLMetaElement>('meta[name="description"]')!.content = description;
     document.head.querySelector<HTMLMetaElement>('meta[property="og:title"]')!.content = title;
@@ -1494,6 +1496,10 @@ function App() {
     document.head.querySelector<HTMLMetaElement>('meta[property="og:url"]')!.content = url;
     document.head.querySelector<HTMLMetaElement>('meta[name="twitter:title"]')!.content = title;
     document.head.querySelector<HTMLMetaElement>('meta[name="twitter:description"]')!.content = description;
+    document.head.querySelector<HTMLMetaElement>('meta[property="og:image"]')!.content = `${SHADOW_ORIGIN}${socialImage.image}`;
+    document.head.querySelector<HTMLMetaElement>('meta[property="og:image:alt"]')!.content = socialImage.alt;
+    document.head.querySelector<HTMLMetaElement>('meta[name="twitter:image"]')!.content = `${SHADOW_ORIGIN}${socialImage.image}`;
+    document.head.querySelector<HTMLMetaElement>('meta[name="twitter:image:alt"]')!.content = socialImage.alt;
     let canonical = document.head.querySelector<HTMLLinkElement>('link[rel="canonical"]');
     if (!canonical) {
       canonical = document.createElement("link");

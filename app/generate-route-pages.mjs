@@ -52,6 +52,13 @@ for (const [route, description] of Object.entries(routeMetadata.socialDescriptio
   html = replaceMeta(html, "og:url", url);
   html = replaceMeta(html, "twitter:title", title);
   html = replaceMeta(html, "twitter:description", description);
+  const socialImage = routeMetadata.socialImages[route];
+  if (socialImage) {
+    html = replaceMeta(html, "og:image", `${SHADOW_ORIGIN}${socialImage.image}`);
+    html = replaceMeta(html, "og:image:alt", socialImage.alt);
+    html = replaceMeta(html, "twitter:image", `${SHADOW_ORIGIN}${socialImage.image}`);
+    html = replaceMeta(html, "twitter:image:alt", socialImage.alt);
+  }
   const headClose = /\s*<\/head>/;
   if (!headClose.test(html)) throw new Error("Missing head close tag in build output");
   html = html.replace(headClose, () => `\n    <link rel="canonical" href="${escapeHtml(url)}" />\n  </head>`);

@@ -20,5 +20,9 @@
     "/guarded-testnet": "Guarded testnet funding for Shadow. This route is for the controlled Arc testnet flow.",
     "/mainnet": "A controlled Arc mainnet candidate for sponsor-backed agent purchases, with a 0.10 USDC reserve cap and a 0.005 USDC purchase limit per line. The public participant flow is on Arc testnet.",
     "/roadmap": "Shadow product status. Today's browser flow is self-service; see current use, history, and open work."
+  },
+  "socialImages": {
+    "/": { "image": "/og-shadow.png", "alt": "Shadow on Arc testnet: let your agent buy services on a budget you set." },
+    "/mainnet": { "image": "/og-shadow-mainnet.png", "alt": "Shadow guarded Arc mainnet candidate: let your agent buy services on a budget you set." }
   }
 }
