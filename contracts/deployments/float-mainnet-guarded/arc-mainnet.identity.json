@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "kind": "ShadowGuardedDeploymentIdentity",
+  "purpose": "Public deployed identity only; not an execution manifest or security audit",
+  "chainId": "5042",
+  "contract": {
+    "name": "ShadowFloatMainnetGuarded",
+    "address": "0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB",
+    "repaymentBindingVersion": 2
+  },
+  "deployment": {
+    "transactionHash": "0x92ea563ba59f85eb8d23d1ad6787e9909fb079276173f60cef9c1d8a0623d935",
+    "blockNumber": "24212160",
+    "blockHash": "0x33968fef404b92fef3a03fa9e127f1c64ce2cac8d898cdc829e85e2ccb0725f7"
+  },
+  "bytecode": {
+    "onchainRuntimeKeccak256": "0x845c0c3e47bbcf75004e5d47a6788585d57026ce70c08593d112966a6245b4ef",
+    "runtimeBytes": 14905
+  },
+  "source": {
+    "path": "contracts/src/ShadowFloatMainnetGuarded.sol",
+    "reviewedCommit": "555d56779072b64b969c1edea62967824fc7c859",
+    "mergeCommit": "f908cf3622611281695692972d5d3ee24491b097",
+    "gitBlob": "b8f3d7ab48fc1606bff11e861390d59d494a2ca3",
+    "compilerVersion": "0.8.24+commit.e11b9ed9"
+  },
+  "checkedState": {
+    "checkedAt": "2026-10-10T05:50:47.067Z",
+    "openingsPaused": true,
+    "spendsPaused": true,
+    "outstandingDebtAtomic": "0",
+    "committedCapitalAtomic": "0",
+    "tokenBalanceAtomic": "0"
+  },
+  "independentHumanAudit": "pending"
+}
