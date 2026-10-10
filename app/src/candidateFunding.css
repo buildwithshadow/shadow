@@ -112,3 +112,20 @@
 .fundingNetworkHelp p { color: var(--ink-soft); font-size: 14px; line-height: 1.6; max-width: 720px; }
 .fundingNetworkHelp a { display: inline-flex; align-items: center; min-height: 44px; }
 .fundingScope a { display: inline-flex; align-items: center; min-height: 44px; }
+
+.purchasePanel .purchaseSteps { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 8px; list-style: none; margin: 24px 0; padding: 0; }
+.purchasePanel .purchaseSteps li { display: flex; align-items: flex-start; gap: 8px; min-width: 0; border-top: 2px solid var(--border-strong); padding: 10px 6px 0 0; color: var(--ink-soft); font-size: 13px; line-height: 1.4; }
+.purchasePanel .purchaseSteps li[data-state="current"] { border-color: var(--accent); color: var(--ink); }
+.purchasePanel .purchaseSteps li[data-state="complete"] { border-color: var(--accent); }
+.purchasePanel .purchaseStepNumber { display: grid; flex: 0 0 28px; place-items: center; width: 28px; height: 28px; border: 1px solid var(--border-strong); border-radius: 50%; color: var(--ink-soft); font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
+.purchasePanel .purchaseSteps [data-state="current"] .purchaseStepNumber { border-color: var(--accent); background: var(--accent); color: var(--cta-fg); font-weight: 700; }
+.purchasePanel .purchaseSteps [data-state="complete"] .purchaseStepNumber { border-color: var(--accent); color: var(--accent); }
+.purchasePanel .purchaseStepLabel { min-width: 0; overflow-wrap: anywhere; }
+.purchasePanel .fundingActions small { overflow-wrap: anywhere; }
+.purchasePanel button:disabled { background: transparent; border-style: dashed; border-color: var(--border-strong); color: var(--ink-soft); opacity: 1; }
+
+@media (max-width: 760px) { .purchasePanel .purchaseSteps { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+
+@media (max-width: 520px) {
+  .purchasePanel .purchaseSteps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
