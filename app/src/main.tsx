@@ -5012,7 +5012,7 @@ function SiteFooter() {
           </p>
           <div className="siteFooterBadge">
             <span className="heroBadgeDot" />
-            Public flow: Arc Testnet, chain 5042002. Controlled mainnet rehearsal is paused, chain 5042.
+            Public flow: Arc Testnet, chain 5042002. Controlled mainnet access, chain 5042.
           </div>
         </div>
         <div className="siteFooterColumns">
