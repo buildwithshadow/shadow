@@ -311,6 +311,7 @@ test("continues an unfinished forward range before pending history", async () =>
   };
   const initial: AgentLineDiscoveryCache = {
     lineIds: [],
+    forwardWindowCount: 0,
     lines: [],
     headBlock: 100_000n,
     historyCursor,
@@ -383,6 +384,35 @@ test("continues an unfinished forward range before pending history", async () =>
     cursor: getAgentLineDiscoveryContinuationCursor(afterForwardComplete)!,
   });
   assert.equal(ranges[historyContinueStart].toBlock, historyCursor.nextBlock);
+});
+
+test("continued forward matches stay ahead of historical matches", () => {
+  const id = (digit: string) => `0x${digit.repeat(64)}` as Hash;
+  const cursor = {
+    nextBlock: 50_000n,
+    span: AGENT_LINE_DISCOVERY_CHUNK_BLOCKS,
+    startBlock: 1n,
+    headBlock: 100_000n,
+    searchedBlocks: 50_000n,
+    totalBlocks: 100_000n,
+    pendingLineIds: [],
+  };
+  const history = mergeAgentLineDiscoveryCache("initial", undefined, { lineIds: [id("1")], headBlock: 100_000n, cursor });
+  const firstForward = mergeAgentLineDiscoveryCache("again", history, { lineIds: [id("2")], headBlock: 300_000n, cursor: { ...cursor } });
+  assert.deepEqual(firstForward.lineIds, [id("2"), id("1")]);
+
+  const secondForward = mergeAgentLineDiscoveryCache("continue", firstForward, { lineIds: [id("3")], headBlock: 300_000n, cursor: { ...cursor } });
+  assert.deepEqual(secondForward.lineIds, [id("2"), id("3"), id("1")]);
+
+  const forwardDone = mergeAgentLineDiscoveryCache("continue", secondForward, { lineIds: [id("4")], headBlock: 300_000n, cursor: null });
+  assert.deepEqual(forwardDone.lineIds, [id("2"), id("3"), id("4"), id("1")]);
+  assert.equal(forwardDone.forwardCursor, null);
+
+  const nextWindow = mergeAgentLineDiscoveryCache("again", forwardDone, { lineIds: [id("5")], headBlock: 400_000n, cursor: null });
+  assert.deepEqual(nextWindow.lineIds, [id("5"), id("2"), id("3"), id("4"), id("1")]);
+
+  const olderHistory = mergeAgentLineDiscoveryCache("continue", nextWindow, { lineIds: [id("6")], headBlock: 100_000n, cursor: null });
+  assert.deepEqual(olderHistory.lineIds, [id("5"), id("2"), id("3"), id("4"), id("1"), id("6")]);
 });
 
 test("cancellation stops before the next getLogs request", async () => {

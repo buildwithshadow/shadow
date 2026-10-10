@@ -4,6 +4,7 @@ import type { CandidateLine } from "./candidateFunding";
 
 export type AgentLineDiscoveryCache = {
   lineIds: Hash[];
+  forwardWindowCount: number;
   lines: CandidateLine[];
   headBlock: bigint;
   historyCursor: AgentLineDiscoveryCursor | null;
@@ -21,13 +22,27 @@ export function mergeAgentLineDiscoveryCache(
 ): AgentLineDiscoveryCache {
   const continuingHistory = action === "continue" && !cached?.forwardCursor && Boolean(cached?.historyCursor);
   const existingIds = cached?.lineIds ?? [];
-  const orderedIds = action === "continue" ? [...existingIds, ...result.lineIds]
-    : action === "again" ? [...result.lineIds, ...existingIds] : result.lineIds;
+  let lineIds: Hash[];
+  let forwardWindowCount: number;
+  if (action === "initial") {
+    lineIds = [...new Set(result.lineIds)];
+    forwardWindowCount = 0;
+  } else if (continuingHistory) {
+    lineIds = [...new Set([...existingIds, ...result.lineIds])];
+    forwardWindowCount = cached?.forwardWindowCount ?? 0;
+  } else {
+    // The leading IDs of an unfinished forward window are newer than everything after them.
+    const openWindow = cached?.forwardCursor ? existingIds.slice(0, cached.forwardWindowCount) : [];
+    const windowIds = [...new Set(action === "again" ? [...result.lineIds, ...openWindow] : [...openWindow, ...result.lineIds])];
+    lineIds = [...new Set([...windowIds, ...existingIds.slice(openWindow.length)])];
+    forwardWindowCount = windowIds.length;
+  }
   const advancesHead = result.cursor === null
     && (action === "again" || action === "continue" && !continuingHistory);
 
   return {
-    lineIds: [...new Set(orderedIds)],
+    lineIds,
+    forwardWindowCount,
     lines: cached?.lines ?? [],
     headBlock: action === "initial" || advancesHead ? result.headBlock : cached?.headBlock ?? result.headBlock,
     historyCursor: action === "initial" ? result.cursor
