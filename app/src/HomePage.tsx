@@ -188,10 +188,9 @@ export function HomePage() {
             to these or lower. The contract records the debt and accepts
             repayment from any wallet, but it cannot make the agent repay. The
             sponsor carries that risk, up to the amount set aside. If the due
-            date passes with the debt unpaid, the sponsor can declare a default
-            and then take back the unspent reserve, plus anything repaid later.
-            On this website a sponsor can take back those funds once a default
-            is declared, but cannot yet declare the default.
+            date arrives with debt unpaid, the sponsor can declare a default
+            from the funding page and take back the unspent reserve, plus
+            anything repaid later.
           </p>
         </div>
         <table className="homeLimitTable">

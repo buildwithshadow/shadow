@@ -53,6 +53,7 @@ on:
       - "app/src/savedTransactionLookup.ts"
       - "app/src/lineRefresh.ts"
       - "app/scripts/line-refresh.test.ts"
+      - "app/scripts/candidate-default.test.ts"
       - "app/scripts/saved-transaction-lookup.test.ts"
       - "app/scripts/gateway-funding-guard.test.ts"
       - "app/src/candidateFunding.ts"
@@ -146,7 +147,7 @@ jobs:
       - name: Test public testnet observer failure and recovery
         run: node --test app/scripts/public-testnet-observer.test.mjs app/scripts/public-testnet-observer-alerts.test.mjs
       - name: Test candidate funding and browser transaction recovery
-        run: node --test --test-concurrency=1 app/scripts/float-mainnet-browser.test.ts app/scripts/float-mainnet-guarded-browser.test.ts
+        run: node --test --test-concurrency=1 app/scripts/float-mainnet-browser.test.ts app/scripts/float-mainnet-guarded-browser.test.ts app/scripts/candidate-default.test.ts
       - name: Test public testnet self-registration and wallet purchases
         run: |
           forge test --root contracts --match-path 'test/ShadowFloatPublicTestnet*.t.sol'
