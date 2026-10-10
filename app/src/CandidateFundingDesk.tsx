@@ -19,7 +19,7 @@ import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
 import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
-import { getAgentLineDiscoveryContinuationCursor, mergeAgentLineDiscoveryCache, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
+import { getAgentLineDiscoveryContinuationCursor, hasResumableDiscoveryProgress, mergeAgentLineDiscoveryCache, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
 import { ensureWalletChain, walletRequestHelp } from "./walletNetwork";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
@@ -135,6 +135,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const activeAccount = useRef<Address | null>(null);
   const discoveredLinesByAccount = useRef(new Map<string, AgentLineDiscoveryCache>());
   const lineDiscoveryRun = useRef(0);
+  const lineDiscoveryStoppedRun = useRef<number | null>(null);
   const lineDiscoveryActive = useRef(false);
   const keepSelectedLineInputEnabled = useRef(false);
   const focusLoadedLineHeading = useRef(false);
@@ -311,6 +312,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     };
     const run = ++lineDiscoveryRun.current;
     lineDiscoveryActive.current = true;
+    lineDiscoveryStoppedRun.current = null;
     const inContext = () => {
       const context = lineDiscoveryContext.current;
       return context.account?.toLowerCase() === accountKey && activeAccount.current?.toLowerCase() === accountKey
@@ -337,13 +339,20 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           }
         },
       });
-      if (!isActive() || result.headBlock === null) return;
+      const stoppedByUser = lineDiscoveryStoppedRun.current === run && inContext() && hasResumableDiscoveryProgress(result);
+      if ((!isActive() && !stoppedByUser) || result.headBlock === null) return;
       const nextCache = mergeAgentLineDiscoveryCache(action, cached, {
         lineIds: result.lineIds,
         headBlock: result.headBlock,
         cursor: result.cursor,
       });
       discoveredLinesByAccount.current.set(accountKey, nextCache);
+      if (stoppedByUser) {
+        // An explicit stop keeps the blocks already searched and sends no further requests.
+        setDiscoveredLines(nextCache.lines);
+        setLineDiscoveryStatus(nextCache.historyCursor || nextCache.forwardCursor ? "partial" : nextCache.lines.length ? "ready" : "idle");
+        return;
+      }
       setLineDiscoveryLoadingStates(Boolean(nextCache.lineIds.length));
       const knownLines = new Map((cached?.lines ?? []).map(value => [value.lineId, value]));
       const linesToRead = nextCache.lineIds.filter(id => !knownLines.has(id)).slice(0, MAX_AGENT_LINE_DISCOVERY_RESULTS);
@@ -377,6 +386,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     lineDiscoveryRun.current++;
   }
   function stopAgentLineDiscovery() {
+    lineDiscoveryStoppedRun.current = lineDiscoveryRun.current;
     cancelAgentLineDiscovery();
     setLineDiscoveryProgress(null);
     setLineDiscoveryLoadingStates(false);

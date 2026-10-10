@@ -11,6 +11,11 @@ export type AgentLineDiscoveryCache = {
   forwardCursor: AgentLineDiscoveryCursor | null;
 };
 
+// A stopped scan is worth keeping only if it searched some blocks and can resume or finished its range.
+export function hasResumableDiscoveryProgress(result: { cursor: AgentLineDiscoveryCursor | null; searchedBlocks: bigint; totalBlocks: bigint }) {
+  return result.searchedBlocks > 0n && (result.cursor !== null || result.searchedBlocks === result.totalBlocks);
+}
+
 export function getAgentLineDiscoveryContinuationCursor(cached: AgentLineDiscoveryCache | undefined) {
   return cached?.forwardCursor ?? cached?.historyCursor ?? null;
 }

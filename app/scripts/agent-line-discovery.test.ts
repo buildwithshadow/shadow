@@ -12,6 +12,7 @@ import {
 } from "../src/agentLineDiscovery.ts";
 import {
   getAgentLineDiscoveryContinuationCursor,
+  hasResumableDiscoveryProgress,
   mergeAgentLineDiscoveryCache,
   type AgentLineDiscoveryCache,
 } from "../src/agentLineDiscoveryCache.ts";
@@ -413,6 +414,42 @@ test("continued forward matches stay ahead of historical matches", () => {
 
   const olderHistory = mergeAgentLineDiscoveryCache("continue", nextWindow, { lineIds: [id("6")], headBlock: 100_000n, cursor: null });
   assert.deepEqual(olderHistory.lineIds, [id("5"), id("2"), id("3"), id("4"), id("1"), id("6")]);
+});
+
+test("a stopped scan is kept only when it searched blocks and can resume or finished its range", async () => {
+  const deployment = { address: contract, agent, deployBlock: 1n };
+  let active = true;
+  let calls = 0;
+  const stopDuringSecondChunk: AgentLineDiscoveryClient = {
+    getBlockNumber: async () => 50_000n,
+    getLogs: async () => { if (++calls === 2) active = false; return []; },
+  };
+  const midScan = await discoverAgentLineIds(stopDuringSecondChunk, deployment, { isActive: () => active });
+  assert.notEqual(midScan.cursor, null);
+  assert.equal(midScan.searchedBlocks, AGENT_LINE_DISCOVERY_CHUNK_BLOCKS);
+  assert.equal(hasResumableDiscoveryProgress(midScan), true);
+
+  active = true;
+  const stopDuringFirstChunk: AgentLineDiscoveryClient = {
+    getBlockNumber: async () => 50_000n,
+    getLogs: async () => { active = false; return []; },
+  };
+  const noProgress = await discoverAgentLineIds(stopDuringFirstChunk, deployment, { isActive: () => active });
+  assert.equal(noProgress.searchedBlocks, 0n);
+  assert.equal(hasResumableDiscoveryProgress(noProgress), false);
+
+  active = true;
+  const stopBeforeLogs: AgentLineDiscoveryClient = {
+    getBlockNumber: async () => { active = false; return 50_000n; },
+    getLogs: async () => { throw new Error("no log request expected"); },
+  };
+  const beforeLogs = await discoverAgentLineIds(stopBeforeLogs, deployment, { isActive: () => active });
+  assert.equal(beforeLogs.cursor, null);
+  assert.equal(hasResumableDiscoveryProgress(beforeLogs), false);
+
+  const finished = await discoverAgentLineIds({ getBlockNumber: async () => 3_000n, getLogs: async () => [] }, deployment, activeDiscovery);
+  assert.equal(finished.cursor, null);
+  assert.equal(hasResumableDiscoveryProgress(finished), true);
 });
 
 test("cancellation stops before the next getLogs request", async () => {
