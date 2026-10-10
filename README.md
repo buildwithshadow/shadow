@@ -21,18 +21,23 @@ Chain: Arc Testnet, chain id `5042002`
 ## Public self-service testnet
 
 Start at [www.shadowbuild.xyz/start](https://www.shadowbuild.xyz/start). Sponsors
-register and fund a bounded line from their own browser wallet; agents sign and
-submit purchases and recover results. Anyone can repay the debt; only the sponsor
+follow separate wallet, registration, agent, budget and funding pages. Each
+confirmed step advances to the next page. Agents sign and submit purchases and
+recover results. Anyone can repay the debt; only the sponsor
 can reclaim eligible line funds. This uses
 the separate `ShadowFloatPublicTestnet` deployment on Arc testnet, not the V2
 contract described above or the earlier candidate below. See the
 [current browser interface and deployment guide](docs/SELF_SERVICE_TESTNET.md).
 
-## Mainnet Candidate
+## Guarded mainnet deployment
 
-`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is a separate generation from the V2 contract described below. The candidate is deployed on **Arc testnet**, chain `5042002`, at [`0xFeDb5c8c29792d49947492F357f21dc8405F08fc`](https://testnet.arcscan.app/address/0xFeDb5c8c29792d49947492F357f21dc8405F08fc); its [deployment manifest](contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json) records the source and runtime identity. It is not deployed on mainnet and has not been independently audited.
+`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is a separate generation from V2. The guarded replacement is deployed on **Arc mainnet**, chain `5042`, at [`0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB`](https://explorer.arc.io/address/0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB). Its owner is the sponsor's Safe; a separate account has pause authority. The guarded contract binds repayment to the reviewed draw so a delayed repayment cannot silently settle a newer purchase.
 
-The candidate admits approved sponsors only, allows one outstanding draw per line, excludes automatic scoring and keeps protocol fees at zero. [Open candidate funding](https://www.shadowbuild.xyz/funding) to prepare a testnet line, inspect debt, repay or reclaim eligible funds. Agent purchase signing, executor submission and provider delivery use the participant tools below. Recorded candidate cycles are founder-operated engineering tests; the external integrations documented below belong to V2.
+A founder operated mainnet rehearsal completed a 0.10 USDC reserve, one 0.005 USDC provider payment, report recovery, Circle agent repayment and full reserve reclaim. As checked on 10 October 2026, both openings and purchases are paused, with the completed line closed and no outstanding debt or reserve. This is engineering evidence, not independent customer adoption or a public funded mainnet launch. A qualified independent human security review remains pending.
+
+The public browser flow at [Start](https://www.shadowbuild.xyz/start) is **Arc testnet**. The original testnet candidate at [`0xFeDb5c8c29792d49947492F357f21dc8405F08fc`](https://testnet.arcscan.app/address/0xFeDb5c8c29792d49947492F357f21dc8405F08fc) remains historical; its [deployment manifest](contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json) records that earlier source and runtime identity. Mainnet sponsors are admitted explicitly, only one draw can remain outstanding per line, and protocol fees remain zero. The external integrations below belong to V2.
+
+Repayment is unsecured: unpaid principal remains the sponsor's credit risk. Reclaim rights apply only to eligible funds and do not guarantee recovery of spent principal.
 
 - Specification: [`docs/SHADOW_FLOAT_MAINNET_SPEC.md`](docs/SHADOW_FLOAT_MAINNET_SPEC.md)
 - Threat model: [`docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md`](docs/SHADOW_FLOAT_MAINNET_THREAT_MODEL.md)
