@@ -141,6 +141,8 @@ jobs:
         run: forge build --root contracts
       - name: Test immutable candidate contracts and draw-bound repayment
         run: npm run contracts:mainnet:test
+      - name: Test public mainnet registration and guarded regressions
+        run: forge test --root contracts --match-contract 'ShadowFloat(MainnetPublicRegression|PublicAdmission)Test'
       - name: Test all candidate tooling against local Anvil
         # The glob includes new provider, evidence, review and pilot suites as
         # they land. Run serially because the suites use fixed local RPC ports.
