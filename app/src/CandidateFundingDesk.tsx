@@ -791,7 +791,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
             </button>
           </li>)}</ul>
         </>}
-        {lineDiscoveryStatus === "empty" && <p role="status">No public testnet funding lines were found for this wallet in the available history. A sponsor must open a line for this wallet first. Share your <a href="#agent-funding-link">agent funding link</a>.</p>}
+        {lineDiscoveryStatus === "empty" && <>
+          <p role="status">No public testnet funding lines were found for this wallet in the available history. A sponsor must open a line for this wallet first. Share this invitation with your sponsor.</p>
+          <div className="fundingField"><label htmlFor="discovery-agent-invite">Sponsor invitation link</label><input id="discovery-agent-invite" readOnly value={`${window.location.origin}${guided ? "/start/wallet" : window.location.pathname}?agent=${account}`} /></div>
+        </>}
         {lineDiscoveryStatus === "failed" && <p role="status">The funding line lookup failed. Paste the line ID below to load it.</p>}
       </div>;
   const managePanel = <section className="fundingPanel" aria-labelledby="funding-manage-title">
