@@ -61,6 +61,12 @@ export async function discoverApprovedHistory(connection, pinned, values = {}) {
     finalizedBlock: { blockNumber: finalized.number },
     verifyAnchorHash: async number => (await connection.client.getBlock({ blockNumber: number })).hash,
     fetchSuffix: (from, to) => findLogs(connection, undefined, undefined, from, to) });
+  // A canonical anchor and head do not make logs from an inconsistent RPC
+  // backend canonical. Bind every intervening log block before discovery.
+  for (const [number, hash] of new Map(merged.suffixLogs.map(log => [log.blockNumber, log.blockHash]))) {
+    const block = await connection.client.getBlock({ blockNumber: BigInt(number) });
+    must(block.number === BigInt(number) && same(block.hash, hash), 'Suffix event block is not canonical.');
+  }
   return { logs: merged.mergedLogs, scanned, approvedHistory: { sha256: digest,
     anchorBlock: String(merged.anchorBlock), anchorHash: parsed.anchor.blockHash,
     prefixLogCount: merged.prefixLogs.length, suffixLogCount: merged.suffixLogs.length } };
@@ -78,7 +84,7 @@ export async function captureApprovedHistory(connection, manifestPath) {
   const built = buildNormalizedContent(logs, identity, { blockNumber: anchor.number, blockHash: anchor.hash });
   for (const [number, hash] of new Map(built.parsed.logs.map(log => [log.blockNumber, log.blockHash]))) {
     const block = await connection.client.getBlock({ blockNumber: BigInt(number) });
-    must(same(block.hash, hash), 'Captured event block is not canonical.');
+    must(block.number === BigInt(number) && same(block.hash, hash), 'Captured event block is not canonical.');
   }
   const current = await connection.client.getBlock({ blockNumber: anchor.number });
   must(same(current.hash, anchor.hash), 'History anchor changed during complete capture.');

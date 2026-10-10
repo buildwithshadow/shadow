@@ -79,6 +79,25 @@ test('context rejects a modified approved file before any spending lookup', () =
   } finally { f.cleanup(); }
 });
 
+test('an orphaned intermediate suffix block is refused before policy sees its role change', async () => {
+  const f = fixture(); try {
+    f.connection.client.getLogs = async request => [{ ...f.original.parsed.logs[0],
+      blockNumber: 3n, blockHash: hash(333), transactionHash: hash(333), transactionIndex: 0, logIndex: 0 }];
+    await assert.rejects(discoverApprovedHistory(f.connection, { number: 4n, hash: hash(4) }, f.values), /Suffix event block is not canonical/);
+  } finally { f.cleanup(); }
+});
+
+test('canonical intermediate suffix logs remain part of complete discovery', async () => {
+  const f = fixture(); try {
+    f.connection.client.getLogs = async request => [{ ...f.original.parsed.logs[0],
+      blockNumber: 3n, blockHash: hash(3), transactionHash: hash(333), transactionIndex: 0, logIndex: 0 }];
+    const result = await discoverApprovedHistory(f.connection, { number: 4n, hash: hash(4) }, f.values);
+    assert.equal(result.logs.length, 3);
+    assert.equal(result.logs[2].blockHash, hash(3));
+    assert.deepEqual(result.scanned, { fromBlock: 1n, toBlock: 4n });
+  } finally { f.cleanup(); }
+});
+
 test('wrong manifest or declared anchor cannot reuse an approved prefix', () => {
   const f = fixture(); try {
     assert.throws(() => validateConfiguredHistory({ ...f.baseline, approvedHistory: { ...f.history, anchorBlock: '3' } }, f.manifestPath), /anchor differs/);
