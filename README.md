@@ -35,6 +35,14 @@ contract described above or the earlier candidate below. See the
 
 A founder operated mainnet rehearsal completed a 0.10 USDC reserve, one 0.005 USDC provider payment, report recovery, Circle agent repayment and full reserve reclaim. As checked on 10 October 2026, both openings and purchases are paused, with the completed line closed and no outstanding debt or reserve. This is engineering evidence, not independent customer adoption or a public funded mainnet launch. A qualified independent human security review remains pending.
 
+The latest founder operated cycle used the Circle Agent Wallet as both purchase executor and repayment payer. One 0.005 USDC provider payment was delivered and recovered read only from the original transaction; the Circle wallet repaid the same draw, and the sponsor reclaimed the full 0.10 USDC reserve. The cycle did not inject a lost confirmation and does not establish independent adoption. Both pauses remained active after reclaim.
+
+| Arc mainnet action | Transaction |
+| --- | --- |
+| Circle agent purchase and provider payout | [Purchase receipt](https://explorer.arc.io/tx/0xaebc76b462e727dbd157f527c7d5bf3de51e66eb1d4424a8f0e7fedeb5b4abab) |
+| Circle agent draw bound repayment | [Repayment receipt](https://explorer.arc.io/tx/0x87355ef3b19e3bfafa7f46795259a81623f27ec3d947d50dd0684b9a8a05eafc) |
+| Sponsor closes and reclaims 0.10 USDC | [Reclaim receipt](https://explorer.arc.io/tx/0xf6c14951874c00e9c2d05632a88aa09755d74cd649d9140c4d8e5cd1bc884f01) |
+
 The public browser flow at [Start](https://www.shadowbuild.xyz/start) is **Arc testnet**. The original testnet candidate at [`0xFeDb5c8c29792d49947492F357f21dc8405F08fc`](https://testnet.arcscan.app/address/0xFeDb5c8c29792d49947492F357f21dc8405F08fc) remains historical; its [deployment manifest](contracts/deployments/float-mainnet-candidate/arc-testnet.manifest.json) records that earlier source and runtime identity. Mainnet sponsors are admitted explicitly, only one draw can remain outstanding per line, and protocol fees remain zero. The external integrations below belong to V2.
 
 Repayment is unsecured: unpaid principal remains the sponsor's credit risk. Reclaim rights apply only to eligible funds and do not guarantee recovery of spent principal.
