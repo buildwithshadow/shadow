@@ -88,6 +88,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     if (!engine || inFlight.current || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
     inFlight.current = true;
     const current = revision.current;
+    let recoveryFailed = false;
     setError(''); setNotice(''); setBusy(kind === 'submit' ? 'Confirm the purchase signature, then the transaction in your wallet…' : 'Checking your purchase…');
     try {
       if (kind === 'prepare') {
@@ -123,7 +124,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         await engine.archive();
         if (revision.current === current) { setResult(''); setReviewing(false); setNotice('Purchase resolved and archived in this browser. You can prepare another purchase when the line permits it.'); }
       }
-    } catch (cause) { if (revision.current === current) { setError(candidateErrorMessage(cause)); setReviewing(false); } }
+    } catch (cause) { if (kind === 'recover') recoveryFailed = true; if (revision.current === current) { setError(candidateErrorMessage(cause)); setReviewing(false); } }
     finally {
       if (revision.current === current) {
         try {
@@ -135,6 +136,14 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           if (saved && (kind === 'recover' || (kind === 'submit' && saved.txHash))) {
             await onPurchaseChanged(saved.intent.typedData.message.lineId, kind === 'submit' ? saved.txHash as Hex : undefined);
           }
+          // A failed recovery leaves the saved stage unchanged, so read the receipt status again.
+          if (saved && recoveryFailed) {
+            const status = Number(await client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [saved.intent.digest] }));
+            if (revision.current === current) {
+              setReceiptCheck({ key: `${saved.intent.digest}:${saved.stage}`, status });
+              if (status === 1) setRefusedDigest(saved.intent.digest);
+            }
+          }
         } catch (cause) { setError(candidateErrorMessage(cause)); }
       }
       inFlight.current = false; setBusy('');
@@ -143,7 +152,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const recoveryDisabled = !account || !correctNetwork || Boolean(busy);
   const disabled = recoveryDisabled || fundingPending;
   const blocker = !account ? 'Connect the agent wallet to continue.' : !correctNetwork ? `Switch to ${network} to continue.`
-    : busy ? busy : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : record && !receiptChecked ? 'Confirm the saved purchase status before wallet review.' : record && receiptChecked && receiptCheck?.status !== 0 && !refused ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
+    : busy ? busy : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
     <h2 id="purchase-title">Buy a service with your agent’s budget</h2>
@@ -164,7 +173,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       </div><button type="submit" className="fundingPrimary" disabled={disabled} aria-describedby={blocker ? 'purchase-blocker' : undefined}>Review service purchase</button>
     </form>}
     {record && <>
-      <p>Saved purchase: <strong>{refused ? 'Refused by contract' : receiptUnconfirmed ? 'Checking status' : receiptChecked && receiptCheck?.status !== 0 ? 'Payment receipt found' : record.stage === 'submitted' ? 'Awaiting confirmation' : record.stage === 'delivered' ? 'Delivered' : 'Ready for wallet review'}</strong>. Keep this browser’s site data until resolved.</p>
+      <p>Saved purchase: <strong>{refused ? 'Refused by contract' : record.stage === 'delivered' ? 'Delivered' : receiptUnconfirmed ? 'Checking status' : paidPending ? 'Payment receipt found' : record.stage === 'submitted' ? 'Awaiting confirmation' : 'Ready for wallet review'}</strong>. Keep this browser’s site data until resolved.</p>
       <dl className="fundingDetails"><div><dt>Line</dt><dd><code>{message?.lineId}</code></dd></div><div><dt>Purchase ID</dt><dd><code>{record.intent.digest}</code></dd></div></dl>
       {record.txHash && <a href={`${chain.blockExplorers.default.url}/tx/${record.txHash}`} target="_blank" rel="noreferrer">View original transaction</a>}
       <div className="fundingActions">
