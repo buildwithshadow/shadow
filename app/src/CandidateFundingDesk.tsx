@@ -254,7 +254,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setLineDiscoveryLoadingStates(false);
     setLineDiscoveryStatus(status => status === "idle" ? status : "idle");
     return cancelAgentLineDiscovery;
-  }, [account, role, mode, pending, journalError, gatewayHeld, unresolvedPurchase, showAgentLineDiscovery]);
+  }, [account, role, mode, pending, journalError, gatewayHeld, unresolvedPurchase, showAgentLineDiscovery, requestedStep]);
 
   useEffect(() => {
     window.addEventListener("focus", checkUnresolvedPurchase);
@@ -394,7 +394,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   }
   function selectDiscoveredLine(id: Hash) {
     keepSelectedLineInputEnabled.current = true;
-    document.getElementById("funding-line")?.focus();
+    document.getElementById(guided && journeyStep === "purchase" ? "purchase-line" : "funding-line")?.focus();
     updateLineId(id);
     focusLoadedLineHeading.current = true;
     void lookup(undefined, id).finally(() => { keepSelectedLineInputEnabled.current = false; });
@@ -742,11 +742,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         const sponsor = account;
         if (sponsor) void readCandidateSnapshot(client, {sponsor}).then(value => { if (activeAccount.current === sponsor) setSnapshot(value); }).catch(cause => setSnapshotError(messageOf(cause)));
       }} /></div>;
-  const managePanel = <section className="fundingPanel" aria-labelledby="funding-manage-title">
-      <div className="fundingPanelHead"><div><h2 id="funding-manage-title">{line ? "Funding line overview" : "Find your funding line"}</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
-      <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
-        <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={updateLineId} disabled={Boolean(busy) && !keepSelectedLineInputEnabled.current} hint="The 0x identifier from your line-opening receipt." />
-        {showAgentLineDiscovery && <>
+  const lineDiscoveryButtons = <>
         <button type="button" onClick={() => lineDiscoveryStatus === "loading" ? stopAgentLineDiscovery()
             : void findAgentLines(cachedLineDiscovery ? "again" : "initial")}>
             {lineDiscoveryStatus === "loading" ? "Stop" : cachedLineDiscovery ? "Search again" : "Find my funding lines"}
@@ -754,11 +750,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {lineDiscoveryStatus !== "loading" && canContinueLineDiscovery && <button type="button" onClick={() => void findAgentLines("continue")}>
             Continue search
         </button>}
-        </>}
-        <button type="submit" disabled={Boolean(busy)}>Load line</button>
-      </form>
-      {lineLoading && <p role="status">Loading the line from your link…</p>}
-      {showAgentLineDiscovery && lineDiscoveryStatus !== "idle" && <div className="agentLineDiscovery" aria-live="polite">
+  </>;
+  const lineDiscoveryResults = showAgentLineDiscovery && lineDiscoveryStatus !== "idle" && <div className="agentLineDiscovery" aria-live="polite">
         {lineDiscoveryStatus === "loading" && <p role="status">{lineDiscoveryLoadingStates
           ? "Loading the current state of the lines found…"
           : lineDiscoveryProgress
@@ -780,7 +773,16 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         </>}
         {lineDiscoveryStatus === "empty" && <p role="status">No public testnet funding lines were found for this wallet in the available history. A sponsor must open a line for this wallet first. Share your <a href="#agent-funding-link">agent funding link</a>.</p>}
         {lineDiscoveryStatus === "failed" && <p role="status">The funding line lookup failed. Paste the line ID below to load it.</p>}
-      </div>}
+      </div>;
+  const managePanel = <section className="fundingPanel" aria-labelledby="funding-manage-title">
+      <div className="fundingPanelHead"><div><h2 id="funding-manage-title">{line ? "Funding line overview" : "Find your funding line"}</h2><p>Read its balance without connecting a wallet. Connect to repay or reclaim.</p></div></div>
+      <form className="fundingLookup" onSubmit={(event) => void lookup(event)}>
+        <Field name="line" label="Funding line ID" value={lineId} error={lineInputError} onChange={updateLineId} disabled={Boolean(busy) && !keepSelectedLineInputEnabled.current} hint="The 0x identifier from your line-opening receipt." />
+        {showAgentLineDiscovery && lineDiscoveryButtons}
+        <button type="submit" disabled={Boolean(busy)}>Load line</button>
+      </form>
+      {lineLoading && <p role="status">Loading the line from your link…</p>}
+      {lineDiscoveryResults}
       {mainnet && role === "agent" && account && !hasLineQuery && !lineId.trim() && <p className="agentLineDiscovery" role="status">Enter a funding line ID on this route to load a mainnet line.</p>}
       {line && <div className="fundingLine">
         <div className="fundingPanelHead"><h3 id="funding-loaded-line-heading" tabIndex={-1}>{line.stateName === "DRAWN" ? "Purchase awaiting repayment" : line.stateName === "OPEN" ? "Line open" : line.stateName === "CLOSED" ? "Line closed" : "Line defaulted"}</h3>
@@ -895,7 +897,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     {(journeyStep === 'line' || journeyStep === 'purchase') && <>{!account && <section className="fundingPanel"><p>You can look up a line without connecting. Connect when you are ready to sign an action.</p>{walletControls}</section>}{account && !correctNetwork && <section className="fundingPanel"><p>Switch to Arc testnet before signing an action.</p><button type="button" disabled={Boolean(busy)} onClick={switchNetwork}>Switch to Arc testnet</button>{networkHelp}</section>}
       {journeyStep === 'line' && !line && account && <details className="fundingPanel"><summary>Need a sponsor to fund your agent?</summary><p>Share this link with a sponsor. It fills in your connected wallet as the agent. They choose and approve the budget.</p><div className="fundingField"><label htmlFor="agent-invite">Your agent funding link</label><input id="agent-invite" readOnly value={`${window.location.origin}/start/wallet?agent=${account}`} /></div></details>}
       {journeyStep === 'line' && <>{managePanel}{line && <div className="journeyNext"><button className="fundingPrimary" type="button" disabled={Boolean(busy)} onClick={() => goJourney('purchase')}>Go to service purchase</button></div>}</>}
-      {journeyStep === 'purchase' && <button type="button" disabled={Boolean(busy)} onClick={() => goJourney('line')}>Back to line overview</button>}</>}
+      {journeyStep === 'purchase' && <button type="button" disabled={Boolean(busy)} onClick={() => goJourney('line')}>Back to line overview</button>}
+      {journeyStep === 'purchase' && showAgentLineDiscovery && <section className="fundingPanel" aria-labelledby="purchase-discovery-title"><h2 id="purchase-discovery-title">Find your funding line</h2><div className="fundingActions">{lineDiscoveryButtons}</div>{lineDiscoveryResults}</section>}</>}
     {purchasePanel}
     {gatewayPanel}
     {transactionDialog}
