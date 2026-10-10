@@ -157,3 +157,12 @@ test("unavailable storage restores the new wallet defaults and current invitatio
     invitation,
   );
 });
+
+
+import { usesTestnetFundingJourney } from '../src/fundingJourney.ts'
+test('public mainnet keeps real USDC outside the testnet start journey', () => {
+  assert.equal(usesTestnetFundingJourney({chainId:5042,selfRegistration:true},true),false)
+  assert.equal(usesTestnetFundingJourney({chainId:5042002,selfRegistration:true},true),true)
+  assert.equal(usesTestnetFundingJourney({chainId:5042002,selfRegistration:false},true),false)
+  assert.equal(usesTestnetFundingJourney({chainId:5042002,selfRegistration:true},false),false)
+})

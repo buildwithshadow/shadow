@@ -170,3 +170,8 @@ export function restoreWalletDraft(
   if (invitation !== null) form.agent = invitation;
   return { form, persisted };
 }
+
+// /start is the public Arc testnet journey. Mainnet retains its own route and currency.
+export function usesTestnetFundingJourney(deployment: { chainId: number; selfRegistration?: boolean }, hasService: boolean): boolean {
+  return hasService && deployment.chainId === 5042002 && deployment.selfRegistration === true
+}

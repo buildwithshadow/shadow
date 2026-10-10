@@ -2,7 +2,7 @@ import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
-import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, type FundingStep } from "./fundingJourney";
+import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
@@ -55,7 +55,7 @@ function Field({ label, name, value, onChange, hint, error: fieldError, decimal 
 export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: { deployment?: CandidateDeployment; service?: PublicService }) {
   const location = useLocation();
   const navigate = useNavigate();
-  const guided = Boolean(service && deployment.selfRegistration);
+  const guided = usesTestnetFundingJourney(deployment, Boolean(service));
   const requestedStep = fundingStep(location.pathname, location.search);
   const CANDIDATE_FUNDING = deployment;
   const mainnet = deployment.chainId === 5042;
