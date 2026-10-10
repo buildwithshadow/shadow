@@ -19,7 +19,7 @@ import { findSentTransactionHash } from "./savedTransactionLookup";
 import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
 import { discoverAgentLineIds, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
-import { getAgentLineDiscoveryContinuationCursor, hasResumableDiscoveryProgress, mergeAgentLineDiscoveryCache, refreshAgentLineDiscoveryPage, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
+import { getAgentLineDiscoveryContinuationCursor, hasResumableDiscoveryProgress, mergeAgentLineDiscoveryCache, refreshAgentLineDiscoveryCachePage, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
 import { ensureWalletChain, walletRequestHelp } from "./walletNetwork";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
@@ -357,8 +357,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         headBlock: result.headBlock,
         cursor: result.cursor,
       });
-      discoveredLinesByAccount.current.set(accountKey, nextCache);
       if (stoppedByUser) {
+        discoveredLinesByAccount.current.set(accountKey, nextCache);
         // An explicit stop keeps the blocks already searched and sends no further requests.
         setDiscoveredLines(nextCache.lines);
         setLineDiscoveryStatus(nextCache.historyCursor || nextCache.forwardCursor ? "partial" : nextCache.lines.length ? "ready" : "idle");
@@ -369,10 +369,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       // A repeat search shows the newest known page, including newly opened lines.
       const pageIds = action === "continue" && result.lineIds.length
         ? result.lineIds : nextCache.lineIds;
-      const values = await refreshAgentLineDiscoveryPage(pageIds, currentAccount,
+      const completeCache = await refreshAgentLineDiscoveryCachePage(nextCache, pageIds, currentAccount,
         id => readCandidateLine(client, id), isActive);
-      if (!values || !isActive()) return;
-      const completeCache = { ...nextCache, lines: values };
+      if (!completeCache || !isActive()) return;
+      const values = completeCache.lines;
       discoveredLinesByAccount.current.set(accountKey, completeCache);
       setDiscoveredLines(values);
       setLineDiscoveryLoadingStates(false);

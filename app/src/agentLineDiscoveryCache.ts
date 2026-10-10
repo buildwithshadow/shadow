@@ -74,3 +74,16 @@ export async function refreshAgentLineDiscoveryPage(
   }
   return lines;
 }
+
+// Return a candidate cache only after the page is fully refreshed. A failure or
+// cancellation must leave the caller's previously committed cursor available.
+export async function refreshAgentLineDiscoveryCachePage(
+  proposed: AgentLineDiscoveryCache,
+  pageIds: readonly Hash[],
+  agent: string,
+  readLine: (id: Hash) => Promise<CandidateLine>,
+  isActive: () => boolean,
+): Promise<AgentLineDiscoveryCache | null> {
+  const lines = await refreshAgentLineDiscoveryPage(pageIds, agent, readLine, isActive);
+  return lines === null ? null : { ...proposed, lines };
+}
