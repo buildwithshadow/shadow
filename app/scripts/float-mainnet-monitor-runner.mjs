@@ -9,6 +9,7 @@ import { performance } from "node:perf_hooks";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
 import { canonicalJson, digestJson, evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-policy.mjs";
 import { configuredLogChunkBlocks } from "./float-mainnet-config.mjs";
+import { validateConfiguredHistory } from "./float-mainnet-approved-history.mjs";
 
 const MONITOR = fileURLToPath(new URL("./float-mainnet-monitor.mjs", import.meta.url));
 const alert = (code, detail) => ({ code, severity: "critical", detail });
@@ -34,6 +35,7 @@ export function loadContext({ baselinePath, manifestPath, stateDir, indexPath })
   const rawManifest = readFileSync(manifestPath);
   const manifest = JSON.parse(rawManifest);
   if (manifest.ok !== true) throw new Error("manifest must have ok:true");
+  validateConfiguredHistory(baseline, manifestPath);
   return { baseline, baselineHash: digestJson(baseline), manifestHash: createHash("sha256").update(rawManifest).digest("hex"), manifestPath: resolve(manifestPath), stateDir: resolve(stateDir), indexPath: indexPath ? resolve(indexPath) : undefined };
 }
 function identity(context) {
@@ -77,6 +79,10 @@ export async function collectSnapshot(context, { rpcUrl = process.env.ARC_RPC_UR
   const childEnv = monitorReadEnvironment(rpcUrl, b.identity.chainId);
   const args = [MONITOR, "snapshot", "--manifest", context.manifestPath, "--warn-before", String(b.policy.warnBeforeSeconds), "--max-index-lag", String(b.policy.maxIndexLagSeconds), "--executor-from-block", b.executor.fromBlock];
   if (context.indexPath) args.push("--index", context.indexPath);
+  if (b.approvedHistory) {
+    validateConfiguredHistory(b, context.manifestPath);
+    args.push("--approved-history", b.approvedHistory.file, "--approved-history-digest", b.approvedHistory.sha256);
+  }
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });
     let output = ""; let bytes = 0; let stopped = false;

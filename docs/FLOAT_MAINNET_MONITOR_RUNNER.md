@@ -6,7 +6,7 @@ This tool does not install a scheduler, send notifications, sign transactions, s
 
 ## One-block observation
 
-`float-mainnet-monitor.mjs snapshot` performs full deployment-to-head canonical log discovery, role and line reads, token accounting, and direct-call executor observation at one pinned block. It checks that the block remains canonical after the reads. The paced read-only transport is used; failed scans and timeouts do not produce partial healthy state.
+`float-mainnet-monitor.mjs snapshot` performs canonical log discovery covering the original deployment through the pinned head, role and line reads, token accounting, and direct-call executor observation at one pinned block. It checks that the block remains canonical after the reads. The paced read-only transport is used; failed scans and timeouts do not produce partial healthy state.
 
 Sponsor discovery includes `SponsorAllowed` events for addresses that never opened a line. Historical operators and providers are also discovered. Accounting checks the token balance against obligations, line sums against both aggregate totals, and each line's state against its reserve identity. The runner recalculates the accounting rather than trusting an `ok` flag.
 
@@ -126,3 +126,37 @@ Successful delivery is recorded atomically and deduplicated by destination, base
 Run the notifier through a separately configured scheduler at a cadence suitable for the selected heartbeat bounds. No scheduler is installed by this command. A notifier on the same machine cannot report a total host or network outage; use an independent availability check for that failure class. Telegram delivery and monitor health remain separate observations.
 
 Upgrade consideration: this policy examines all role-enable history from deployment. An older baseline that used a later execution start to omit a historical role incident may now hold again. Review that history explicitly; do not delete monitor state or automatically acknowledge an existing incident during rollout.
+
+
+## Optional approved immutable history
+
+Default discovery remains a complete RPC replay from the deployment block. An external index remains diagnostic and cannot replace that replay.
+
+For a growing chain, a maintainer may explicitly approve an immutable historical prefix. The service cannot approve, regenerate or advance its own prefix. The exact bytes are bound to the separately protected baseline and the original deployment identity, manifest hash and finalized canonical anchor. Every cycle verifies that anchor and replays the complete suffix from its next block through the current pinned head. All earlier events remain in role, line and payment discovery. Coverage still begins at the original deployment block.
+
+Capture a candidate prefix using read only RPC operations:
+
+```sh
+node app/scripts/float-mainnet-history-capture.mjs \
+  --manifest /private/release.manifest.json \
+  --out /private/unapproved-history.json
+```
+
+Capture performs a complete original range scan, verifies every recorded event block and the anchor, and creates a new file without overwriting an existing one. Its output is explicitly unapproved. Review its provenance and complete event history before adding an optional `approvedHistory` object to the protected baseline:
+
+```json
+{
+  "file": "/private/immutable-approved-history.json",
+  "sha256": "EXACT_SHA256_OF_APPROVED_BYTES",
+  "anchorBlock": "FINALIZED_CANONICAL_BLOCK_NUMBER",
+  "anchorHash": "0xCANONICAL_BLOCK_HASH"
+}
+```
+
+Those placeholders must be replaced with the verified record. Keep the file and baseline outside public repositories, with the baseline protected from service writes. A checksum inside an editable file is not approval. A matching canonical block hash alone does not prove that the file includes every event.
+
+The runner validates the file when loading context and again before collection. Status and spend consumers therefore reject missing, altered or mismatched history. The snapshot must report the exact prefix binding selected by the baseline; supplying a different prefix directly to the snapshot CLI cannot authorize spending. Corruption, reorgs, incomplete suffix reads and unexpected identity changes fail closed. Existing incidents remain latched and historical evidence is retained.
+
+Replacing a prefix requires a declared maintainer transition and another complete canonical capture from the original deployment, with old records preserved and common historical events compared. It is not an automatic cache update or a budget reset. A root administrator who can rewrite the protected baseline and executable code remains trusted under the existing host control model; this mechanism does not defend against malicious root access.
+
+No timing, block freshness, role, spending or onchain controls are relaxed by this option. Measure the resulting complete snapshot before using it. Independent provider checks and qualified human security review remain separate requirements.

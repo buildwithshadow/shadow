@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isAbsolute } from "node:path";
 import { isAddress, zeroAddress } from "viem";
 import { entryPoint07Address } from "viem/account-abstraction";
 import { reconcileState } from "./float-mainnet-monitor.mjs";
@@ -29,7 +30,7 @@ function addressSet(value, name) {
 // create or rewrite the approved roles, limits or line policy automatically.
 export function validateBaseline(raw) {
   const b = structuredClone(raw);
-  keys(b, ["schemaVersion", "identity", "owner", "operators", "sponsors", "effectiveLimits", "pauses", "lines", "executor", "policy"], "baseline");
+  keys(b, ["schemaVersion", "identity", "owner", "operators", "sponsors", "effectiveLimits", "pauses", "lines", "executor", "policy", ...(Object.hasOwn(b, "approvedHistory") ? ["approvedHistory"] : [])], "baseline");
   requireThat(b.schemaVersion === 1, "unsupported baseline schema");
   keys(b.identity, ["chainId", "address", "runtimeCodeHash", "usdc", "deployBlock"], "identity");
   requireThat(uint(b.identity.chainId) && BigInt(b.identity.chainId) > 0n && uint(b.identity.deployBlock) && address(b.identity.address) && address(b.identity.usdc) && hash(b.identity.runtimeCodeHash), "invalid baseline identity");
@@ -44,6 +45,14 @@ export function validateBaseline(raw) {
   keys(b.policy, ["intervalMs", "runTimeoutMs", "maxHeartbeatAgeMs", "maxBlockAgeSeconds", "maxIndexLagSeconds", "warnBeforeSeconds", "requireIndex"], "policy");
   for (const key of Object.keys(b.policy).filter((key) => key !== "requireIndex")) requireThat(Number.isSafeInteger(b.policy[key]) && b.policy[key] > 0, `policy.${key} must be a positive safe integer`);
   requireThat(typeof b.policy.requireIndex === "boolean" && b.policy.maxHeartbeatAgeMs >= b.policy.intervalMs + b.policy.runTimeoutMs, "invalid heartbeat/index policy");
+  if (Object.hasOwn(b, "approvedHistory")) {
+    const history = b.approvedHistory;
+    keys(history, ["file", "sha256", "anchorBlock", "anchorHash"], "approvedHistory");
+    requireThat(typeof history.file === "string" && isAbsolute(history.file) && history.file.length <= 4096
+      && !/[\0\r\n]/.test(history.file) && /^[0-9a-f]{64}$/.test(history.sha256)
+      && uint(history.anchorBlock) && BigInt(history.anchorBlock) >= BigInt(b.identity.deployBlock)
+      && hash(history.anchorHash), "invalid externally approved history binding");
+  }
   requireThat(Array.isArray(b.lines), "baseline lines required");
   const ids = new Set();
   for (const line of b.lines) {
@@ -90,6 +99,14 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
     const age = nowMs / 1000 - Number(observed.timestamp);
     check(Number.isFinite(age) && age >= -30 && age <= b.policy.maxBlockAgeSeconds, "STALE_BLOCK", "snapshot block timestamp is stale or in the future");
     check(s.discovery.scanned?.fromBlock === b.identity.deployBlock && s.discovery.scanned?.toBlock === observed.blockNumber && s.discovery.lines === s.lines.length && new Set(s.lines.map((line) => line.lineId)).size === s.lines.length, "DISCOVERY_INCOMPLETE", "full deployment-to-observed scan and unique line count required");
+    const history = s.discovery.approvedHistory;
+    if (b.approvedHistory) {
+      check(history && history.sha256 === b.approvedHistory.sha256 && history.anchorBlock === b.approvedHistory.anchorBlock
+        && history.anchorHash === b.approvedHistory.anchorHash && BigInt(history.anchorBlock) <= BigInt(observed.blockNumber)
+        && Number.isSafeInteger(history.prefixLogCount) && history.prefixLogCount >= 0
+        && Number.isSafeInteger(history.suffixLogCount) && history.suffixLogCount >= 0,
+        "HISTORY_BINDING_MISMATCH", "snapshot does not prove the explicitly approved immutable history prefix");
+    } else check(history === undefined, "HISTORY_UNAPPROVED", "snapshot used a history prefix absent from the protected baseline");
     check(s.ok === true, "MONITOR_FAILED", "monitor reported failure");
     check(lower(s.contract.owner) === b.owner && lower(s.contract.pendingOwner) === zeroAddress, "OWNER_DRIFT", "owner or pending owner differs from approved state");
     check(equal(s.contract.effectiveLimits, b.effectiveLimits) && Array.isArray(s.contract.pendingCapIncreases) && s.contract.pendingCapIncreases.length === 0, "CAP_DRIFT", "effective caps changed or an increase is pending");
