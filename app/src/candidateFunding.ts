@@ -256,7 +256,7 @@ async function prepareCandidateDefault(client: CandidateReadClient, rawAccount: 
   const line = await readCandidateLine(client, rawLineId)
   if (!same(account, line.sponsor)) throw new Error('Only this line’s sponsor can declare a default.')
   if (line.stateName !== 'DRAWN') throw new Error('Default requires a DRAWN line.')
-  if (line.principalOutstanding <= 0n || line.principalOutstanding > CANDIDATE_FUNDING.maxReserve) throw new Error('This line has no bounded outstanding debt to default.')
+  if (line.principalOutstanding <= 0n) throw new Error('This line has no outstanding debt to default.')
   if (line.observedTimestamp < line.dueAt) throw new Error('This line is not due for default yet.')
   return { kind: 'default', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: 'declareDefault', args: [line.lineId] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: 'Declaring default marks this line as DEFAULTED. Anyone can still repay afterwards; those repayments go to sponsor recovery. This line will not reopen.' }
 }
@@ -326,7 +326,6 @@ function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'v
   } else if (!isApproval) {
     if (!record.lineId || !same(args[0], record.lineId)) throw new Error('The transaction line does not match its calldata.')
     if (record.kind === 'repay' && (BigInt(args[deployment.drawBoundRepayment ? 2 : 1]) !== value || value > CANDIDATE_FUNDING.maxReserve)) throw new Error('The repayment must equal the displayed bounded amount.')
-    if (record.kind === 'default' && value > CANDIDATE_FUNDING.maxReserve) throw new Error('The default amount exceeds this browser release’s limit.')
     if (record.kind === 'repay' && deployment.drawBoundRepayment) hash(args[1], 'Purchase digest')
   }
   return { abi, functionName: decoded.functionName, args }

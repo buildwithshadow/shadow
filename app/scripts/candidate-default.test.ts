@@ -161,6 +161,16 @@ test('guarded mainnet prepares the same sponsor default selector', async () => {
   assert.deepEqual(decoded.args, [lineId])
 })
 
+test('a sponsor can default a line whose debt is above this release opening cap', async () => {
+  const f = fixture()
+  f.state.line.principalOutstanding = CANDIDATE_FUNDING.maxReserve + 1n
+  const prepared = await f.kit.prepareCandidateDefault(f.client, sponsor, lineId)
+  assert.equal(prepared.amount, CANDIDATE_FUNDING.maxReserve + 1n)
+  await f.kit.executeCandidateCall(f.session, prepared)
+  assert.deepEqual(f.state.simulations, ['declareDefault'])
+  assert.equal(f.state.sends, 1)
+})
+
 test('a default journal survives an ambiguous wallet response and reload', async () => {
   const f = fixture()
   const prepared = await f.kit.prepareCandidateDefault(f.client, sponsor, lineId)
