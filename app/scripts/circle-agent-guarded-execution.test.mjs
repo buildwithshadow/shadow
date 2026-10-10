@@ -165,6 +165,8 @@ test('a partial durable barrier cannot be classified as an unsent operation',asy
   options.journal.put=async(k,v)=>{if(v?.request)throw new Error('disk failure');return put(k,v);};
   await assert.rejects(()=>adapter.execute(repay),/disk failure/);
   await assert.rejects(()=>adapter.reconcile(adapter.operationKey(repay)),/barrier exists/);
+  options.journal.put=put;
+  await assert.rejects(()=>adapter.execute(repay),/barrier exists/);
   assert.equal(state.sends,0);
 });
 

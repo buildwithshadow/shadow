@@ -277,6 +277,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       }
       const active = await journal.get(activeKey);
       requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
+      requireThat(!active || existing, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
       const activation = await journal.get(`${namespace}:activation`);
       if (activation) {
         requireThat(activation.version === 1 && activation.chainId === CHAIN && activation.agent === agent
