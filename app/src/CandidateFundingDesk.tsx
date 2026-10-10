@@ -2,7 +2,7 @@ import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
-import { fundingStep, guardedFundingStep, validAgent, budgetIssue, readFundingDraft, writeFundingDraft, type FundingStep } from "./fundingJourney";
+import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
@@ -136,21 +136,15 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     invalidate(); setError("");
     setMode(next === 'line' || next === 'purchase' ? 'manage' : 'open');
     setRole(next === 'purchase' ? 'agent' : next === 'line' ? null : 'sponsor');
-    const query = new URLSearchParams();
-    if ((next === 'line' || next === 'purchase') && /^0x[0-9a-fA-F]{64}$/.test(lineId)) query.set('line', lineId);
-    else if (validAgent(form.agent)) query.set('agent', form.agent.trim());
-    navigate(`/start${next === 'home' ? '' : `/${next}`}${query.size ? `?${query}` : ''}`);
+    navigate(fundingPath(next, form.agent, lineId));
   }
   useEffect(() => {
     if (!guided || !draftKey) return;
     setProviderAgreed(false);
-    try {
-      const restored = readFundingDraft(window.sessionStorage.getItem(draftKey), { ...initialForm, provider: service!.provider, endpoint: service!.endpoint });
-      // An explicit invitation wins over an older draft for a different agent.
-      const invited = new URLSearchParams(window.location.search).get('agent');
-      if (invited !== null) restored.agent = invited;
-      setForm(restored); setDraftOwner(draftKey); setDraftWarning("");
-    } catch { setDraftOwner(null); setDraftWarning("This browser cannot save your draft. Keep this page open until you finish."); }
+    const restored = restoreWalletDraft(() => window.sessionStorage.getItem(draftKey), { ...initialForm, provider: service!.provider, endpoint: service!.endpoint }, new URLSearchParams(window.location.search).get('agent'));
+    setForm(restored.form);
+    setDraftOwner(restored.persisted ? draftKey : null);
+    setDraftWarning(restored.persisted ? "" : "This browser cannot save your draft. Keep this page open until you finish.");
   }, [guided, draftKey, service]);
   useEffect(() => {
     if (!guided || !draftKey || draftOwner !== draftKey) return;
@@ -191,9 +185,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setLineLoading(true);
     readCandidateLine(client, id).then(value => { if (active && revision.current === readRevision) setLine(value); })
       .catch(cause => { if (active && revision.current === readRevision) setError(messageOf(cause)); })
-      .finally(() => { if (active) { autoLoadedLink.current = location.key; setLineLoading(false); } });
+      .finally(() => { if (active) { if (revision.current === readRevision) autoLoadedLink.current = location.key; setLineLoading(false); } });
     return () => { active = false; setLineLoading(false); };
-  }, [guided, requestedStep, location.key, location.search, account, busy, pending, journalError, client, readCandidateLine]);
+  }, [guided, requestedStep, location.key, location.search, account, walletSnapshotRevision, busy, pending, journalError, client, readCandidateLine]);
 
   // A sponsor can be watching while the agent purchases or repays elsewhere.
   // Keep these reads separate from transaction reviews and recovery journals.
@@ -295,6 +289,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         activeAccount.current = first;
         setAccount(first);
         setChainId(typeof network === "string" ? Number(network) : null);
+        setWalletSnapshotRevision(previous => previous + 1);
       } catch { if (active && walletReadSequence.current === sequence) { activeAccount.current = null; setAccount(null); setChainId(null); } }
     };
     const changed = () => {

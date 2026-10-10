@@ -13,6 +13,21 @@ export type FundingStep =
   | (typeof fundingSteps)[number]
   | "line"
   | "purchase";
+export function fundingPath(
+  step: FundingStep,
+  agent: string,
+  line: string,
+): string {
+  if (step === "home") return "/start";
+  const query = new URLSearchParams();
+  if (
+    (step === "line" || step === "purchase") &&
+    /^0x[0-9a-fA-F]{64}$/.test(line)
+  )
+    query.set("line", line);
+  else if (validAgent(agent)) query.set("agent", agent.trim());
+  return `/start/${step}${query.size ? `?${query}` : ""}`;
+}
 export const stepLabels: Record<FundingStep, string> = {
   home: "Get started",
   wallet: "Wallet",
@@ -138,4 +153,20 @@ export function writeFundingDraft(form: CandidateOpenInput): string {
       draftKeys.map((key) => [key, form[key].slice(0, 100)]),
     ),
   });
+}
+export function restoreWalletDraft(
+  read: () => string | null,
+  defaults: CandidateOpenInput,
+  invitation: string | null,
+) {
+  let form: CandidateOpenInput;
+  let persisted = true;
+  try {
+    form = readFundingDraft(read(), { ...defaults });
+  } catch {
+    form = { ...defaults };
+    persisted = false;
+  }
+  if (invitation !== null) form.agent = invitation;
+  return { form, persisted };
 }

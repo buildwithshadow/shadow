@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   fundingStep,
+  fundingPath,
+  restoreWalletDraft,
   guardedFundingStep,
   validAgent,
   budgetIssue,
@@ -124,5 +126,34 @@ test("corrupt, oversized and wrong-version drafts cannot replace deployment defa
       form,
     ).agent,
     agent,
+  );
+});
+
+test("start over reaches the home choices even when an agent draft exists", () => {
+  const path = fundingPath("home", agent, `0x${"11".repeat(32)}`);
+  assert.equal(path, "/start");
+  assert.equal(fundingStep(path, ""), "home");
+  assert.equal(
+    fundingPath("wallet", agent, ""),
+    `/start/wallet?agent=${agent}`,
+  );
+});
+
+test("unavailable storage restores the new wallet defaults and current invitation", () => {
+  const walletB = { ...form, agent: "", reserve: "0.10" };
+  const blocked = () => {
+    throw new Error("Storage access denied");
+  };
+  const restored = restoreWalletDraft(blocked, walletB, null);
+  assert.deepEqual(restored, { form: walletB, persisted: false });
+  const invitation = "0x4444444444444444444444444444444444444444";
+  assert.equal(
+    restoreWalletDraft(blocked, walletB, invitation).form.agent,
+    invitation,
+  );
+  assert.equal(
+    restoreWalletDraft(() => writeFundingDraft(form), walletB, invitation).form
+      .agent,
+    invitation,
   );
 });
