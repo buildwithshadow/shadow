@@ -7,7 +7,8 @@ import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { performance } from "node:perf_hooks";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
-import { canonicalJson, digestJson, evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-policy.mjs";
+import { canonicalJson, digestJson } from "./float-mainnet-monitor-policy.mjs";
+import { evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-public-policy.mjs";
 import { configuredLogChunkBlocks } from "./float-mainnet-config.mjs";
 import { validateConfiguredHistory } from "./float-mainnet-approved-history.mjs";
 
@@ -34,6 +35,7 @@ export function loadContext({ baselinePath, manifestPath, stateDir, indexPath })
   const baseline = validateBaseline(readJson(baselinePath));
   const rawManifest = readFileSync(manifestPath);
   const manifest = JSON.parse(rawManifest);
+  if (baseline.schemaVersion === 2 && (manifest.publicRegistration !== true || manifest.repaymentBindingVersion !== 2)) throw new Error("Public observation requires an explicitly bound public repayment deployment manifest");
   if (manifest.ok !== true) throw new Error("manifest must have ok:true");
   validateConfiguredHistory(baseline, manifestPath);
   return { baseline, baselineHash: digestJson(baseline), manifestHash: createHash("sha256").update(rawManifest).digest("hex"), manifestPath: resolve(manifestPath), stateDir: resolve(stateDir), indexPath: indexPath ? resolve(indexPath) : undefined };
@@ -78,6 +80,7 @@ export async function collectSnapshot(context, { rpcUrl = process.env.ARC_RPC_UR
   const { baseline: b } = context;
   const childEnv = monitorReadEnvironment(rpcUrl, b.identity.chainId);
   const args = [MONITOR, "snapshot", "--manifest", context.manifestPath, "--warn-before", String(b.policy.warnBeforeSeconds), "--max-index-lag", String(b.policy.maxIndexLagSeconds), "--executor-from-block", b.executor.fromBlock];
+  if (b.schemaVersion === 2) args.push("--public-admission-audit");
   if (context.indexPath) args.push("--index", context.indexPath);
   if (b.approvedHistory) {
     validateConfiguredHistory(b, context.manifestPath);

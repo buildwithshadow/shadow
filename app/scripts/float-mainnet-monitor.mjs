@@ -17,6 +17,7 @@ import {
 import { readIndexFile } from "./float-mainnet-indexer.mjs";
 import { isEntrypoint } from "./float-mainnet-preflight.mjs";
 import { readExecutionTransaction } from "./float-mainnet-monitor-execution-transaction.mjs";
+import { readDirectExecutionAttribution } from "./float-mainnet-monitor-direct-execution.mjs";
 import { readCircleExecutionAttribution } from "./float-mainnet-monitor-circle-execution.mjs";
 import { entryPoint07Address } from "viem/account-abstraction";
 import { discoverApprovedHistory } from "./float-mainnet-approved-history.mjs";
@@ -333,6 +334,9 @@ async function check(values, { snapshot = false } = {}) {
       } else if (tx.to?.toLowerCase() === entryPoint07Address.toLowerCase()) {
         routed = await readCircleExecutionAttribution(connection.client, event, tx, connection.address);
       }
+      if (values["public-admission-audit"] && tx.to?.toLowerCase() === connection.address.toLowerCase()) {
+        routed = await readDirectExecutionAttribution(connection.client, event, tx, connection.address, connection.chainId);
+      }
       executions.push({ event: event.event, digest: event.args.digest, lineId: event.args.lineId,
         blockNumber: event.blockNumber, transactionHash: event.transactionHash, sender: tx.from, executor, ...(routed ?? {}) });
     }
@@ -516,7 +520,7 @@ export async function monitorSnapshot(values) {
 }
 
 const COMMANDS = {
-  snapshot: { options: { "approved-history": { type: "string" }, "approved-history-digest": { type: "string" }, index: { type: "string" }, "warn-before": { type: "string" }, "max-index-lag": { type: "string" }, "executor-from-block": { type: "string" } }, run: monitorSnapshot },
+  snapshot: { options: { "public-admission-audit": { type: "boolean" }, "approved-history": { type: "string" }, "approved-history-digest": { type: "string" }, index: { type: "string" }, "warn-before": { type: "string" }, "max-index-lag": { type: "string" }, "executor-from-block": { type: "string" } }, run: monitorSnapshot },
   check: {
     options: {
       index: { type: "string" },
