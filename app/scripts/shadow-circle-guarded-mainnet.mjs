@@ -2,13 +2,13 @@
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
-import { createPublicClient, erc20Abi, getAddress, keccak256, stringToHex } from 'viem';
+import { createPublicClient, erc20Abi, getAddress, keccak256, stringToHex, parseUnits } from 'viem';
 import { GUARDED_MAINNET as deployment, GUARDED_MAINNET_SERVICE as service } from '../src/guardedMainnet.ts';
 import { createGuardedMainnetFundingKit, guardedMainnetChain } from '../src/candidateFunding.ts';
 import { createGuardedMainnetPurchase } from '../src/selfServicePurchase.mjs';
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 import { createCircleRunnerState } from './circle-agent-runner-state.mjs';
-import { createCircleGuardedMainnetPurchaser, createCircleGuardedRepayer } from './circle-agent-execution.mjs';
+import { GUARDED_MAINNET_PURCHASE_FEE_CAP, createCircleGuardedMainnetPurchaser, createCircleGuardedRepayer } from './circle-agent-execution.mjs';
 import { createCircleGuardedMainnetPurchaseTransport } from './circle-agent-cli-transport.mjs';
 import { createCircleGuardedCliTransport } from './circle-agent-guarded-cli.mjs';
 import { createGuardedMainnetCircleOperations } from './circle-agent-guarded-operations.mjs';
@@ -24,25 +24,35 @@ const must = (ok, message) => { if (!ok) throw new Error(message); };
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 export function parseGuardedMainnetArgs(args) {
   const filtered = [], monitor = {};
+  let purchaseFeeUSDC;
   const names = { '--monitor-baseline': 'baselinePath', '--monitor-manifest': 'manifestPath', '--monitor-state': 'stateDir', '--session-policy': 'sessionPath' };
   for (let i=0; i<args.length; i++) {
+    if (args[i] === '--purchase-fee-cap-usdc') {
+      const value = args[++i];
+      must(purchaseFeeUSDC === undefined && typeof value === 'string' && /^(0|[1-9]\d*)(\.\d{1,18})?$/.test(value), 'Missing, repeated or invalid purchase fee cap.');
+      const atomic = parseUnits(value, 18);
+      must(atomic > 0n && atomic <= BigInt(GUARDED_MAINNET_PURCHASE_FEE_CAP), 'Purchase fee cap must be positive and at most 0.04 USDC.');
+      purchaseFeeUSDC = value;
+      continue;
+    }
     const key = names[args[i]];
     if (!key) { filtered.push(args[i]); continue; }
     must(!monitor[key] && args[i+1] && !args[i+1].startsWith('--'), 'Missing or repeated monitor option.');
     monitor[key] = resolve(args[++i]);
   }
   const options = parseAgentArgs(filtered);
+  must(purchaseFeeUSDC === undefined || options.command === 'purchase', 'Purchase fee cap is available only for purchase, never repayment or other commands.');
   if (options.command === 'help') return options;
   must(options.command !== 'setup', 'Activate and authenticate mainnet separately; this runner cannot activate or change policies.');
   must(filtered.includes('--state'), 'Specify the original mainnet wallet --state directory. Do not create another journal to bypass a hold.');
   must(options.line && !/^0x0{64}$/.test(options.line), 'Pin the exact nonzero mainnet line, including for doctor.');
   if (options.command === 'recover') must(monitor.sessionPath, 'Recovery requires the original --session-policy path; it does not require a spend-enabled monitor.');
   if (options.command === 'purchase' && options.confirm) must(Object.values(names).every(key => monitor[key]), 'Confirmed mainnet purchase requires all four reviewed monitor and session paths.');
-  return { ...options, monitor };
+  return { ...options, monitor, purchaseFeeUSDC: purchaseFeeUSDC ?? '0.02' };
 }
 export const createMainnetRunnerPurchase = createGuardedMainnetPurchase;
 export async function runGuardedMainnetAgent(options) {
-  if (options.command === 'help') return { help: 'Controlled Arc MAINNET only, chain 5042. doctor|inspect|purchase|recover|repay --agent ADDRESS --line LINE --state ORIGINAL_JOURNAL --runtime ISOLATED_RUNTIME. Only purchase or repay with --confirm can sign or send. Purchase requires --monitor-baseline, --monitor-manifest, --monitor-state and --session-policy. Price 0.005 USDC, reserve 0.10 USDC, fee estimate cap 0.02 USDC per operation. No activation, policy setters, admission, funding, unpause or journal reset. No new mainnet access is granted by installing this runner.' };
+  if (options.command === 'help') return { help: 'Controlled Arc MAINNET only, chain 5042. doctor|inspect|purchase|recover|repay --agent ADDRESS --line LINE --state ORIGINAL_JOURNAL --runtime ISOLATED_RUNTIME. Only purchase or repay with --confirm can sign or send. Purchase requires --monitor-baseline, --monitor-manifest, --monitor-state and --session-policy. Price 0.005 USDC, reserve 0.10 USDC, default fee estimate cap 0.02 USDC per operation. An explicit purchase-only --purchase-fee-cap-usdc may select up to 0.04 USDC; repayment remains capped at 0.02. No activation, policy setters, admission, funding, unpause or journal reset. No new mainnet access is granted by installing this runner.' };
   const { agent, line, command } = options;
   const client = createPublicClient({ chain: guardedMainnetChain, transport: createRpcReadTransport(guardedMainnetChain.rpcUrls.default.http[0],
     { expectedChainId: deployment.chainId, fallbackUrls: guardedMainnetChain.rpcUrls.default.http.slice(1), timeout: 15000,
@@ -73,7 +83,7 @@ export async function runGuardedMainnetAgent(options) {
   must(same(current.agent, agent), 'The funding line belongs to another agent.');
   const summary = snapshot => ({ chainId: deployment.chainId, contract: deployment.address, agent, lineId: line,
     state: snapshot.stateName, debt: snapshot.principalOutstanding.toString(), reserve: snapshot.availableReserve.toString(),
-    drawDigest: snapshot.drawDigest, purchasePrice: '0.005 USDC', provider: service.provider });
+    drawDigest: snapshot.drawDigest, purchasePrice: '0.005 USDC', purchaseFeeCapUSDC: options.purchaseFeeUSDC ?? '0.02', provider: service.provider });
   if (command === 'inspect' || !options.confirm && ['purchase', 'repay'].includes(command)) return { ...summary(current),
     next: 'Nothing signed or sent. Review the exact line and use --confirm only for the intended purchase or repayment.' };
   return journal.withLock(`agent-runner:${agent.toLowerCase()}:${line.toLowerCase()}`, async () => {
@@ -83,7 +93,7 @@ export async function runGuardedMainnetAgent(options) {
       const common = { entrypoint, agent, journal, expectedLineId: line, maxAmount: service.principal };
       const scope = { contract: deployment.address, provider: service.provider, endpointHash: keccak256(stringToHex(service.endpoint)) };
       const config = { chainId: deployment.chainId, agent, ...scope, runtimeHash: deployment.runtimeHash,
-        expectedLineId: line, maxAmount: service.principal, maxNetworkFee: '20000000000000000' };
+        expectedLineId: line, maxAmount: service.principal, maxNetworkFee: command === 'purchase' ? parseUnits(options.purchaseFeeUSDC ?? '0.02', 18).toString() : '20000000000000000' };
       const transport = await createCircleGuardedMainnetPurchaseTransport({ ...common, ...scope, beforeSign: typed => authorizePurchase(typed.message), beforeExecute: request => sessionGuard.reserve(decodeFunctionData({ abi: circleGuardedRepaymentAbi, data: request.callData }).args[0]) });
       const purchaseExecutor = createCircleGuardedMainnetPurchaser({ client, circle: transport, journal, config, authorizePurchase });
       const operations = createGuardedMainnetCircleOperations({ agent, line, state, save, purchaseExecutor, readLine,

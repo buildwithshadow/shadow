@@ -25,11 +25,12 @@ test('mainnet purchase requires all monitor paths; previews and repayment do not
  assert.throws(()=>parseGuardedMainnetArgs(['purchase',...flags,...guardFlags,'--monitor-state','/tmp/other','--confirm']),/repeated/);
  assert.match((await runGuardedMainnetAgent({command:'help'})).help,/MAINNET/);
 });
-test('mainnet purchaser pins chain, deployment, runtime and the original fee ceiling',()=>{
+test('mainnet purchaser pins chain, deployment, runtime and bounded purchase fees',()=>{
  const config={chainId:5042,agent,contract:deployment.address,runtimeHash:deployment.runtimeHash,provider:service.provider,endpointHash:draw,expectedLineId:line,maxAmount:'5000',maxNetworkFee:'20000000000000000'};
  const options={config,authorizePurchase:async()=>{},journal:{get(){},put(){},withLock(){}},client:{},circle:{}};
  assert(createCircleGuardedMainnetPurchaser(options));
- for(const patch of [{chainId:5042002},{contract:agent},{runtimeHash:draw},{maxAmount:'5001'},{maxNetworkFee:'30000000000000000'}])assert.throws(()=>createCircleGuardedMainnetPurchaser({...options,config:{...config,...patch}}));
+ assert(createCircleGuardedMainnetPurchaser({...options,config:{...config,maxNetworkFee:'40000000000000000'}}));
+ for(const patch of [{chainId:5042002},{contract:agent},{runtimeHash:draw},{maxAmount:'5001'},{maxNetworkFee:'40000000000000001'}])assert.throws(()=>createCircleGuardedMainnetPurchaser({...options,config:{...config,...patch}}));
  assert.throws(()=>createCircleGuardedMainnetPurchaser({...options,authorizePurchase:null}),/monitor authorization/);
 });
 function operationsSetup(){
@@ -65,4 +66,17 @@ test('the actual mainnet runner engine constructs on chain5042, while testnet an
  const options={client:{},wallet:{},storage:{getItem:()=>null},config:{chainId:5042,account:agent,contract:deployment.address,runtimeHash:deployment.runtimeHash,...service}};
  assert.equal(createMainnetRunnerPurchase(options).load(),null);
  for(const patch of [{chainId:5042002},{principal:'5001'}])assert.throws(()=>createMainnetRunnerPurchase({...options,config:{...options.config,...patch}}),/Guarded mainnet/);
+});
+
+
+test('mainnet purchase fee defaults stay at 0.02 and higher quotes require an explicit bounded option',()=>{
+ assert.equal(parseGuardedMainnetArgs(['purchase',...flags]).purchaseFeeUSDC,'0.02');
+ for(const value of ['0.01','0.031070143','0.04'])
+  assert.equal(parseGuardedMainnetArgs(['purchase',...flags,'--purchase-fee-cap-usdc',value]).purchaseFeeUSDC,value);
+ for(const value of ['0','-0.01','NaN','Infinity','1e-2','0.040000000000000001','1','0.0000000000000000001'])
+  assert.throws(()=>parseGuardedMainnetArgs(['purchase',...flags,'--purchase-fee-cap-usdc',value]));
+ assert.throws(()=>parseGuardedMainnetArgs(['purchase',...flags,'--purchase-fee-cap-usdc']),/invalid/);
+ assert.throws(()=>parseGuardedMainnetArgs(['purchase',...flags,'--purchase-fee-cap-usdc','0.04','--purchase-fee-cap-usdc','0.04']),/repeated/);
+ for(const command of ['repay','recover','doctor','inspect'])
+  assert.throws(()=>parseGuardedMainnetArgs([command,...flags,'--purchase-fee-cap-usdc','0.04']),/only for purchase/);
 });
