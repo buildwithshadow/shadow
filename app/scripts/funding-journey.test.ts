@@ -157,3 +157,19 @@ test("unavailable storage restores the new wallet defaults and current invitatio
     invitation,
   );
 });
+
+
+import { usesTestnetFundingJourney } from '../src/fundingJourney.ts'
+test('public mainnet keeps real USDC outside the testnet start journey', () => {
+  assert.equal(usesTestnetFundingJourney({chainId:5042,selfRegistration:true},true),false)
+  assert.equal(usesTestnetFundingJourney({chainId:5042002,selfRegistration:true},true),true)
+  assert.equal(usesTestnetFundingJourney({chainId:5042002,selfRegistration:false},true),false)
+  assert.equal(usesTestnetFundingJourney({chainId:5042002,selfRegistration:true},false),false)
+})
+
+import { supportsExistingCircleHandoff } from '../src/fundingJourney.ts'
+test('public mainnet never offers Circle commands pinned to the earlier deployment', () => {
+  assert.equal(supportsExistingCircleHandoff({chainId:5042,selfRegistration:true}),false)
+  assert.equal(supportsExistingCircleHandoff({chainId:5042,selfRegistration:false}),true)
+  assert.equal(supportsExistingCircleHandoff({chainId:5042002,selfRegistration:true}),true)
+})
