@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1200" height="675" viewBox="0 0 1200 675" role="img" aria-labelledby="title desc">
   <title id="title">Shadow</title>
-  <desc id="desc">Let your agent buy services on a budget you set, on Arc testnet with test USDC. The contract pays within the limits and records what is owed.</desc>
+  <desc id="desc">Let your agent buy services on a budget you set, on the guarded Arc mainnet candidate with USDC. The contract pays within the limits and records what is owed.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#07111f"/>
