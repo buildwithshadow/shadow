@@ -44,8 +44,8 @@ export const createMainnetRunnerPurchase = createGuardedMainnetPurchase;
 export async function runGuardedMainnetAgent(options) {
   if (options.command === 'help') return { help: 'Controlled Arc MAINNET only, chain 5042. doctor|inspect|purchase|recover|repay --agent ADDRESS --line LINE --state ORIGINAL_JOURNAL --runtime ISOLATED_RUNTIME. Only purchase or repay with --confirm can sign or send. Purchase requires --monitor-baseline, --monitor-manifest, --monitor-state and --session-policy. Price 0.005 USDC, reserve 0.10 USDC, fee estimate cap 0.02 USDC per operation. No activation, policy setters, admission, funding, unpause or journal reset. No new mainnet access is granted by installing this runner.' };
   const { agent, line, command } = options;
-  const client = createPublicClient({ chain: guardedMainnetChain, transport: createRpcReadTransport('https://rpc.mainnet.arc.io',
-    { expectedChainId: deployment.chainId, fallbackUrls: ['https://rpc.blockdaemon.mainnet.arc.io'], timeout: 15000,
+  const client = createPublicClient({ chain: guardedMainnetChain, transport: createRpcReadTransport(guardedMainnetChain.rpcUrls.default.http[0],
+    { expectedChainId: deployment.chainId, fallbackUrls: guardedMainnetChain.rpcUrls.default.http.slice(1), timeout: 15000,
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3000 } }) });
   const kit = createGuardedMainnetFundingKit(deployment);
   await kit.verifyCandidate(client);
