@@ -48,7 +48,7 @@ export async function recoverAgentPurchase({executor,state,engine,client,save}) 
     delete state.requests.purchase;await save();
     next='The exact purchase was refused on chain without payment and archived. Review the funding limits before preparing another purchase.';
   }
-  if((operations.purchase?.status==='not-submitted' || !state.requests.purchase) && delivery?.status==='unconfirmed') {
+  if((['not-submitted','reverted','failed-user-operation'].includes(operations.purchase?.status) || !state.requests.purchase) && delivery?.status==='unconfirmed') {
     // A provider acceptance failure can happen before an execution request exists.
     // The provider may still have the authorization, so retain it until expiry
     // and let archive verify unpaid state at that exact finalized block.

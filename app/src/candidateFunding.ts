@@ -64,7 +64,10 @@ export interface CandidateDeployment {
   maxReserve: bigint; maxLineSpend: bigint; maxDailySpend: bigint; maxPerSpend: bigint;
   selfRegistration?: boolean; drawBoundRepayment?: boolean;
 }
-export const guardedMainnetChain = defineChain({ id: 5042, name: 'Arc Mainnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.mainnet.arc.io'] } }, blockExplorers: { default: { name: 'Arc explorer', url: 'https://explorer.arc.io' } } })
+// Both published endpoints were verified against older payment receipts.
+// A recent-state RPC returning null for an old receipt cannot establish nonpayment.
+// https://docs.arc.io/arc/references/connect-to-arc
+export const guardedMainnetChain = defineChain({ id: 5042, name: 'Arc Mainnet', nativeCurrency: { name: 'USDC', symbol: 'USDC', decimals: 18 }, rpcUrls: { default: { http: ['https://rpc.quicknode.mainnet.arc.io', 'https://rpc.drpc.mainnet.arc.io'] } }, blockExplorers: { default: { name: 'Arc explorer', url: 'https://explorer.arc.io' } } })
 export function candidateChainFor(deployment: CandidateDeployment) {
   if (deployment.chainId === 5042002) return candidateFundingChain
   if (deployment.chainId === 5042 && deployment.drawBoundRepayment && !deployment.selfRegistration) return guardedMainnetChain

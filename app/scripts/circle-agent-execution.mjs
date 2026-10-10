@@ -1,3 +1,4 @@
+import { readFailedCircleSessionAttempt } from './circle-agent-mainnet-failure.mjs';
 import { randomUUID } from 'node:crypto';
 import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, formatUnits, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
@@ -5,6 +6,7 @@ import legacyAbi from './float-mainnet-abi.json' with { type: 'json' };
 
 const TESTNET = 5042002;
 export const GUARDED_TESTNET_PURCHASE_FEE_CAP = '50000000000000000'; // 0.05 test USDC, purchase execution only.
+export const GUARDED_TESTNET_REPAYMENT_FEE_CAP = '30000000000000000'; // 0.03 test USDC, guarded testnet repayment actions only.
 export const circleGuardedRepaymentAbi = [...legacyAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...parseAbi([
   'function repayForDraw(bytes32 lineId,bytes32 expectedDraw,uint256 amount)',
   'function currentDrawDigest(bytes32 lineId) view returns (bytes32)',
@@ -49,14 +51,27 @@ export function createCircleGuardedTestnetPurchaser(options) {
   return createExecutor(options, false, TESTNET, true);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false) {
+/** Separate mainnet purchase boundary. The operator supplies the reviewed monitor guard.
+ * Recovery of a saved transaction does not require an unpaused purchase phase.
+ */
+export function createCircleGuardedMainnetPurchaser(options) {
+  requireThat(options.config.chainId === 5042, 'Only Arc mainnet guarded purchases are enabled.');
+  requireThat(same(options.config.contract, '0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB')
+    && same(options.config.runtimeHash, '0x845c0c3e47bbcf75004e5d47a6788585d57026ce70c08593d112966a6245b4ef'), 'Pin the reviewed guarded mainnet deployment.');
+  requireThat(typeof options.authorizePurchase === 'function', 'A mainnet monitor authorization guard is required.');
+  return createExecutor(options, false, 5042, true, options.authorizePurchase);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;
   const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
   const abi = guarded || purchaseOnly ? circleGuardedRepaymentAbi : legacyAbi;
   const agent = getAddress(config.agent), contract = getAddress(config.contract);
   const cap = BigInt(config.maxAmount), feeCap = BigInt(config.maxNetworkFee);
-  const maximumFee = purchaseOnly && CHAIN === TESTNET ? BigInt(GUARDED_TESTNET_PURCHASE_FEE_CAP) : parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18);
+  const maximumFee = CHAIN === TESTNET && purchaseOnly ? BigInt(GUARDED_TESTNET_PURCHASE_FEE_CAP)
+    : CHAIN === TESTNET && guarded ? BigInt(GUARDED_TESTNET_REPAYMENT_FEE_CAP)
+    : parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18);
   requireThat(cap > 0n && cap <= (purchaseOnly ? 5_000n : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= maximumFee, 'Invalid bounded execution limits.');
   if (guarded) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && /^0x[0-9a-fA-F]{64}$/.test(config.expectedDraw) && !/^0x0{64}$/.test(config.expectedDraw), 'Pin the exact line and nonzero reviewed draw.');
   if (purchaseOnly) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && !/^0x0{64}$/.test(config.expectedLineId), 'Pin the exact nonzero purchase line.');
@@ -121,6 +136,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const status = await client.readContract({ address: contract, abi, functionName: 'receiptStatus', args: [decoded.digest] });
       requireThat(Number(status) === 0, 'Purchase already has an onchain receipt; recover it.');
     }
+    if (authorizePurchase) await authorizePurchase(decoded.args[0]);
     const simulation = await client.simulateContract({ address: decoded.to, abi: decoded.callAbi, functionName: decoded.functionName, args: decoded.args, account: agent });
     if (decoded.functionName === 'executeSpend') requireThat(simulation.result?.[0] === true, 'Shadow policy refused the purchase.');
     const block = await client.getBlock();
@@ -156,6 +172,18 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     requireThat(/^0x[0-9a-fA-F]{64}$/.test(txHash), 'Invalid transaction hash.');
     const receipt = await client.getTransactionReceipt({ hash: txHash });
     requireThat(receipt.blockNumber >= BigInt(record.expected.fromBlock), 'Receipt predates the request.');
+    if (purchaseOnly && CHAIN === 5042) {
+      const hasFailure = receipt.status === 'reverted' || receipt.logs.some(log => {
+        if (!same(log.address, entryPoint07Address)) return false;
+        try { const e=decodeEventLog({abi:entryPoint07Abi,data:log.data,topics:log.topics}); return e.eventName==='UserOperationEvent' && e.args.success===false; } catch { return false; }
+      });
+      if (hasFailure) {
+        const decoded=decode({to:record.request.contractAddress,data:record.request.callData,value:record.request.amount});
+        const failed=await readFailedCircleSessionAttempt({client,chainId:5042n,address:contract},
+          {message:decoded.args[0],digest:record.expected.digest,txHash},receipt);
+        if(failed)return {status:failed,txHash,blockHash:receipt.blockHash,blockNumber:receipt.blockNumber.toString()};
+      }
+    }
     requireThat(receipt.status === 'success', 'Transaction reverted.');
     const [finalized, canonical, transaction] = await Promise.all([
       client.getBlock({ blockTag: 'finalized' }),

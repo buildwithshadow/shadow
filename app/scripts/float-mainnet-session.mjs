@@ -2,6 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { closeSync, fsyncSync, lstatSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { getAddress, hashTypedData, isAddress, keccak256, zeroAddress } from "viem";
+import { readFailedCircleSessionAttempt } from './circle-agent-mainnet-failure.mjs';
 import { SPEND_INTENT_TYPES, eip712Domain, floatAbi } from "./float-mainnet-config.mjs";
 
 // A single executor's local policy, not a global Solidity spending restriction.
@@ -116,9 +117,9 @@ function loadLedger(policy) {
     }
     assertSessionIntent(policy, { chainId: BigInt(policy.chainId), address: policy.verifyingContract }, struct);
     const digest = hashTypedData({ domain: eip712Domain(policy.chainId, policy.verifyingContract), types: SPEND_INTENT_TYPES, primaryType: "SpendIntent", message: struct });
-    if (entry.digest !== digest || digests.has(digest) || !["pending", "paid", "blocked", "reverted"].includes(entry.status)) fail("corrupt or duplicate ledger digest/status");
+    if (entry.digest !== digest || digests.has(digest) || !["pending", "paid", "blocked", "reverted", "failed-user-operation"].includes(entry.status)) fail("corrupt or duplicate ledger digest/status");
     if (entry.txHash !== null) bytes32(entry.txHash, "transaction hash");
-    if (entry.status === "reverted" && entry.txHash === null) fail("reverted ledger entry has no transaction hash");
+    if (["reverted", "failed-user-operation"].includes(entry.status) && entry.txHash === null) fail("reverted ledger entry has no transaction hash");
     digests.add(digest);
   }
   if (ledger.entries.reduce((total, entry) => total + BigInt(entry.message.principal), 0n) > BigInt(policy.maxGrossPrincipal)) fail("ledger exceeds its gross budget");
@@ -177,6 +178,17 @@ export async function withExecutionSession(path, connection, callback) {
             status = "reverted";
           }
         }
+        if (receiptStatus === 0 && entry.txHash !== null && entry.message.agent === entry.message.executor) {
+          const receipt = await connection.client.getTransactionReceipt({ hash: entry.txHash }).catch(error => {
+            if (error.name === "TransactionReceiptNotFoundError") return null;
+            throw error;
+          });
+          if (receipt && receipt.blockNumber <= block.number) {
+            const failed = await readFailedCircleSessionAttempt(connection, entry, receipt);
+            if (failed) status = failed;
+          }
+        }
+        if (entry.status === "failed-user-operation" && status !== "failed-user-operation") fail(`previous failed Circle operation for ${entry.digest} changed; hold and reconcile chain history`);
         if (entry.status === "reverted" && status !== "reverted") fail(`previous reverted transaction for ${entry.digest} is no longer canonical (observed ${status}); hold and reconcile chain history`);
         updated.push({ ...entry, status });
       }
@@ -208,6 +220,16 @@ export async function withExecutionSession(path, connection, callback) {
         const message = Object.fromEntries(SPEND_INTENT_TYPES.SpendIntent.map(({ name }) => [name, typeof struct[name] === "bigint" ? struct[name].toString() : struct[name]]));
         entries = [...entries, { digest, message, status: "pending", txHash: null }];
         saveLedger(policy, entries);
+      },
+      attachTransactionHash(digest, txHash) {
+        bytes32(txHash, "transaction hash");
+        const entry = entries.find((entry) => entry.digest === digest);
+        if (!entry) fail("original session reservation is missing");
+        if (entry.txHash !== null && entry.txHash !== txHash.toLowerCase()) fail("original session transaction hash changed");
+        if (entry.txHash === null) {
+          entries = entries.map((e) => e === entry ? { ...e, txHash: txHash.toLowerCase() } : e);
+          saveLedger(policy, entries);
+        }
       },
       beforeSend(digest, txHash) {
         bytes32(txHash, "transaction hash");

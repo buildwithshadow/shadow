@@ -126,3 +126,19 @@ test("explicit requested range errors shrink but nested quotas still take preced
   await assert.rejects(findLogs(quota.connection,"ProviderPaid",args,0n,5n),/log scan incomplete/);
   assert.equal(quota.requests.length,1);
 });
+
+
+test("dRPC explicit unsupported block ranges shrink with complete coverage", async () => {
+  const scan=scanner({fail:(from,to)=>to-from>=3n
+    ? limitError('ranges over 10000 blocks are not supported on free plan') : null});
+  assert.deepEqual(await findLogs(scan.connection,"ProviderPaid",args,0n,5n),[]);
+  assert.deepEqual(scan.successful,[[0n,2n],[3n,5n]]);
+});
+
+test("dRPC range wording never overrides a nested quota failure", async () => {
+  const scan=scanner({fail:()=>Object.assign(
+    limitError('ranges over 10000 blocks are not supported on free plan'),
+    {cause:new Error('rate limit exceeded')})});
+  await assert.rejects(findLogs(scan.connection,"ProviderPaid",args,0n,5n),/log scan incomplete/);
+  assert.equal(scan.requests.length,1);
+});

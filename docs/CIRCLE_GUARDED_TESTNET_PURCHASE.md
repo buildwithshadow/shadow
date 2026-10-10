@@ -20,7 +20,9 @@ require the exact agent, provider, endpoint hash, nonzero `expectedLineId`, and
 cannot exceed `5000` six decimal units, or 0.005 test USDC.
 
 The executor also requires `config.chainId: 5042002` and `maxNetworkFee` in
-18 decimal native gas units, capped at `20000000000000000`, or 0.02 test USDC.
+18 decimal native gas units, capped at `50000000000000000`, or 0.05 test USDC.
+Lower configured limits still apply. This checks an estimate and does not guarantee
+the actual network fee. Guarded repayment uses its own separate limit.
 It checks the deployment, repayment binding version 2, line owner, open state,
 zero debt and simulated purchase policy before submission. It repeats the
 policy checks after estimating the fee. The agent must already be activated.

@@ -21,6 +21,11 @@ on:
       - "app/historicalReads.d.ts"
       - "app/historicalReads.js"
       - "app/arcTestnetNetwork.*"
+      - "app/src/walletNetwork.ts"
+      - "app/src/FundingJourneyLayout.tsx"
+      - "app/src/fundingJourney.*"
+      - "app/scripts/funding-journey.test.ts"
+      - "app/scripts/wallet-network.test.ts"
       - "app/guardedTestnetDeployment.mjs"
       - "app/scripts/arc-testnet-network.test.mjs"
       - "agent/src/**"
@@ -44,6 +49,7 @@ on:
       - "ops/public-testnet-observer/**"
       - "app/scripts/shadow-circle-agent.mjs"
       - "app/scripts/shadow-circle-guarded-testnet.mjs"
+      - "app/scripts/shadow-circle-guarded-mainnet.mjs"
       - "app/src/savedTransactionLookup.ts"
       - "app/src/lineRefresh.ts"
       - "app/scripts/line-refresh.test.ts"
@@ -76,6 +82,7 @@ on:
       - "app/scripts/treasury-verify-live.mjs"
       - "app/scripts/treasury-verify-live.test.mjs"
       - "app/scripts/float-mainnet-*"
+      - "app/scripts/guarded-testnet-monitor-alerts*"
       - "app/scripts/rpc-read-queue*"
       - "app/scripts/rpc-read-transport*"
       - "examples/float-mainnet-provider-server/**"
@@ -165,7 +172,9 @@ jobs:
         working-directory: app
         run: pnpm install --frozen-lockfile --ignore-workspace
       - name: Test operational alert semantics
-        run: npm run float:v2-ops:test
+        run: |
+          npm run float:v2-ops:test
+          node --test --test-concurrency=1 app/scripts/float-mainnet-monitor-alerts.test.mjs app/scripts/guarded-testnet-monitor-alerts.test.mjs
       - name: Test Lepton readiness and historical proof fallback
         run: npm run lepton:readiness:test
       - name: Test historical explorer retries, deadlines and empty histories
@@ -175,7 +184,7 @@ jobs:
       - name: Test domain migration and mandate identity compatibility
         run: node --test app/scripts/shadow-url-migration.test.mjs
       - name: Test public Arc testnet wallet settings and RPC repair guidance
-        run: node --test app/scripts/arc-testnet-network.test.mjs
+        run: node --test app/scripts/arc-testnet-network.test.mjs app/scripts/wallet-network.test.ts app/scripts/funding-journey.test.ts
       - name: Install agent dependencies
         working-directory: agent
         run: pnpm install --frozen-lockfile --ignore-workspace

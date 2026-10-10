@@ -109,7 +109,7 @@ State defaults to `~/.local/share/shadow/agent-testnet`. Keep it private: purcha
 
 ## Guarded testnet fee limits
 
-The separate `app/scripts/shadow-circle-guarded-testnet.mjs` engineering runner uses the guarded deployment and a 0.005 test USDC purchase. It permits a network fee estimate up to 0.05 test USDC for that purchase. Its repayment allowance and repayment each retain the 0.02 test USDC estimate ceiling. These checks do not guarantee actual network fees. A quote above the configured ceiling is rejected before transaction submission and reports both the quote and the limit. Reconcile that original attempt through `recover` before preparing another purchase. Mainnet repayment limits and the public testnet runner described above are unchanged.
+The separate `app/scripts/shadow-circle-guarded-testnet.mjs` engineering runner uses the guarded deployment and a 0.005 test USDC purchase. It permits a network fee estimate up to 0.05 test USDC for that purchase. Its repayment allowance and repayment each permit estimates up to 0.03 test USDC. These checks do not guarantee actual network fees. A quote above the configured ceiling is rejected before transaction submission and reports both the quote and the limit. Reconcile the original attempt through `recover`; an unknown result must never be retried as a new transaction. The repayment command also reconciles previous operations before attempting the same reviewed debt. Mainnet repayment retains its 0.02 USDC estimate ceiling, and the public testnet runner described above is unchanged.
 
 ## Circle CLI compatibility
 
