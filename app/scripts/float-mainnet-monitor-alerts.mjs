@@ -5,7 +5,7 @@ import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
 import { heartbeatStatus, loadContext } from './float-mainnet-monitor-runner.mjs';
-import { digestJson, evaluateSnapshot } from './float-mainnet-monitor-policy.mjs';
+import { digestJson, evaluateSnapshot } from './float-mainnet-monitor-public-policy.mjs';
 import { isEntrypoint } from './float-mainnet-preflight.mjs';
 import { sendTelegram } from './public-testnet-observer-alerts.mjs';
 import { GUARDED_TESTNET } from '../guardedTestnetDeployment.mjs';
