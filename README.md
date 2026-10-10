@@ -31,7 +31,7 @@ contract described above or the earlier candidate below. See the
 
 ## Guarded mainnet deployment
 
-`ShadowFloatMainnet` ([`contracts/src/ShadowFloatMainnet.sol`](contracts/src/ShadowFloatMainnet.sol)) is a separate generation from V2. The guarded replacement is deployed on **Arc mainnet**, chain `5042`, at [`0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB`](https://explorer.arc.io/address/0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB). Its owner is the sponsor's Safe; a separate account has pause authority. The guarded contract binds repayment to the reviewed draw so a delayed repayment cannot silently settle a newer purchase.
+`ShadowFloatMainnetGuarded` ([`contracts/src/ShadowFloatMainnetGuarded.sol`](contracts/src/ShadowFloatMainnetGuarded.sol)) is a separate generation from V2. The guarded replacement is deployed on **Arc mainnet**, chain `5042`, at [`0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB`](https://explorer.arc.io/address/0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB). Its owner is the sponsor's Safe; a separate account has pause authority. The guarded contract binds repayment to the reviewed draw so a delayed repayment cannot silently settle a newer purchase.
 
 A founder operated mainnet rehearsal completed a 0.10 USDC reserve, one 0.005 USDC provider payment, report recovery, Circle agent repayment and full reserve reclaim. As checked on 10 October 2026, both openings and purchases are paused, with the completed line closed and no outstanding debt or reserve. This is engineering evidence, not independent customer adoption or a public funded mainnet launch. A qualified independent human security review remains pending.
 
