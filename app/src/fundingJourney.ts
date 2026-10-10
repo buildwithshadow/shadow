@@ -175,3 +175,8 @@ export function restoreWalletDraft(
 export function usesTestnetFundingJourney(deployment: { chainId: number; selfRegistration?: boolean }, hasService: boolean): boolean {
   return hasService && deployment.chainId === 5042002 && deployment.selfRegistration === true
 }
+
+// Existing Circle CLI profiles are pinned to their published deployments.
+export function supportsExistingCircleHandoff(deployment: { chainId: number; selfRegistration?: boolean }): boolean {
+  return deployment.chainId === 5042002 || deployment.chainId === 5042 && deployment.selfRegistration !== true
+}

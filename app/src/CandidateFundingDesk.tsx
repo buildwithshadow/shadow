@@ -2,7 +2,7 @@ import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
-import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, type FundingStep } from "./fundingJourney";
+import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, supportsExistingCircleHandoff, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
@@ -817,6 +817,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </form>
       {lineLoading && <p role="status">Loading the line from your link…</p>}
       {lineDiscoveryResults}
+      {mainnet && deployment.selfRegistration && service && <p className="fundingScope">Use the connected agent browser wallet to buy a service. Circle CLI handoff is not enabled for this deployment.</p>}
       {mainnet && role === "agent" && account && !lineId.trim() && <p className="agentLineDiscovery" role="status">Enter a funding line ID on this route to load a mainnet line.</p>}
       {line && <div className="fundingLine">
         <div className="fundingPanelHead"><h3 id="funding-loaded-line-heading" tabIndex={-1}>{line.stateName === "DRAWN" ? "Purchase awaiting repayment" : line.stateName === "OPEN" ? "Line open" : line.stateName === "CLOSED" ? "Line closed" : "Line defaulted"}</h3>
@@ -852,7 +853,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
             <div><dt>Line daily limit</dt><dd>{usdc(line.dailySpendCap)} USDC</dd></div><div><dt>Line epoch</dt><dd>{line.epoch.toString()}</dd></div></dl>
           <p>{service ? "The agent buys the service below, signing with its own wallet; this line pays the price. This section manages funding, repayment and reclaim." : <>The agent signs a purchase and an executor submits it using the <a href="https://github.com/buildwithshadow/shadow/blob/main/docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md" target="_blank" rel="noreferrer">candidate participant tools</a>. This page manages funding, repayment and reclaim.</>}</p>
         </details>
-        {service && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} lineState={line.stateName} debt={line.principalOutstanding} spendingAvailable={line.stateName === "OPEN" && line.principalOutstanding === 0n && line.sponsorAllowed && !line.spendsPaused && line.observedTimestamp < line.expiry && line.availableReserve >= BigInt(service.principal) && line.lineSpendCap - line.cumulativePrincipalPaid >= BigInt(service.principal)} route={mainnet ? 'guarded-mainnet' : guardedTestnet ? 'guarded-testnet' : 'public-testnet'} />}
+        {service && supportsExistingCircleHandoff(deployment) && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} lineState={line.stateName} debt={line.principalOutstanding} spendingAvailable={line.stateName === "OPEN" && line.principalOutstanding === 0n && line.sponsorAllowed && !line.spendsPaused && line.observedTimestamp < line.expiry && line.availableReserve >= BigInt(service.principal) && line.lineSpendCap - line.cumulativePrincipalPaid >= BigInt(service.principal)} route={mainnet ? 'guarded-mainnet' : guardedTestnet ? 'guarded-testnet' : 'public-testnet'} />}
       </div>}
     </section>;
   const purchasePanel = service && <div className="fundingSlot" ref={purchaseSlot} hidden={guided ? journeyStep !== 'purchase' : role === "sponsor"}><PublicPurchase active={!guided || journeyStep === 'purchase'} account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
