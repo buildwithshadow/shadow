@@ -2,7 +2,7 @@
 
 This runner uses the existing guarded Shadow deployment on Arc mainnet, chain 5042. Installing it does not admit sponsors, fund lines, activate wallets, change Circle policies, grant independent participant access or unpause the contract.
 
-Its service costs exactly 0.005 USDC. The browser funding configuration limits each line to a 0.10 USDC reserve and 0.005 USDC cumulative purchases. Each Circle execution estimate must remain within 0.02 USDC. This is an estimate ceiling, not a guarantee of the final gas charge. Repayment requires the agent's own USDC plus gas; the line reserve cannot repay itself.
+Its service costs exactly 0.005 USDC. The browser funding configuration limits each line to a 0.10 USDC reserve and 0.005 USDC cumulative purchases. Each Circle execution estimate defaults to a 0.02 USDC ceiling. An operator can explicitly select a purchase estimate ceiling up to 0.04 USDC with `--purchase-fee-cap-usdc`; this option cannot change repayment limits, principal, wallet policy or the execution session budget. This is an estimate ceiling, not a guarantee of the final gas charge. Repayment requires the agent's own USDC plus gas; the line reserve cannot repay itself.
 
 Use the reviewed isolated Circle runtime and the original mainnet journal for this wallet. Authenticate privately with Circle's mainnet login. Never create a new journal to escape an unresolved operation. The runner requires an explicit state path and cannot log in, activate a wallet, reset a journal or modify policies.
 
@@ -26,6 +26,8 @@ node app/scripts/shadow-circle-guarded-mainnet.mjs purchase \
   --monitor-state CURRENT_OBSERVER_STATE \
   --session-policy APPROVED_SESSION_JSON --confirm
 ```
+
+Only after reviewing the current quote and available gas balance, add `--purchase-fee-cap-usdc 0.04` to the purchase command if the default ceiling is insufficient. A lower explicit value is also accepted. Repayment still uses its separate 0.02 USDC ceiling. The runner never raises a cap automatically after a rejected quote and never treats an estimate as the final bill.
 
 The policy and monitor baseline must identify this exact chain, deployment, sponsor, line epoch, agent, provider, endpoint and Circle wallet as the named purchase executor. An older baseline naming an EOA executor cannot authorize this flow. Prepare the correct observer phase through the existing reviewed operating procedure. Do not edit snapshots, remove incident holds or weaken freshness checks to make a purchase pass.
 
