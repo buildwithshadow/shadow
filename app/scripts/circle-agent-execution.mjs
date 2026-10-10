@@ -5,6 +5,7 @@ import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
 import legacyAbi from './float-mainnet-abi.json' with { type: 'json' };
 
 const TESTNET = 5042002;
+export const GUARDED_MAINNET_PURCHASE_FEE_CAP = '40000000000000000'; // 0.04 USDC ceiling, only when explicitly configured.
 export const GUARDED_TESTNET_PURCHASE_FEE_CAP = '50000000000000000'; // 0.05 test USDC, purchase execution only.
 export const GUARDED_TESTNET_REPAYMENT_FEE_CAP = '30000000000000000'; // 0.03 test USDC, guarded testnet repayment actions only.
 export const circleGuardedRepaymentAbi = [...legacyAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...parseAbi([
@@ -71,6 +72,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
   const cap = BigInt(config.maxAmount), feeCap = BigInt(config.maxNetworkFee);
   const maximumFee = CHAIN === TESTNET && purchaseOnly ? BigInt(GUARDED_TESTNET_PURCHASE_FEE_CAP)
     : CHAIN === TESTNET && guarded ? BigInt(GUARDED_TESTNET_REPAYMENT_FEE_CAP)
+    : CHAIN === 5042 && purchaseOnly ? BigInt(GUARDED_MAINNET_PURCHASE_FEE_CAP)
     : parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18);
   requireThat(cap > 0n && cap <= (purchaseOnly ? 5_000n : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= maximumFee, 'Invalid bounded execution limits.');
   if (guarded) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && /^0x[0-9a-fA-F]{64}$/.test(config.expectedDraw) && !/^0x0{64}$/.test(config.expectedDraw), 'Pin the exact line and nonzero reviewed draw.');
@@ -277,6 +279,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       }
       const active = await journal.get(activeKey);
       requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
+      requireThat(!active || existing, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
       const activation = await journal.get(`${namespace}:activation`);
       if (activation) {
         requireThat(activation.version === 1 && activation.chainId === CHAIN && activation.agent === agent
@@ -288,12 +291,20 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       }
       const expected = await prepare(request);
       const payload = envelope(request, randomUUID());
-      const estimate = await circle.estimate(payload);
-      requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
-      requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, `Estimated fee exceeds execution budget. Quote: ${estimate.networkFee} USDC; cap: ${formatUnits(feeCap, 18)} USDC.`);
-      // Refresh policy after the remote estimate. No spend request if conditions changed.
-      await prepare(request);
       const record = { version: 1, namespace, operationId: request.operationId, request: payload, requestHash: hash(payload), expected, createdAt: new Date().toISOString() };
+      try {
+        // Estimate is read only. Preserve definite pre-send failures with the
+        // exact original request so runner recovery never relies on absence.
+        const estimate = await circle.estimate(payload);
+        requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
+        requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, `Estimated fee exceeds execution budget. Quote: ${estimate.networkFee} USDC; cap: ${formatUnits(feeCap, 18)} USDC.`);
+        // Refresh policy after the remote estimate. No spend request if conditions changed.
+        await prepare(request);
+      } catch (error) {
+        record.notSubmitted = true;
+        await journal.put(key, record);
+        throw error;
+      }
       // Save the barrier first. A crash between these two writes fails closed.
       await journal.put(activeKey, key);
       await journal.put(key, record); // A crash/timeout from here never permits automatic resubmission.

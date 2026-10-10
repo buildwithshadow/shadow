@@ -165,6 +165,8 @@ test('a partial durable barrier cannot be classified as an unsent operation',asy
   options.journal.put=async(k,v)=>{if(v?.request)throw new Error('disk failure');return put(k,v);};
   await assert.rejects(()=>adapter.execute(repay),/disk failure/);
   await assert.rejects(()=>adapter.reconcile(adapter.operationKey(repay)),/barrier exists/);
+  options.journal.put=put;
+  await assert.rejects(()=>adapter.execute(repay),/barrier exists/);
   assert.equal(state.sends,0);
 });
 
@@ -253,12 +255,12 @@ test('guarded testnet repayment accepts the observed fee and exact 0.03 ceiling 
   }
 });
 
-test('guarded testnet repayment respects lower configured limits and rejects excess fees before journaling',async()=>{
+test('guarded testnet repayment respects lower configured limits and preserves exact unsent records when excess fees are rejected',async()=>{
   for(const [cap,fee] of [['0.02','0.020700798075'],['0.03','0.030000000000000001']]) {
     const x=setup({config:{...testnetConfig,maxNetworkFee:parseUnits(cap,18).toString()}},createCircleGuardedTestnetRepayer);
     x.state.fee=fee;
     await assert.rejects(()=>x.adapter.execute(repay),error=>error.message.includes(`Quote: ${fee} USDC; cap: ${cap} USDC`));
-    assert.equal(x.state.sends,0);assert.equal(x.values.size,0);
+    assert.equal(x.state.sends,0);assert.equal(x.values.size,1);
     assert.equal((await x.adapter.reconcile(x.adapter.operationKey(repay))).status,'not-submitted');
   }
   assert.throws(()=>setup({config:{...config,maxNetworkFee:parseUnits('0.03',18).toString()}}),/Invalid bounded execution limits/);
@@ -357,7 +359,7 @@ test('guarded purchase still honors a lower configured fee and refuses an excess
   for (const [cap,fee] of [['0.02','0.0430571714625'],['0.05','0.050000000000000001']]) {
     const x=setupPurchase({maxNetworkFee:parseUnits(cap,18).toString()});x.state.fee=fee;
     await assert.rejects(()=>x.adapter.execute(purchaseRequest),error=>error.message.includes(`Quote: ${fee} USDC; cap: ${cap} USDC`));
-    assert.equal(x.state.sends,0);assert.equal(x.values.size,0);
+    assert.equal(x.state.sends,0);assert.equal(x.values.size,1);
   }
 });
 test('the purchase fee ceiling does not extend either guarded repayment adapter',()=>{
@@ -400,4 +402,26 @@ test('guarded purchase completion cannot borrow a different digest or a neighbor
   const before=eventLog('BeforeExecution',{},entryPoint07Address,entryPoint07Abi);
   x.state.bundleLogs=[before,eventLog('ProviderPaid',{digest,lineId,provider,principal:5000n,dueAt:1000n}),x.state.boundary(endpointHash,true),x.state.boundary(digest,true)];
   await assert.rejects(()=>x.adapter.reconcile(held.key),/exact requested operation/);assert.equal(x.state.sends,1);
+});
+
+
+test('fee rejection leaves a durable exact unsent record across adapter recreation',async()=>{
+ const x=setup();x.state.fee='0.031070143';
+ await assert.rejects(()=>x.adapter.execute(repay),/Estimated fee/);
+ const key=x.adapter.operationKey(repay),saved=await x.options.journal.get(key);
+ assert(saved,'Fee rejection must preserve an exact original execution record');
+ assert.equal(saved.notSubmitted,true);assert.equal(saved.request.callData,repay.data);
+ assert.equal(saved.expected.operation,'repayForDraw');assert.equal(saved.txHash,undefined);
+ const restored=createCircleGuardedRepayer(x.options);
+ assert.equal((await restored.reconcile(key)).status,'not-submitted');
+ assert.equal(x.state.sends,0);assert.equal(x.state.reads,0);
+});
+
+
+test('read-only quote failure is retained while transport uncertainty stays unresolved',async()=>{
+ const x=setup();x.options.circle.estimate=async()=>{throw Error('quote unavailable')};
+ await assert.rejects(()=>x.adapter.execute(repay),/quote unavailable/);
+ const key=x.adapter.operationKey(repay);assert.equal((await x.options.journal.get(key)).notSubmitted,true);
+ assert.equal((await createCircleGuardedRepayer(x.options).reconcile(key)).status,'not-submitted');
+ assert.equal(x.state.sends,0);
 });
