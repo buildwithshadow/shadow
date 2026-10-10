@@ -63,8 +63,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const explorer = chain.blockExplorers.default.url;
   const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay,
     readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => (mainnet ? createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment), [deployment, mainnet]);
-  const client = useMemo(() => mainnet ? createPublicClient({ chain, transport: createRpcReadTransport('https://rpc.mainnet.arc.io', {
-    timeout: 15_000, fallbackUrls: ['https://rpc.blockdaemon.mainnet.arc.io'], expectedChainId: 5042,
+  const client = useMemo(() => mainnet ? createPublicClient({ chain, transport: createRpcReadTransport(chain.rpcUrls.default.http[0], {
+    timeout: 15_000, fallbackUrls: chain.rpcUrls.default.http.slice(1), expectedChainId: 5042,
     queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
   }) }) : guardedTestnet ? createPublicClient({ chain, transport: createRpcReadTransport('https://rpc.quicknode.testnet.arc.io', {
     timeout: 15_000, fallbackUrls: ['https://rpc.drpc.testnet.arc.io', ARC_TESTNET_RPC_URL], expectedChainId: deployment.chainId,
