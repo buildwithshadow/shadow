@@ -132,6 +132,28 @@ test('wallet approval progress is reported only after successful preflight check
   assert.equal(f.state.sends,1);
 })
 
+test('presentation exceptions cannot turn a confirmed send into an unknown transaction', async () => {
+  const f = fixture();
+  const prepared = await prepareCandidateOpen(f.client,sponsor,input);
+  f.mined(prepared);
+  let calls = 0;
+  const result = await executeCandidateCall({...f.session,onProgress:()=>{calls++;throw new Error('render failed');}},prepared);
+  assert.equal(result.status,'confirmed');
+  assert.equal(f.state.sends,1);
+  assert.equal(f.journal.load(),null);
+  assert.equal(calls,4);
+})
+
+test('presentation exceptions preserve a genuinely ambiguous send and its recovery journal', async () => {
+  const f = fixture();
+  const prepared = await prepareCandidateOpen(f.client,sponsor,input);
+  f.state.onSend=()=>{throw new Error('lost send response');};
+  const result = await executeCandidateCall({...f.session,onProgress:()=>{throw new Error('render failed');}},prepared);
+  assert.equal(result.status,'unknown');
+  assert.equal(f.state.sends,1);
+  assert.equal(f.journal.load()?.status,'unknown');
+})
+
 test('identity read failure queues no later reads and a fresh retry succeeds', async () => {
   const f = fixture()
   f.state.failRead = 'VERSION_HASH'
