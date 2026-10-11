@@ -19,10 +19,13 @@ function fixture(status=2n) {
   const digest = `0x${(++counter).toString(16).padStart(64,'0')}`;
   let saved: any = {stage:'submitted',requestId:`report:${counter}`,txHash:null,intent:{digest,typedData:{message:{lineId:`0x${'55'.repeat(32)}`,agent:account,sponsor:account,provider:service.provider,principal:'50000',maximumTotalDebt:'50000',dueAt:'2000000000',signatureExpiry:'2000000000'}}}};
   const delivered = () => {saved={...saved,stage:'delivered'};return {record:saved,status:'delivered' as const,bytes:new TextEncoder().encode(`original report ${counter}`)};};
-  const engine={load:()=>saved,recover:vi.fn<()=>Promise<RecoveryResult>>(async()=>delivered()),prepare:vi.fn(),submit:vi.fn(),archive:vi.fn()};
+  const archived: any[] = [];
+  const engine={load:()=>saved,recover:vi.fn<()=>Promise<RecoveryResult>>(async()=>delivered()),prepare:vi.fn(),submit:vi.fn(),
+    archive:vi.fn(async()=>{archived.push(saved);saved=null;}),listArchived:()=>archived,
+    recoverArchived:vi.fn(async(digest:string)=>({record:archived.find(item=>item.intent.digest===digest),status:'delivered',bytes:new TextEncoder().encode('retained report')}))};
   h.engines.set(account,engine);
   const client: any = {readContract:vi.fn(async()=>status)};
-  return {engine,client,digest,delivered};
+  return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
 function Host({client}: {client:any}) {
   const [busy,setBusy]=useState('');
@@ -115,4 +118,24 @@ test('a wrapped RPC outage resumes the original report without a wallet request'
   f.engine.recover.mockRejectedValueOnce(new BaseError('Contract function execution failed.',{cause:rpc}));
   render(<Host client={f.client}/>);await act(async()=>{await vi.advanceTimersByTimeAsync(10000);});
   expect(screen.getByText(text)).toBeTruthy();expect(f.engine.recover).toHaveBeenCalledTimes(2);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+test('archiving retains a reachable report while opening history leaves the active purchase empty',async()=>{
+  const f=fixture(),text=`original report ${counter}`;render(<Host client={f.client}/>);await screen.findByText(text);
+  fireEvent.click(screen.getByRole('button',{name:'Archive completed report'}));
+  const open=await screen.findByRole('button',{name:/Open report/});expect(screen.queryByText(text)).toBeNull();
+  fireEvent.click(open);await screen.findByText('retained report');expect(f.engine.load()).toBeNull();
+  expect(f.engine.recoverArchived).toHaveBeenCalledWith(f.digest);expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
+});
+test('an archived read settling after unmount wakes recovery of the new active journal',async()=>{
+  const f=fixture(),text=`original report ${counter}`;const older={...f.engine.load(),stage:'delivered',intent:{...f.engine.load().intent,digest:`0x${'77'.repeat(32)}`}};
+  f.archived.push(older);let settle!: (value:any)=>void;
+  f.engine.recoverArchived.mockImplementation(()=>new Promise(resolve=>{settle=resolve;}));
+  render(<Host client={f.client}/>);await screen.findByText(text);fireEvent.click(screen.getByRole('button',{name:/Open report/}));
+  await waitFor(()=>expect(f.engine.recoverArchived).toHaveBeenCalledTimes(1));
+  fireEvent.click(screen.getByText('Leave funding'));
+  const next={...f.engine.load(),stage:'submitted',requestId:'second-purchase',intent:{...f.engine.load().intent,digest:`0x${'88'.repeat(32)}`}};f.replaceSaved(next);
+  fireEvent.click(screen.getByText('Return to purchase'));expect(f.engine.recover).toHaveBeenCalledTimes(1);
+  await act(async()=>{settle({record:older,status:'delivered',bytes:new TextEncoder().encode('old historical report')});});
+  await waitFor(()=>expect(f.engine.recover).toHaveBeenCalledTimes(2));await screen.findByText(text);
+  expect(screen.queryByText('old historical report')).toBeNull();expect(f.engine.load().intent.digest).toBe(next.intent.digest);expect(f.engine.submit).not.toHaveBeenCalled();
 });
