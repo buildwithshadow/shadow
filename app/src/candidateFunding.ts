@@ -56,7 +56,7 @@ export interface CandidatePending {
 }
 export interface CandidateStorage { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void }
 export interface CandidateJournal { key: string; load(): CandidatePending | null; save(pending: CandidatePending): void; clear(): void }
-export interface CandidateSession { publicClient: CandidateReadClient; walletClient: CandidateWalletClient; account: Address; journal: CandidateJournal; onStage?: (pending: CandidatePending) => void }
+export interface CandidateSession { publicClient: CandidateReadClient; walletClient: CandidateWalletClient; account: Address; journal: CandidateJournal; onStage?: (pending: CandidatePending) => void; onProgress?: (message: string) => void }
 export type CandidateResolution = { status: 'confirmed' | 'reverted' | 'replaced' | 'unknown'; txHash: Hash | null; message: string; lineId?: Hash }
 
 export interface CandidateDeployment {
@@ -209,7 +209,7 @@ function predictedLine(sponsor: Address, agent: Address, epoch: bigint): Hash {
   return keccak256(encodeAbiParameters([{ type: 'uint256' }, { type: 'address' }, { type: 'address' }, { type: 'address' }, { type: 'uint64' }], [BigInt(CANDIDATE_FUNDING.chainId), CANDIDATE_FUNDING.address, sponsor, agent, epoch]))
 }
 function approval(account: Address, value: bigint, observedBlock: bigint, nextAction: 'open' | 'repay'): CandidatePrepared {
-  return { kind: 'approve', account, to: CANDIDATE_FUNDING.usdc, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [CANDIDATE_FUNDING.address, value] }), value: '0', amount: value, lineId: null, agent: null, expectedEpoch: null, observedBlock, summary: `Approve exactly this ${currency} amount for Shadow. Funding requires a separate confirmation.`, nextAction }
+  return { kind: 'approve', account, to: CANDIDATE_FUNDING.usdc, data: encodeFunctionData({ abi: erc20Abi, functionName: 'approve', args: [CANDIDATE_FUNDING.address, value] }), value: '0', amount: value, lineId: null, agent: null, expectedEpoch: null, observedBlock, summary: `Step 1 of 2: approve exactly this ${currency} amount for Shadow. Step 2 ${nextAction === 'open' ? 'funds the line' : 'repays the debt'} in a separate transaction. This step moves no tokens.`, nextAction }
 }
 function fingerprint(line: CandidateLine): string {
   return [line.state, line.principalOutstanding, line.cumulativePrincipalPaid, line.dueAt, line.availableReserve, line.recoveryAvailable, line.drawDigest ?? 'legacy'].join(':')
@@ -353,6 +353,9 @@ function stage(session: CandidateSession, pending: CandidatePending) {
   // Presentation callbacks must never hide a send result or clear its journal.
   try { session.onStage?.(pending) } catch { /* recovery remains authoritative */ }
 }
+function progress(session: CandidateSession, message: string) {
+  try { session.onProgress?.(message) } catch { /* presentation cannot change transaction outcome */ }
+}
 async function walletMatches(session: CandidateSession) {
   const chainId = await session.walletClient.getChainId()
   if (chainId !== CANDIDATE_FUNDING.chainId) throw new Error(`Switch the connected wallet to ${network} before confirming.`)
@@ -377,6 +380,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
   try {
     if (session.journal.load()) throw new Error('Resolve the saved transaction before starting another wallet action.')
     const { publicClient: client } = session
+    progress(session, 'Checking the contract and connected wallet before requesting approval…')
     await verifyCandidate(client)
     await walletMatches(session)
     const accountCode = await client.getCode({ address: session.account })
@@ -384,6 +388,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
       ? 'This mainnet funding flow requires an ordinary browser wallet account (EOA), without smart contract code. Switch to a supported account.'
       : 'This funding interface currently supports browser EOA accounts only. Use the separate Circle signing flow for a Modular Wallet.')
     const call = checkedCall(prepared)
+    progress(session, 'Checking current limits and transaction details. The wallet request follows these checks…')
     if (prepared.kind === 'open') {
       const p = call.args[0]
       const current = await readCandidateSnapshot(client, { sponsor: session.account, agent: p.agent })
@@ -396,6 +401,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
       if (prepared.kind === 'repay' && deployment.drawBoundRepayment && !same(call.args[1], current.drawDigest!)) throw new Error('The repayment calldata names a different purchase. Review it again.')
       if (prepared.kind === 'default' && prepared.amount !== current.principalOutstanding) throw new Error('The outstanding debt changed. Refresh before declaring default.')
     }
+    progress(session, 'Checking whether this transaction can succeed before requesting wallet approval…')
     await client.simulateContract({ address: prepared.to, abi: call.abi, functionName: call.functionName, args: call.args, account: session.account })
     const block = await client.getBlock()
     await walletMatches(session)
@@ -425,6 +431,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
     }
     let txHash: Hash
     try {
+      progress(session, 'Check and approve this transaction in your wallet…')
       txHash = await session.walletClient.sendTransaction({ account: session.account, chain: candidateFundingChain, to: prepared.to, data: prepared.data, value: 0n, nonce })
     } catch (error) {
       if (rejected(error)) { session.journal.clear(); throw new Error('The wallet request was declined. No transaction was submitted by this request.') }
