@@ -1379,6 +1379,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   });
 
   test("monitor holds block new and unpaid replay acceptances while paid delivery remains recoverable", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
     const a = await signedIntent("monitor-held");
     let held = true;
     const admissionGuard = async () => { if (held) throw new Error("private monitor detail"); };
@@ -1402,8 +1403,10 @@ describe("request client against the reference provider server", { skip: e2eSkip
       assert.equal(delivered.status, 200);
       assert.deepEqual(await post(OTHER_PORT, "/serve", { digest: a.digest }), delivered);
       assert.equal(isolated.stats.signed, 2, "only one acceptance and one delivery signed");
-      await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
-    } finally { await stop(isolated.server); }
+    } finally {
+      await stop(isolated.server);
+      await client.request({ method: "evm_revert", params: [snapshot] });
+    }
   });
 
   test("a monitor hold arising during preparation prevents the acceptance signature", async () => {
