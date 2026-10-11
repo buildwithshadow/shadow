@@ -165,6 +165,15 @@ test("temporary provider readiness hold continues the same signed mainnet purcha
   assert.match(progress[0], /Waiting for provider readiness/);
   assert.match(progress.at(-1), /separate purchase transaction/);
 });
+test("presentation errors cannot interrupt readiness continuation or manufacture an unknown payment", async () => {
+  const h = setup({mainnet:true,acceptanceResponses:[new Response('',{status:503})],onProgress:()=>{throw new Error('render failed');}});
+  const flow=h.create();await flow.prepare(lineId,'readiness-render-error');
+  await flow.submit();
+  assert.deepEqual(h.counts(),{signs:1,sends:1});
+  assert.equal(h.acceptanceRequests.length,2);
+  assert.equal(h.acceptanceRequests[0],h.acceptanceRequests[1]);
+  assert.equal(flow.load().stage,'submitted');
+});
 test("persistent readiness holds stop within the wait budget without requesting a payment", async () => {
   const delays = [];
   const h = setup({acceptanceResponses:Array.from({length:7},()=>new Response('',{status:503})),
