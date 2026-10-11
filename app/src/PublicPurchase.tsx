@@ -25,6 +25,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [automaticChecking, setAutomaticChecking] = useState(false);
   const [recoveryEpoch, setRecoveryEpoch] = useState(0);
   const walletWorkKey = `${deployment.chainId}:${account}`;
   useEffect(() => subscribeRecoverySettlement(() => setRecoveryEpoch(value => value + 1)), []);
@@ -138,6 +139,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     // The old read's finally schedules a new effect. Do not spend this view's
     // budget while it is still settling, including a canceled sixth attempt.
     if (inFlight.current || recoveryWalletBusy(walletWorkKey)) return;
+    setAutomaticChecking(true);
     void recoverOriginalPurchase({
       isCurrent,
       budget,
@@ -158,9 +160,9 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         }
       },
       onResult: publishRecovered,
-      onStop: cause => { budget.stopped = true; setRecovering(false); setNotice('Automatic checks have stopped. Check the original payment again below; this never sends another payment.'); if (cause) setError(candidateErrorMessage(cause)); },
-    });
-    return () => { cancelled = true; setRecovering(false); };
+      onStop: cause => { budget.stopped = true; setRecovering(false); setAutomaticChecking(false); setNotice('Automatic checks have stopped. Check the original payment again below; this never sends another payment.'); if (cause) setError(candidateErrorMessage(cause)); },
+    }).finally(() => { if (isCurrent()) setAutomaticChecking(false); });
+    return () => { cancelled = true; setRecovering(false); setAutomaticChecking(false); };
   }, [engine, record?.intent.digest, active, correctNetwork, busy, needsRecovery, location.key, documentVisible, recoveryEpoch]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
@@ -267,7 +269,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       <p>Recovery never resends a payment. An unknown payment remains held until confirmed or its unpaid authorization has expired. Repay debt and reclaim eligible funds under “Manage a line.”</p>
     </>}
     <div aria-live="polite">{notice && <p role="status">{notice}</p>}{error && <p className="fundingError" role="alert">{error}</p>}</div>
-    {recovering && <p role="status">Checking the original payment and retrieving its report. No payment is being sent.</p>}
+    {automaticChecking && <p role="status">Automatic checks are running for the original payment and report. These checks never send another payment.</p>}
     {result && <section aria-labelledby="service-result-title">
       <h3 id="service-result-title">Your verified service report</h3>
       {readableReport && <>

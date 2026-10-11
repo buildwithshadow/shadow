@@ -52,3 +52,7 @@ test('invalid evidence remains stopped until an explicit new recovery budget is 
   await recoverOriginalPurchase(h.options);await recoverOriginalPurchase(h.options);assert.equal(calls,1);assert.equal(budget.stopped,true);
   await recoverOriginalPurchase({...h.options,budget:{attempts:0,waited:0}});assert.equal(calls,2);
 });
+for (const message of ['Another Shadow tab is using this wallet.', 'Another tab is using this purchase.']) test(`temporary lock contention recovers after ${message}`,async()=>{
+  let calls=0;const h=harness({recover:async()=>{if(++calls===1)throw Error(message);return {status:'delivered'};}});
+  await recoverOriginalPurchase(h.options);assert.equal(calls,2);assert.deepEqual(h.results,['delivered']);assert.deepEqual(h.stops,[]);
+});

@@ -21,6 +21,8 @@ export async function recoverOriginalPurchase({ recover, isCurrent, isBusy = () 
       if (!isCurrent()) return;
       // Invalid identity, signed delivery or result bytes require manual review.
       const transient = /^Provider unavailable \((502|503|504)\)/.test(error?.message ?? '')
+        || error?.message === 'Another Shadow tab is using this wallet.'
+        || error?.message === 'Another tab is using this purchase.'
         || error?.name === 'TimeoutError'
         || (error?.name === 'TypeError' && /^(Failed to fetch|fetch failed|Load failed)$/.test(error.message));
       if (!transient) { budget.stopped = true; onStop(error); return; }

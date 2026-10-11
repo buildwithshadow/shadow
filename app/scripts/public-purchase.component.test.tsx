@@ -92,6 +92,18 @@ test('the mounted UI stops after six uncertain reads and navigation cannot reple
 test('the mounted UI retrieves the original report after a temporary provider outage',async()=>{
   vi.useFakeTimers();const f=fixture(),text=`original report ${counter}`;
   f.engine.recover.mockRejectedValueOnce(new Error('Provider unavailable (503). Keep the original purchase and retry recovery.'));
+  render(<Host client={f.client}/>);await act(async()=>{await vi.advanceTimersByTimeAsync(1);});
+  expect(screen.getByText(/Automatic checks are running/)).toBeTruthy();
+  await act(async()=>{await vi.advanceTimersByTimeAsync(9999);});
+  expect(screen.getByText(text)).toBeTruthy();expect(f.engine.recover).toHaveBeenCalledTimes(2);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+test.each(['Another Shadow tab is using this wallet.', 'Another tab is using this purchase.'])('temporary cross-tab contention resumes the original report: %s',async(message)=>{
+  vi.useFakeTimers();const f=fixture(),text=`original report ${counter}`;f.engine.recover.mockRejectedValueOnce(new Error(message));
   render(<Host client={f.client}/>);await act(async()=>{await vi.advanceTimersByTimeAsync(10000);});
   expect(screen.getByText(text)).toBeTruthy();expect(f.engine.recover).toHaveBeenCalledTimes(2);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+test('an unreadable verified result ends automatic progress and never starts another payment',async()=>{
+  const f=fixture();f.engine.recover.mockImplementation(async()=>({...f.delivered(),bytes:new Uint8Array([255])}));
+  render(<Host client={f.client}/>);await screen.findByText('The verified service result is not readable UTF-8 text. Keep the original purchase.');
+  await waitFor(()=>expect(screen.queryByText(/Automatic checks are running/)).toBeNull());expect(f.engine.recover).toHaveBeenCalledTimes(1);expect(f.engine.submit).not.toHaveBeenCalled();
 });
