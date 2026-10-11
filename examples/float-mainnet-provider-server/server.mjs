@@ -527,6 +527,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
         response.setHeader('access-control-allow-origin', publicOrigin);
         response.setHeader('access-control-allow-methods', 'GET, POST, OPTIONS');
         response.setHeader('access-control-allow-headers', 'content-type');
+        response.setHeader('access-control-expose-headers', 'retry-after');
       }
       if (request.method === 'OPTIONS') { response.writeHead(204); response.end(); return; }
     }

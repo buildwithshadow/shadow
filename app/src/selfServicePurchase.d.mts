@@ -6,6 +6,8 @@ export interface PurchaseRecord {
 }
 export function createSelfServicePurchase(input: {
   client: PublicClient; wallet: WalletClient; storage: Storage;
+  onProgress?: (message: string) => void;
+  wait?: (milliseconds: number) => Promise<void>;
   withLock?: (key: string, work: () => Promise<unknown>, operation: 'prepare' | 'submit' | 'recover' | 'archive') => Promise<unknown>;
   config: { chainId: number; account: Address; contract: Address; runtimeHash: Hash; provider: Address; providerUrl: string; endpoint: string; principal: string };
 }): {
