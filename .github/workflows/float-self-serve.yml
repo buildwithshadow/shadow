@@ -72,6 +72,15 @@ on:
       - "ops/mainnet-runtime/**"
       - "app/src/selfServicePurchase.d.mts"
       - "app/src/PublicPurchase.tsx"
+      - "app/src/purchaseRecovery*"
+      - "app/src/walletReportDisplay*"
+      - "app/src/ownedBusy*"
+      - "app/src/VerifiedServiceReport.tsx"
+      - "app/scripts/purchase-recovery*.test.mjs"
+      - "app/scripts/wallet-report-display.test.mjs"
+      - "app/scripts/owned-busy.test.mjs"
+      - "app/scripts/public-purchase.component.test.tsx"
+      - "app/vitest.purchase.config.ts"
       - "app/src/publicTestnet.ts"
       - "app/src/publicMainnet.ts"
       - "app/src/guardedMainnet.ts"
@@ -164,7 +173,7 @@ jobs:
       - name: Test public testnet self-registration and wallet purchases
         run: |
           forge test --root contracts --match-path 'test/ShadowFloatPublicTestnet*.t.sol'
-          node --test --test-concurrency=1 app/scripts/self-service-purchase*.test.mjs app/scripts/shadow-v2-cycle-service.test.mjs
+          node --test --test-concurrency=1 app/scripts/self-service-purchase*.test.mjs app/scripts/purchase-recovery*.test.mjs app/scripts/wallet-report-display.test.mjs app/scripts/shadow-v2-cycle-service.test.mjs
       - name: Test saved transaction hash lookup
         run: node --test app/scripts/saved-transaction-lookup.test.ts app/scripts/gateway-funding-guard.test.ts app/scripts/line-refresh.test.ts
       - name: Test bounded agent line discovery and cache continuation
@@ -215,6 +224,11 @@ jobs:
         run: node --test app/scripts/circle-agent-*.test.mjs
       - name: Test reasoning availability before payment and provider acceptance
         run: node --test app/scripts/reasoning-x402-availability.test.mjs app/scripts/shadow-reasoning-service.test.mjs app/scripts/shadow-arc-wallet-service.test.mjs
+      - name: Test purchase UI recovery across route remounts
+        working-directory: app
+        run: pnpm test:purchase-ui
+      - name: Test ownership of async balance refresh messages
+        run: node --test app/scripts/owned-busy.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app

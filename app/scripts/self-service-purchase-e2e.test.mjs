@@ -18,6 +18,7 @@ import { storeOnce } from './float-mainnet-provider.mjs';
 import { connectCandidate } from "./float-mainnet-config.mjs";
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
 import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
+import { recoverOriginalPurchase } from '../src/purchaseRecovery.mjs';
 
 for (const mainnet of [false,true]) for (const fault of ["wallet-response", "delivery-response", "prepared-marker", "unprepared-marker", "readiness-hold"]) test(
   `new ${mainnet?"guarded mainnet":"testnet"} sponsor: ${fault} after payment retains exact recovery behavior`,
@@ -246,7 +247,16 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     await assert.rejects(create().submit(), /reconciliation/);
     assert.equal(sends, 1);
     unrelatedFundingHold = true;
-    const result = await create().recover();
+    let result, recoveryAttempts = 0;
+    await recoverOriginalPurchase({
+      recover: async () => {
+        if (++recoveryAttempts === 1) throw new Error('Provider unavailable (503). Keep the original purchase and retry recovery.');
+        return create().recover();
+      },
+      isCurrent: () => true, wait: async () => {},
+      onResult: value => { result = value; }, onStop: cause => assert.fail(cause?.message ?? 'Recovery budget exhausted'),
+    });
+    assert.equal(recoveryAttempts, 2);
     assert.equal(result.status, "delivered");
     assert.equal(new TextDecoder().decode(result.bytes), "paid report");
     await create().recover();
