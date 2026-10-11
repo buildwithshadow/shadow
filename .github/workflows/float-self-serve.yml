@@ -66,6 +66,7 @@ on:
       - "app/src/selfServicePurchase.d.mts"
       - "app/src/PublicPurchase.tsx"
       - "app/src/publicTestnet.ts"
+      - "app/src/publicMainnet.ts"
       - "app/src/guardedMainnet.ts"
       - "app/src/guardedTestnet.ts"
       - "app/guardedTestnetDeployment.d.mts"
