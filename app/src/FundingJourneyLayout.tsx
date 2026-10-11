@@ -31,8 +31,7 @@ export function FundingJourney({
         <div>
           <p className="pageEyebrow">
             <span className="journeyNetworkDot" aria-hidden="true" />
-            Arc testnet{" "}
-            <span className="journeyTestLabel">Practice with test USDC</span>
+            Arc testnet
           </p>
           <h1 tabIndex={-1} id="journey-title">
             {title}
