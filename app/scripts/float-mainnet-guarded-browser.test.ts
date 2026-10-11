@@ -87,6 +87,16 @@ for(const profile of ['legacy-testnet','guarded-testnet','guarded-mainnet','publ
       const registration=await prepareCandidateRegistration(publicClient,sponsorAccount.address);
       assert.equal(registration.kind,'register');assert.equal(registration.amount,0n);
       assert.match(registration.summary,/Arc mainnet gas/);
+      const contractAccountClient = new Proxy(publicClient, {get(target, name) {
+        if (name === 'getCode') return async (args: any) => args.address.toLowerCase() === sponsorAccount.address.toLowerCase() ? '0x6000' : target.getCode(args);
+        const value = Reflect.get(target, name); return typeof value === 'function' ? value.bind(target) : value;
+      }});
+      await assert.rejects(() => executeCandidateCall({...sponsorSession, publicClient: contractAccountClient}, registration), (error: any) => {
+        assert.match(error.message, /ordinary browser wallet account \(EOA\)/);
+        assert.ok(!error.message.includes('separate Circle'));
+        return true;
+      });
+      assert.equal(sponsorSession.journal.load(), null, 'unsupported account creates no pending wallet transaction');
       assert.equal((await executeCandidateCall(sponsorSession,registration)).status,'confirmed');
     }
     const localInput = { ...input, ...(bounded?{lineSpendCap:'0.005',dailySpendCap:'0.005',providerPerSpendCap:'0.005',providerDailyCap:'0.005'}:{}), agent: agentAccount.address, provider: providerAccount.address }
