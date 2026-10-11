@@ -1,14 +1,14 @@
-# Guarded participant candidate
+# Earlier guarded participant deployment
 
-The default public funding route stays on Arc testnet. Building with `VITE_SHADOW_GUARDED_MAINNET_CANDIDATE=true` adds `/mainnet` for the draw-bound guarded deployment. This build flag does not authorize funded participation, admit a sponsor or change either pause.
+This document records the earlier controlled deployment and its fixed participant operating model. It does not describe the current `/mainnet` browser route. The retained build flag `VITE_SHADOW_GUARDED_MAINNET_CANDIDATE=true` now exposes the public self registration deployment described in [Public mainnet participant flow](public-mainnet-participant.md). The flag name is retained for deployment configuration compatibility; it does not change any onchain pause.
 
-The pinned release is Arc mainnet chain 5042, contract `0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB`, runtime hash `0x845c0c3e47bbcf75004e5d47a6788585d57026ce70c08593d112966a6245b4ef`, repayment binding version 2. The browser limits are 0.10 USDC reserve and 0.005 USDC total, daily and per-purchase spending per line. Only admitted sponsors and ordinary EOA providers are supported. Registration, the testnet faucet, testnet Gateway and the testnet-only Circle CLI handoff are not offered on this route.
+The earlier pinned release is Arc mainnet chain 5042, contract `0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB`, runtime hash `0x845c0c3e47bbcf75004e5d47a6788585d57026ce70c08593d112966a6245b4ef`, repayment binding version 2. The browser limits are 0.10 USDC reserve and 0.005 USDC total, daily and per-purchase spending per line. Only admitted sponsors and ordinary EOA providers are supported. Registration, the testnet faucet and testnet Gateway were not offered by that earlier browser profile. Its bounded Circle tools target this earlier contract and must not be used for the public deployment.
 
 Funding/repayment/reclaim use browser wallet confirmations. Repayment encodes the current purchase digest in `repayForDraw`; it cannot fall back to the legacy generic repayment function. The sample service binds its wallet-balance report request to the connected agent address. The browser agent signs and submits its own purchase; this page does not implement Circle Agent Wallet login or autonomous mainnet purchase submission. Circle-funded repayment has a separate bounded adapter.
 
 Journal and wallet locks are partitioned by network and account; a saved funding action on any deployment of the same chain must be reconciled before another wallet transaction. An unresolved purchase blocks new funding and Gateway actions, while repayment and its allowance remain available. Read only payment recovery and verified purchase archiving keep the wallet lock but do not require unrelated funding or Gateway holds to clear. Recovery checks the original nonce, sender, calldata, canonical receipt and action event. If explorer lookup is unavailable, keep the hold and use the original transaction hash from the wallet. A missing hash is not permission to resend. Clearing browser site data loses these local protections, and locks do not coordinate another device or application.
 
-Local Anvil fixtures cover separate wallets, draw-bound repayment with lost confirmation, purchase confirmation loss and delivery loss, one provider payout, one debt and final reclaimed reserve. These fixtures are engineering evidence, not independent adoption or funded participant clearance. A real participant wallet walkthrough, supported credential recovery and independent security findings remain release requirements. Both deployed mainnet instances must stay paused until those requirements are resolved.
+Local Anvil fixtures cover separate wallets, draw-bound repayment with lost confirmation, purchase confirmation loss and delivery loss, one provider payout, one debt and final reclaimed reserve. These fixtures are engineering evidence, not independent adoption or funded participant clearance. These were the conditions of the earlier controlled rehearsal. Current public admission, browser support and stop controls are documented separately in the public mainnet guide.
 
 ## Execution and stop policy
 
@@ -26,7 +26,7 @@ the agent and signed executor to equal that line's approved agent. Default
 dedicated execution and ordinary `agent-self` policies do not accept a routed
 Circle proof. Existing baselines are not upgraded automatically.
 
-Before funded participant activation, review and approve this execution model, the incident-to-pause operating procedure and its response-time risk; demonstrate the pause/refusal and recovery path; and keep the current deployed pauses in place until that review is complete. Configuring a line's execution policy is not pilot clearance.
+The earlier controlled deployment required review of its execution model, incident response and pause/refusal recovery before activation. Its fixed line policy is not clearance for a different deployment. Use the public mainnet guide for the current route.
 
 ## Lifecycle notices
 

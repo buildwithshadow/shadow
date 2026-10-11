@@ -211,7 +211,7 @@ jobs:
         run: npm run app:typecheck
       - name: Build production app
         run: npm run app:build
-      - name: Build opt-in guarded mainnet participant candidate
+      - name: Build opt-in self service mainnet participant route
         run: VITE_SHADOW_GUARDED_MAINNET_CANDIDATE=true npm run app:build
       - name: Build opt-in guarded testnet funding with Gateway enabled elsewhere
         run: VITE_SHADOW_GUARDED_TESTNET_CANDIDATE=true VITE_SHADOW_GATEWAY_TESTNET=true npm run app:build
