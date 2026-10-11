@@ -19,8 +19,21 @@ test('public provider CORS accepts only the pinned frontend and supports preflig
   const url = await fixture(t);
   const response = await fetch(url+'/accept', {method:'OPTIONS',headers:{origin,'access-control-request-method':'POST','access-control-request-headers':'content-type'}});
   assert.equal(response.status,204);assert.equal(response.headers.get('access-control-allow-origin'),origin);
+  assert.equal(response.headers.get('access-control-expose-headers'),'retry-after');
   assert.equal((await fetch(url+'/accept',{method:'OPTIONS',headers:{origin:'https://untrusted.example'}})).status,403);
   const direct = await fetch(url+'/unknown');assert.equal(direct.status,404);assert.equal(direct.headers.get('cache-control'),'no-store');
+});
+test('the allowed browser origin can read a provider cooldown without broadening CORS', async t => {
+  const url = await fixture(t, { maxRequestsPerMinute: 1 });
+  await fetch(url+'/accept', {method:'POST',headers:{origin},body:'invalid'});
+  const response = await fetch(url+'/accept', {method:'POST',headers:{origin},body:'invalid'});
+  assert.equal(response.status,429);
+  assert.equal(response.headers.get('access-control-allow-origin'),origin);
+  assert.equal(response.headers.get('access-control-expose-headers'),'retry-after');
+  assert.equal(response.headers.get('retry-after'),'60');
+  const denied = await fetch(url+'/accept', {method:'POST',headers:{origin:'https://untrusted.example'},body:'invalid'});
+  assert.equal(denied.status,403);
+  assert.equal(denied.headers.get('access-control-expose-headers'),null);
 });
 test('public provider bounds request admission without leaking errors', async t => {
   const url=await fixture(t,{maxRequestsPerMinute:1});
