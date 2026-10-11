@@ -6,6 +6,9 @@ export function recoverySession(key) {
   return sessions.get(key);
 }
 export function resetRecoverySession(key) { sessions.delete(key); }
+export function retainRecoveryTerminal(session, result) {
+  if (result.status === 'delivered' || result.status === 'blocked') session.deferred = result;
+}
 export function recoveryWalletBusy(key) { return (walletWork.get(key) ?? 0) > 0; }
 export function beginRecoveryWalletWork(key) { walletWork.set(key, (walletWork.get(key) ?? 0) + 1); }
 export function finishRecoveryWalletWork(key, notify = true) {

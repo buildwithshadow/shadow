@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import { recoverySession, resetRecoverySession, recoveryWalletBusy, beginRecoveryWalletWork, finishRecoveryWalletWork, subscribeRecoverySettlement } from './purchaseRecoverySession.mjs';
+import { recoverySession, resetRecoverySession, retainRecoveryTerminal, recoveryWalletBusy, beginRecoveryWalletWork, finishRecoveryWalletWork, subscribeRecoverySettlement } from './purchaseRecoverySession.mjs';
 import { useLocation } from 'react-router-dom';
 import { recoverOriginalPurchase, type RecoveryResult } from './purchaseRecovery.mjs';
 import { walletReportDisplay } from './walletReportDisplay.mjs';
@@ -113,7 +113,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     const digest = record.intent.digest;
     const sessionKey = `${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${digest}`;
     const budget = recoverySession(sessionKey);
-    if (budget.stopped) return;
+    if (budget.stopped) { setNotice('Automatic checks remain stopped for this purchase. Check the original payment below; this never sends another payment.'); return; }
     const isCurrent = () => !cancelled && revision.current === current && routeGeneration.current === generation &&
       currentView.current.active && currentView.current.correctNetwork && !currentView.current.busy &&
       currentView.current.account === account && currentView.current.deployment === deployment && document.visibilityState === 'visible';
@@ -131,7 +131,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     if (deferred) {
       try {
         if (engine.load()?.intent.digest === digest) {
-          budget.deferred = null; publishRecovered(deferred); return;
+          publishRecovered(deferred); return;
         }
       } catch (cause) { budget.stopped = true; setError(candidateErrorMessage(cause)); return; }
     }
@@ -148,7 +148,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         inFlight.current = true; beginRecoveryWalletWork(walletWorkKey); setRecovering(true);
         try {
           const recovered = await engine.recover();
-          if (!isCurrent() && (recovered.status === 'delivered' || recovered.status === 'blocked')) budget.deferred = recovered;
+          retainRecoveryTerminal(budget, recovered);
           return recovered;
         }
         finally {

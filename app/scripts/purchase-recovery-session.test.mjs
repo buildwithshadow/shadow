@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import {recoverySession,resetRecoverySession,recoveryWalletBusy,beginRecoveryWalletWork,finishRecoveryWalletWork,subscribeRecoverySettlement} from '../src/purchaseRecoverySession.mjs';
+import {recoverySession,resetRecoverySession,retainRecoveryTerminal,recoveryWalletBusy,beginRecoveryWalletWork,finishRecoveryWalletWork,subscribeRecoverySettlement} from '../src/purchaseRecoverySession.mjs';
 test('a replacement component sees the same exhausted budget and explicit reset creates a new budget',()=>{
   const key='remount-stop';const first=recoverySession(key);first.attempts=6;first.stopped=true;
   const remounted=recoverySession(key);assert.equal(remounted,first);assert.equal(remounted.stopped,true);
@@ -23,4 +23,11 @@ test('completion isolates listener exceptions and independent wallets stay separ
   beginRecoveryWalletWork('wallet-a');assert.equal(recoveryWalletBusy('wallet-b'),false);
   const unsubscribe=subscribeRecoverySettlement(()=>{throw Error('render failed');});
   assert.doesNotThrow(()=>finishRecoveryWalletWork('wallet-a'));assert.equal(recoveryWalletBusy('wallet-a'),false);unsubscribe();
+});
+test('a normally delivered report remains available through more remounts than the retry budget',()=>{
+  const session=recoverySession('normal-delivery');session.attempts=1;
+  const result={status:'delivered',record:{intent:{digest:'same'}},bytes:new Uint8Array([1,2])};
+  retainRecoveryTerminal(session,result);
+  for(let i=0;i<10;i++){const mounted=recoverySession('normal-delivery');assert.equal(mounted.deferred,result);assert.equal(mounted.attempts,1);}
+  assert.equal(recoverySession('another-purchase').deferred,null);
 });
