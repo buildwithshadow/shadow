@@ -169,7 +169,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   // its service and its chain client are wrapped to count signatures, service
   // runs and chain calls: failNextSign and failNextCall make the next one fail,
   // and hold, when set, is a promise the signer and the service wait for.
-  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25 } = {}) {
+  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, admissionGuard = null } = {}) {
     const stats = { signed: 0, work: [], prepared: [], calls: [], failNextSign: false, failNextCall: null, failSignatureRpc: null, hold: null };
     const signer = {
       address: key.address,
@@ -215,7 +215,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         };
       },
     });
-    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine });
+    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine, admissionGuard });
     await listen(server, port);
     return { server, stats, port };
   }
@@ -1375,6 +1375,50 @@ describe("request client against the reference provider server", { skip: e2eSkip
       expired = true;
       assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
       assert.equal(validations, 3, "existing acceptance recovery does not change the agreed snapshot");
+    } finally { await stop(isolated.server); }
+  });
+
+  test("monitor holds block new and unpaid replay acceptances while paid delivery remains recoverable", async () => {
+    const a = await signedIntent("monitor-held");
+    let held = true;
+    const admissionGuard = async () => { if (held) throw new Error("private monitor detail"); };
+    const isolated = await startProviderServer(OTHER_PORT, { storeDir: path("monitor-held-store"), admissionGuard });
+    const body = { intent: readJson(a.file), requestId: "monitor-held" };
+    try {
+      const blocked = await post(OTHER_PORT, "/accept", body);
+      assert.equal(blocked.status, 503);
+      assert.ok(!JSON.stringify(blocked).includes("private monitor detail"));
+      assert.equal(isolated.stats.signed, 0);
+      held = false;
+      const accepted = await post(OTHER_PORT, "/accept", body);
+      assert.equal(accepted.status, 200);
+      held = true;
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 503);
+      assert.equal(isolated.stats.signed, 1);
+      // Execute the already authorized payment and verify recovery under hold.
+      assert.equal((await ok("submit", ["submit", "--intent", a.file, "--execute"], EXECUTOR)).status, "paid");
+      assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
+      const delivered = await post(OTHER_PORT, "/serve", { digest: a.digest });
+      assert.equal(delivered.status, 200);
+      assert.deepEqual(await post(OTHER_PORT, "/serve", { digest: a.digest }), delivered);
+      assert.equal(isolated.stats.signed, 2, "only one acceptance and one delivery signed");
+      await ok("repay", ["--allow-current-line-debt", "--line-id", seen.lineId, "--full", "--execute"], AGENT);
+    } finally { await stop(isolated.server); }
+  });
+
+  test("a monitor hold arising during preparation prevents the acceptance signature", async () => {
+    const a = await signedIntent("monitor-prepare-hold");
+    let held = false;
+    const report = async () => ({ result: "immutable report" });
+    report.prepare = async () => { held = true; return report(); };
+    const isolated = await startProviderServer(OTHER_PORT, {
+      storeDir: path("monitor-prepare-hold-store"), serviceImpl: report,
+      admissionGuard: async () => { if (held) throw new Error("held"); },
+    });
+    try {
+      assert.equal((await post(OTHER_PORT, "/accept", { intent: readJson(a.file), requestId: "monitor-prepare-hold" })).status, 503);
+      assert.equal(isolated.stats.prepared.length, 1);
+      assert.equal(isolated.stats.signed, 0);
     } finally { await stop(isolated.server); }
   });
 
