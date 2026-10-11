@@ -670,9 +670,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         setPrepared(null);
         loadJournal(sender);
         if (result.status === "confirmed" && intent.kind === "approve") {
-          setNotice(`Step 1 of 2 complete: USDC allowance confirmed. ${intent.nextAction === "open" ? "Preparing the funding transaction. No funds have moved yet." : "Next, review the separate repayment transaction."}`);
+          setNotice(`USDC allowance confirmed. This approval moved no tokens. ${intent.nextAction === "open" ? "Funding requires a separate wallet transaction." : "Repayment requires a separate wallet transaction."}`);
         }
         if (result.status === "confirmed" && intent.kind === "approve" && intent.nextAction === "open") {
+          if (activeRoute.current.generation !== originRoute) return;
           setBusy("Allowance confirmed. Checking the line for your separate funding confirmation…");
           try {
             const next = await prepareFundingContinuation({ approval: intent, resolution: result, input: fundingInput, isCurrent,
@@ -681,7 +682,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
             if (!isCurrent() || activeRoute.current.generation !== originRoute) return;
             if (next) { setPrepared(next); setReviewInput(fundingInput); setNotice("Step 2 of 2: fund the line. Your allowance is already confirmed; this separate transaction deposits the reserve."); }
           } catch (cause) {
-            if (isCurrent()) setError(`Your allowance is confirmed and no funding transaction was requested. ${messageOf(cause)}`);
+            if (isCurrent() && activeRoute.current.generation === originRoute) setError(`Your allowance is confirmed and no funding transaction was requested. ${messageOf(cause)}`);
           }
           return;
         }
