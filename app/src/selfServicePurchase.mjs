@@ -90,6 +90,8 @@ function createPurchase({
   config,
   storage,
   fetchImpl = fetch,
+  onProgress = () => {},
+  wait = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds)),
   withLock = async (key, work) => {
     assert(
       globalThis.navigator?.locks,
@@ -232,22 +234,42 @@ function createPurchase({
       "Wallet changed. Reconnect before continuing.",
     );
   }
-  async function post(path, body) {
-    const response = await fetchImpl(
-      `${config.providerUrl.replace(/\/$/, "")}${path}`,
-      {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: serial(body),
-        redirect: "error",
-        signal: AbortSignal.timeout(20000),
-      },
-    );
-    assert(
-      response.ok,
-      `Provider unavailable (${response.status}). Keep the original purchase and retry recovery.`,
-    );
-    return readBoundedJson(response);
+  async function post(path, body, beforeAcceptance) {
+    // Only a pre-payment 503 may wait and retry. Every retry uses the exact
+    // original signed intent and request ID; no wallet transaction is replayed.
+    const payload = serial(body);
+    let waited = 0;
+    for (let attempt = 0; ; attempt++) {
+      if (beforeAcceptance) await beforeAcceptance();
+      const response = await fetchImpl(
+        `${config.providerUrl.replace(/\/$/, "")}${path}`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: payload,
+          redirect: "error",
+          signal: AbortSignal.timeout(20000),
+        },
+      );
+      if (beforeAcceptance && response.status === 503) {
+        await response.body?.cancel();
+        const retryAfter = response.headers.get("retry-after");
+        const retryDate = retryAfter ? Date.parse(retryAfter) : NaN;
+        const delay = Math.max(1000, retryAfter && /^\d+$/.test(retryAfter)
+          ? Number(retryAfter) * 1000 : Number.isFinite(retryDate) ? retryDate - Date.now() : 10000);
+        assert(attempt < 6 && waited + delay <= 60000,
+          "The provider is still temporarily unavailable. This attempt requested no payment transaction. Keep the saved purchase and review it again when the provider is ready.");
+        onProgress("Waiting for provider readiness. No payment transaction has been requested. Continuing the same purchase shortly…");
+        await wait(delay);
+        waited += delay;
+        continue;
+      }
+      assert(
+        response.ok,
+        `Provider unavailable (${response.status}). Keep the original purchase and retry recovery.`,
+      );
+      return readBoundedJson(response);
+    }
   }
   async function signedReceipt(file, types, primaryType) {
     const expected = {
@@ -410,7 +432,15 @@ function createPurchase({
         const acceptance = await post("/accept", {
           intent,
           requestId: record.requestId,
+        }, async () => {
+          await connected();
+          assert(Number(await read("receiptStatus", [intent.digest])) === 0,
+            "This purchase already has a recorded outcome. Check payment and recover the original result before continuing.");
+          const latest = await client.getBlock();
+          assert(latest.timestamp < BigInt(intent.typedData.message.signatureExpiry),
+            "The saved purchase authorization expired before provider acceptance. Resolve the expired purchase before preparing another.");
         });
+        onProgress("Provider ready. Checking the purchase before requesting its wallet transaction…");
         const a = await signedReceipt(
           acceptance,
           ACCEPTANCE,
@@ -446,6 +476,7 @@ function createPurchase({
       record.stage = "submitted";
       save(record);
       try {
+        onProgress("Confirm the separate purchase transaction in your wallet…");
         record.txHash = await wallet.sendTransaction({
           account,
           chain: wallet.chain,

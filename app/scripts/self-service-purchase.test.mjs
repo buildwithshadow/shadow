@@ -33,9 +33,10 @@ const acceptanceTypes = {
     return { name, type };
   }),
 };
-function setup({mainnet=false,providerCode='0x',bindingVersion=2n}={}) {
+function setup({mainnet=false,providerCode='0x',bindingVersion=2n,acceptanceResponses=[],onProgress=()=>{},wait=async()=>{}}={}) {
   const selectedConfig = mainnet ? {...config,chainId:5042,principal:'5000'} : config;
   const data = new Map();
+  const acceptanceRequests = [];
   let now = 1000n;
   let sends = 0,
     signs = 0,
@@ -93,6 +94,11 @@ function setup({mainnet=false,providerCode='0x',bindingVersion=2n}={}) {
   };
   const fetchImpl = async (url, request) => {
     assert(url.endsWith("/accept"));
+    acceptanceRequests.push(request.body);
+    if (acceptanceResponses.length) {
+      const response = acceptanceResponses.shift();
+      if (response) return response;
+    }
     const { intent, requestId } = JSON.parse(request.body);
     const message = {
       digest: intent.digest,
@@ -124,12 +130,15 @@ function setup({mainnet=false,providerCode='0x',bindingVersion=2n}={}) {
       config: selectedConfig,
       storage,
       fetchImpl,
+      onProgress,
+      wait,
       withLock,
       random: () => new Uint8Array(32).fill(8),
     });
   return {
     create,
     data,
+    acceptanceRequests,
     storage,
     client,
     wallet,
@@ -141,6 +150,66 @@ function setup({mainnet=false,providerCode='0x',bindingVersion=2n}={}) {
     tamperReceipt: () => (receiptTamper = true),
   };
 }
+test("temporary provider readiness hold continues the same signed mainnet purchase once", async () => {
+  const progress = [], delays = [];
+  const h = setup({ mainnet: true, acceptanceResponses: [new Response('', {status:503})],
+    onProgress: value => progress.push(value), wait: async milliseconds => delays.push(milliseconds) });
+  const flow = h.create();
+  const prepared = await flow.prepare(lineId, 'readiness-same-request');
+  await flow.submit();
+  assert.deepEqual(h.counts(), {signs:1, sends:1});
+  assert.equal(h.acceptanceRequests.length, 2);
+  assert.equal(h.acceptanceRequests[0], h.acceptanceRequests[1]);
+  assert.equal(flow.load().intent.digest, prepared.intent.digest);
+  assert.deepEqual(delays, [10000]);
+  assert.match(progress[0], /Waiting for provider readiness/);
+  assert.match(progress.at(-1), /separate purchase transaction/);
+});
+test("persistent readiness holds stop within the wait budget without requesting a payment", async () => {
+  const delays = [];
+  const h = setup({acceptanceResponses:Array.from({length:7},()=>new Response('',{status:503})),
+    wait:async milliseconds=>delays.push(milliseconds)});
+  const flow = h.create(); await flow.prepare(lineId,'readiness-still-held');
+  await assert.rejects(flow.submit(), /still temporarily unavailable/);
+  assert.deepEqual(h.counts(), {signs:1,sends:0});
+  assert.equal(h.acceptanceRequests.length,7);
+  assert.equal(delays.reduce((sum,value)=>sum+value,0),60000);
+  assert.equal(flow.load().stage,'prepared');
+});
+test("provider cooldown beyond the wait budget is respected without a second request", async () => {
+  for (const retryAfter of ['120',new Date(Date.now()+120000).toUTCString()]) {
+    const h = setup({acceptanceResponses:[new Response('',{status:503,headers:{'retry-after':retryAfter}})],
+      wait:async()=>assert.fail('must not wait past the budget')});
+    const flow=h.create();await flow.prepare(lineId,'readiness-cooldown');
+    await assert.rejects(flow.submit(),/still temporarily unavailable/);
+    assert.equal(h.acceptanceRequests.length,1);assert.equal(h.counts().sends,0);
+  }
+});
+test("a receipt appearing during readiness wait stops before another provider request or payment", async () => {
+  let h;
+  h=setup({acceptanceResponses:[new Response('',{status:503})],wait:async()=>h.paidStatus(2)});
+  const flow=h.create();await flow.prepare(lineId,'readiness-already-paid');
+  await assert.rejects(flow.submit(),/recorded outcome/);
+  assert.equal(h.acceptanceRequests.length,1);assert.equal(h.counts().sends,0);
+});
+test("expired authorization and a changed wallet network cannot continue a readiness retry", async () => {
+  let expired;
+  expired=setup({acceptanceResponses:[new Response('',{status:503})],wait:async()=>expired.advance(1600n)});
+  const first=expired.create();await first.prepare(lineId,'readiness-expired');
+  await assert.rejects(first.submit(),/authorization expired/);
+  assert.equal(expired.acceptanceRequests.length,1);assert.equal(expired.counts().sends,0);
+  let switched;
+  switched=setup({acceptanceResponses:[new Response('',{status:503})],wait:async()=>{switched.wallet.getChainId=async()=>5042;}});
+  const second=switched.create();await second.prepare(lineId,'readiness-switched');
+  await assert.rejects(second.submit(),/network|testnet/i);
+  assert.equal(switched.acceptanceRequests.length,1);assert.equal(switched.counts().sends,0);
+});
+test("provider policy refusals do not automatically retry or request a payment", async () => {
+  const h=setup({acceptanceResponses:[new Response('',{status:422})],wait:async()=>assert.fail('must not retry a refusal')});
+  const flow=h.create();await flow.prepare(lineId,'readiness-refused');
+  await assert.rejects(flow.submit(),/422/);
+  assert.equal(h.acceptanceRequests.length,1);assert.equal(h.counts().sends,0);
+});
 test("wallet purchase needs no enrollment token and persists the attempt before an ambiguous response", async () => {
   const h = setup(),
     flow = h.create();

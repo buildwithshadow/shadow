@@ -17,6 +17,6 @@ export function FundingNetworkSelector({ selected, mainnetAvailable, home = fals
           <Link key={network} to={fundingNetworkDestination(network, home)} aria-current={selected === network ? "true" : undefined} className={selected === network ? "selected" : undefined}>{content}</Link>;
       })}
     </nav>
-    <p>{locked ? "Finish the current review or recover the pending payment before changing networks." : "Each network has separate balances and funding lines. Switching does not move USDC or approve a wallet action."}</p>
+    <p>{locked ? "Wait for the current check or review to finish, and resolve any pending payment before changing networks." : "Each network has separate balances and funding lines. Switching does not move USDC or approve a wallet action."}</p>
   </div>;
 }

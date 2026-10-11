@@ -28,6 +28,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const setup = useMemo(() => { try { return { engine: account && window.ethereum ? (mainnet ? createGuardedMainnetPurchase : createSelfServicePurchase)({
     client, wallet: createWalletClient({ chain, transport: custom(window.ethereum), account }),
     storage: window.localStorage,
+    onProgress: setBusy,
     withLock: async (key: string, work: () => Promise<unknown>, operation: 'prepare' | 'submit' | 'recover' | 'archive') => {
       if (!navigator.locks) throw new Error('This browser cannot coordinate wallet actions.');
       return navigator.locks.request(gatewayWalletLockKey(account, deployment.chainId), {ifAvailable:true}, async lock => {

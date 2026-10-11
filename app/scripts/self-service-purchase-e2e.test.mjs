@@ -19,7 +19,7 @@ import { connectCandidate } from "./float-mainnet-config.mjs";
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
 import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
 
-for (const mainnet of [false,true]) for (const fault of ["wallet-response", "delivery-response", "prepared-marker", "unprepared-marker"]) test(
+for (const mainnet of [false,true]) for (const fault of ["wallet-response", "delivery-response", "prepared-marker", "unprepared-marker", "readiness-hold"]) test(
   `new ${mainnet?"guarded mainnet":"testnet"} sponsor: ${fault} after payment retains exact recovery behavior`,
   { skip: e2eSkip, timeout: 120000 },
   async (t) => {
@@ -184,18 +184,24 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
       principal: String(price),
     };
     let droppedDelivery = false, unrelatedFundingHold = false;
+    const acceptanceRequests = [];
     const create = () =>
       (mainnet?createGuardedMainnetPurchase:createSelfServicePurchase)({
         client,
         wallet: agentWallet,
         config,
         storage,
+        wait: async () => {},
         withLock: async (_k, work, operation) => {
           if (unrelatedFundingHold && (operation === 'prepare' || operation === 'submit')) throw Error('unresolved funding');
           return work();
         },
         fetchImpl: async (url, options) => {
           const path = new URL(url).pathname;
+          if (path === "/accept") {
+            acceptanceRequests.push(options.body);
+            if (fault === "readiness-hold" && acceptanceRequests.length === 1) return new Response('', {status:503});
+          }
           if (path === "/serve") {
             const body = JSON.parse(options.body);
             const saved = [...map.values()].map(value => JSON.parse(value)).find(record => record.intent?.digest === body.digest);
@@ -214,6 +220,10 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     await flow.prepare(lineId, "job-public-1");
     if (fault === "wallet-response") {
       await assert.rejects(flow.submit(), /lost wallet response/);
+    } else if (fault === "readiness-hold") {
+      await flow.submit();
+      assert.equal(acceptanceRequests.length,2);
+      assert.equal(acceptanceRequests[0],acceptanceRequests[1]);
     } else if (fault === 'prepared-marker' || fault === 'unprepared-marker') {
       await flow.submit();
       const digest = flow.load().intent.digest;
