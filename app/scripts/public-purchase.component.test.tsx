@@ -4,6 +4,7 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-libra
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { PublicPurchase } from '../src/PublicPurchase';
 import { recoverySession } from '../src/purchaseRecoverySession.mjs';
+import type { RecoveryResult } from '../src/purchaseRecovery.mjs';
 const h = vi.hoisted(() => ({ engines: new Map<string, any>() }));
 vi.mock('../src/selfServicePurchase.mjs', () => ({
   createSelfServicePurchase: ({config}: any) => h.engines.get(config.account),
@@ -16,8 +17,8 @@ let counter = 0;
 function fixture(status=2n) {
   const digest = `0x${(++counter).toString(16).padStart(64,'0')}`;
   let saved: any = {stage:'submitted',requestId:`report:${counter}`,txHash:null,intent:{digest,typedData:{message:{lineId:`0x${'55'.repeat(32)}`,agent:account,sponsor:account,provider:service.provider,principal:'50000',maximumTotalDebt:'50000',dueAt:'2000000000',signatureExpiry:'2000000000'}}}};
-  const delivered = () => {saved={...saved,stage:'delivered'};return {record:saved,status:'delivered',bytes:new TextEncoder().encode(`original report ${counter}`)};};
-  const engine={load:()=>saved,recover:vi.fn(async()=>delivered()),prepare:vi.fn(),submit:vi.fn(),archive:vi.fn()};
+  const delivered = () => {saved={...saved,stage:'delivered'};return {record:saved,status:'delivered' as const,bytes:new TextEncoder().encode(`original report ${counter}`)};};
+  const engine={load:()=>saved,recover:vi.fn<()=>Promise<RecoveryResult>>(async()=>delivered()),prepare:vi.fn(),submit:vi.fn(),archive:vi.fn()};
   h.engines.set(account,engine);
   const client: any = {readContract:vi.fn(async()=>status)};
   return {engine,client,digest,delivered};
