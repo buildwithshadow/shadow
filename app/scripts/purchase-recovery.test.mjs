@@ -1,3 +1,4 @@
+import { BaseError } from 'viem';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {recoverOriginalPurchase} from '../src/purchaseRecovery.mjs';
@@ -55,4 +56,16 @@ test('invalid evidence remains stopped until an explicit new recovery budget is 
 for (const message of ['Another Shadow tab is using this wallet.', 'Another tab is using this purchase.']) test(`temporary lock contention recovers after ${message}`,async()=>{
   let calls=0;const h=harness({recover:async()=>{if(++calls===1)throw Error(message);return {status:'delivered'};}});
   await recoverOriginalPurchase(h.options);assert.equal(calls,2);assert.deepEqual(h.results,['delivered']);assert.deepEqual(h.stops,[]);
+});
+
+for (const details of ['HTTP request failed. Status: 503', 'The request took too long to respond. Request timed out.']) test(`wrapped RPC outage resumes: ${details}`, async()=>{
+  const rpc = new BaseError(`RPC read eth_call failed: ${details}`, {cause: new BaseError(details, {details})});
+  const wrapped = new BaseError('Contract function execution failed.', {cause:rpc});
+  let calls=0;const h=harness({recover:async()=>{if(++calls===1)throw wrapped;return {status:'delivered'};}});
+  await recoverOriginalPurchase(h.options);assert.equal(calls,2);assert.deepEqual(h.results,['delivered']);assert.deepEqual(h.stops,[]);
+});
+for (const details of ['HTTP request failed. Status: 403', 'execution reverted: 503', 'RPC returned an unexpected chain ID']) test(`deterministic wrapped RPC failure stops: ${details}`, async()=>{
+  const error=new BaseError(`RPC read eth_call failed: ${details}`, {cause:new BaseError(details,{details})});
+  let calls=0;const h=harness({recover:async()=>{calls++;throw error;}});await recoverOriginalPurchase(h.options);
+  assert.equal(calls,1);assert.deepEqual(h.stops,[error]);
 });

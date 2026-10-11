@@ -1,3 +1,23 @@
+import { isTransientRpcReadError } from '../scripts/rpc-read-queue.mjs';
+
+function transientWrappedRpc(error) {
+  const seen = new Set();
+  for (let current = error, depth = 0; current && typeof current === 'object' && depth < 8 && !seen.has(current); current = current.cause, depth++) {
+    seen.add(current);
+    const text = String(current.shortMessage ?? current.message ?? '');
+    const match = /^RPC read (eth_[A-Za-z]+) failed:/.exec(text);
+    if (match) {
+      // A deterministic RPC failure is not an outage, even if its details
+      // happen to contain a status-like number. Signed-result failures never
+      // enter this transport-specific classification.
+      const details = [text, current.details, current.cause?.message].join(' ');
+      if (/execution reverted|unexpected chain|invalid (?:argument|param)|method not found|unsupported method|pruned|missing trie|histor(?:y|ical).*unavailable/i.test(details)) return false;
+      return isTransientRpcReadError(current, match[1]);
+    }
+  }
+  return false;
+}
+
 // Read-only continuation. This module deliberately has no payment/signing API.
 export async function recoverOriginalPurchase({ recover, isCurrent, isBusy = () => false, onResult, onStop,
   budget = {attempts:0, waited:0}, wait = ms => new Promise(resolve => setTimeout(resolve, ms)), now = Date.now }) {
@@ -20,7 +40,7 @@ export async function recoverOriginalPurchase({ recover, isCurrent, isBusy = () 
     } catch (error) {
       if (!isCurrent()) return;
       // Invalid identity, signed delivery or result bytes require manual review.
-      const transient = /^Provider unavailable \((502|503|504)\)/.test(error?.message ?? '')
+      const transient = transientWrappedRpc(error) || /^Provider unavailable \((502|503|504)\)/.test(error?.message ?? '')
         || error?.message === 'Another Shadow tab is using this wallet.'
         || error?.message === 'Another tab is using this purchase.'
         || error?.name === 'TimeoutError'

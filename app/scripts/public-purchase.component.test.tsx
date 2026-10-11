@@ -1,3 +1,4 @@
+import { BaseError } from 'viem';
 import { useState } from 'react';
 import { MemoryRouter, Routes, Route, Link } from 'react-router-dom';
 import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
@@ -106,4 +107,12 @@ test('an unreadable verified result ends automatic progress and never starts ano
   const f=fixture();f.engine.recover.mockImplementation(async()=>({...f.delivered(),bytes:new Uint8Array([255])}));
   render(<Host client={f.client}/>);await screen.findByText('The verified service result is not readable UTF-8 text. Keep the original purchase.');
   await waitFor(()=>expect(screen.queryByText(/Automatic checks are running/)).toBeNull());expect(f.engine.recover).toHaveBeenCalledTimes(1);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('a wrapped RPC outage resumes the original report without a wallet request',async()=>{
+  vi.useFakeTimers();const f=fixture(),text=`original report ${counter}`;
+  const rpc=new BaseError('RPC read eth_call failed: HTTP request failed. Status: 503',{cause:new BaseError('HTTP request failed.',{details:'Status: 503'})});
+  f.engine.recover.mockRejectedValueOnce(new BaseError('Contract function execution failed.',{cause:rpc}));
+  render(<Host client={f.client}/>);await act(async()=>{await vi.advanceTimersByTimeAsync(10000);});
+  expect(screen.getByText(text)).toBeTruthy();expect(f.engine.recover).toHaveBeenCalledTimes(2);expect(f.engine.submit).not.toHaveBeenCalled();
 });
