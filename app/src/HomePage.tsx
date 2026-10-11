@@ -31,7 +31,7 @@ export function HomePage({ mainnetAvailable = false }: { mainnetAvailable?: bool
     <div className="homePage">
       <section className="homeHero" aria-labelledby="homeTitle">
         <FundingNetworkSelector selected={network} mainnetAvailable={mainnetAvailable} home />
-        <p className="homeEyebrow">{network === "mainnet" ? "Arc mainnet · Real USDC" : "Arc testnet · Test USDC"}</p>
+        <p className="homeEyebrow">{network === "mainnet" ? "Arc mainnet" : "Arc testnet"}</p>
         <h1 id="homeTitle">Let your agent buy services on a budget you set.</h1>
         <p className="homeLede">
           You set aside USDC and the limits. Your agent signs each purchase

@@ -12,7 +12,7 @@ export function FundingNetworkSelector({ selected, mainnetAvailable, home = fals
   return <div className="fundingNetworkPicker">
     <nav aria-label="Choose funding network" className="fundingNetworkOptions">
       {(["mainnet", "testnet"] as const).map(network => {
-        const content = <><strong>{network === "mainnet" ? "Mainnet" : "Testnet"}</strong><span>{network === "mainnet" ? "Real USDC" : "Practice"}</span></>;
+        const content = <strong>{network === "mainnet" ? "Mainnet" : "Testnet"}</strong>;
         return locked ? <button key={network} type="button" disabled className={selected === network ? "selected" : undefined}>{content}</button> :
           <Link key={network} to={fundingNetworkDestination(network, home)} aria-current={selected === network ? "true" : undefined} className={selected === network ? "selected" : undefined}>{content}</Link>;
       })}
