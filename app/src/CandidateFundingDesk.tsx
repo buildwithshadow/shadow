@@ -2,6 +2,7 @@ import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
+import { FundingNetworkSelector } from "./FundingNetworkSelector";
 import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, supportsExistingCircleHandoff, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
@@ -928,7 +929,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const riskAcknowledgment = <label className="fundingCheck"><input type="checkbox" checked={providerAgreed} onChange={(event) => { invalidate(); setProviderAgreed(event.target.checked); }} disabled={Boolean(busy)} />
         <span>I accept that spent funds are unsecured credit to the agent operator: Shadow cannot enforce repayment or guarantee delivery, and unpaid spent principal cannot be reclaimed. Other sponsors may separately fund the same agent.</span></label>;
 
-  if (guided) return <FundingJourney step={journeyStep} busy={Boolean(busy || prepared)} title={journeyTitle} description={journeyDescription} onNavigate={goJourney}
+  const networkSelector = service && (guided || mainnet && deployment.selfRegistration) ? <FundingNetworkSelector selected={mainnet ? "mainnet" : "testnet"} mainnetAvailable={import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true"} locked={Boolean(journeyLocked || prepared)} /> : null;
+  if (guided) return <FundingJourney step={journeyStep} busy={Boolean(busy || prepared)} title={journeyTitle} description={journeyDescription} onNavigate={goJourney} networkSelector={networkSelector}
     wallet={journeyStep !== 'wallet' && account ? <><small>Connected wallet</small><code>{compact(account)}</code><button type="button" disabled={Boolean(busy)} onClick={connect}>Refresh wallet</button></> : undefined}
     summary={['register','agent','budget','fund'].includes(journeyStep) ? <><h2>Your funding plan</h2><dl><div><dt>Sponsor</dt><dd>{account ? <code>{compact(account)}</code> : 'Connect your wallet'}</dd></div><div><dt>Agent</dt><dd>{validAgent(form.agent) ? <code>{compact(form.agent)}</code> : 'Choose next'}</dd></div><div><dt>Reserve</dt><dd>{form.reserve} test USDC</dd></div><div><dt>Maximum per purchase</dt><dd>{form.providerPerSpendCap} test USDC</dd></div><div><dt>Repayment window</dt><dd>Up to {form.repaymentHours} hours per purchase</dd></div></dl><p>Unused eligible funds can be reclaimed. Money already spent is owed by the agent operator and depends on repayment.</p></> : undefined}>
     {feedbackPanel}{snapshotError && <p className="fundingCallout" role="alert">{snapshotError}</p>}{draftWarning && <p className="fundingCallout" role="status">{draftWarning}</p>}
@@ -958,6 +960,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     {transactionDialog}
   </FundingJourney>;
   return <div className="routePage fundingDesk">
+    {networkSelector}
     <header className="fundingHead">
       <div><p className="pageEyebrow">{mainnet ? deployment.selfRegistration ? "Arc mainnet · Self service agent funding" : "Arc mainnet · Controlled participant candidate" : guardedTestnet ? "Arc testnet · Guarded funding rehearsal" : service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
         <h1>{service ? <>Fund an agent.<br />Keep the limits.</> : "Earlier candidate"}</h1>
