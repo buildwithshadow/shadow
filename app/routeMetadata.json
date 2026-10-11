@@ -6,7 +6,7 @@
     "/builders/v2": "Float V2 tools | Shadow",
     "/start": "Fund an agent | Shadow",
     "/guarded-testnet": "Guarded testnet funding | Shadow",
-    "/mainnet": "Guarded mainnet candidate | Shadow",
+    "/mainnet": "Fund an agent on Arc mainnet | Shadow",
     "/funding": "Earlier candidate | Shadow",
     "/roadmap": "Roadmap | Shadow"
   },
@@ -18,11 +18,11 @@
     "/builders/v2": "These tools are for the earlier Float V2 contract; the current public testnet browser flow starts at /start.",
     "/funding": "Earlier candidate funding information for Shadow. The current public browser flow starts at /start on Arc testnet.",
     "/guarded-testnet": "Guarded testnet funding for Shadow. This route is for the controlled Arc testnet flow.",
-    "/mainnet": "A controlled Arc mainnet candidate for sponsor-backed agent purchases, with a 0.10 USDC reserve cap and a 0.005 USDC purchase limit per line. The public participant flow is on Arc testnet.",
+    "/mainnet": "Register your own sponsor wallet on Arc mainnet, fund an agent line with up to 0.10 USDC, and set a 0.005 USDC total purchase limit. Track repayment and reclaim eligible funds.",
     "/roadmap": "Shadow product status. Today's browser flow is self-service; see current use, history, and open work."
   },
   "socialImages": {
     "/": { "image": "/og-shadow.png", "alt": "Shadow on Arc testnet: let your agent buy services on a budget you set." },
-    "/mainnet": { "image": "/og-shadow-mainnet.png", "alt": "Shadow guarded Arc mainnet candidate: let your agent buy services on a budget you set." }
+    "/mainnet": { "image": "/og-shadow-mainnet-public.png", "alt": "Shadow self service agent funding on Arc mainnet with sponsor budgets, spending limits and repayment tracking." }
   }
 }

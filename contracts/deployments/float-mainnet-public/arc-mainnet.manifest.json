@@ -1,0 +1,104 @@
+{
+  "schema": "shadow-float-mainnet-public-release-manifest/v2",
+  "ok": true,
+  "publicRegistration": true,
+  "repaymentBindingVersion": 2,
+  "checkedAt": "2026-10-11T10:31:45.566Z",
+  "chainId": "5042",
+  "contract": {
+    "name": "ShadowFloatMainnetPublic",
+    "address": "0xcA819e8713b04a4Bd7e437c04BB97ac9274e2ce5",
+    "repaymentBindingVersion": 2
+  },
+  "deployment": {
+    "transactionHash": "0xb56fe12124826b001202ae40ff058811a6dec67d86ca0a3984118300e785ec8e",
+    "blockNumber": "25375439",
+    "blockHash": "0xdf7c17427b366daea50548ae3a625be49ffdc6fd818c1ee83671399ce525a1bf"
+  },
+  "bytecode": {
+    "onchainRuntimeKeccak256": "0xa210397556c84e50f9f345168fc65fa0bc19d913d513a8b2daf8131330c3d52d",
+    "runtimeBytes": 15165
+  },
+  "source": {
+    "commit": "0b98d5e12a055eb33c35e169b57956c96ec8669e",
+    "mergeCommit": "0b98d5e12a055eb33c35e169b57956c96ec8669e",
+    "compiler": {
+      "version": "0.8.24+commit.e11b9ed9"
+    }
+  },
+  "config": {
+    "expectedChainId": "5042",
+    "expectedDeployer": "0xa2aA29b363166C59399D10D162F8883ddE6AC5bD",
+    "governanceDelay": "172800",
+    "initial": {
+      "protocolReserve": 1000000,
+      "lineReserve": 100000,
+      "lineSpend": 5000,
+      "perSpend": 5000,
+      "dailySpend": 5000
+    },
+    "maxima": {
+      "protocolReserve": 1000000,
+      "lineReserve": 100000,
+      "lineSpend": 5000,
+      "perSpend": 5000,
+      "dailySpend": 5000
+    },
+    "maximumRepaymentWindow": "86400",
+    "minimumRepaymentWindow": "3600",
+    "proposedOwner": null,
+    "usdc": "0x3600000000000000000000000000000000000000"
+  },
+  "sourceVerification": {
+    "server": "https://sourcify.dev/server",
+    "ok": true,
+    "checks": [
+      {
+        "id": "verification.sourcify.identity",
+        "status": "PASS",
+        "detail": "identity"
+      },
+      {
+        "id": "verification.sourcify.completedCreationAndRuntimeMatch",
+        "status": "PASS",
+        "detail": "completedCreationAndRuntimeMatch"
+      },
+      {
+        "id": "verification.sourcify.deploymentTransaction",
+        "status": "PASS",
+        "detail": "deploymentTransaction"
+      },
+      {
+        "id": "verification.sourcify.compilerAndTarget",
+        "status": "PASS",
+        "detail": "compilerAndTarget"
+      },
+      {
+        "id": "verification.sourcify.exactSourcesAndSettings",
+        "status": "PASS",
+        "detail": "exactSourcesAndSettings"
+      },
+      {
+        "id": "verification.sourcify.creationInput",
+        "status": "PASS",
+        "detail": "creationInput"
+      },
+      {
+        "id": "verification.sourcify.resolvedRuntime",
+        "status": "PASS",
+        "detail": "resolvedRuntime"
+      }
+    ],
+    "verifiedAt": "2026-10-11T09:35:23Z",
+    "address": "0xcA819e8713b04a4Bd7e437c04BB97ac9274e2ce5",
+    "sourceCommit": "0b98d5e12a055eb33c35e169b57956c96ec8669e",
+    "checkedAt": "2026-10-11T09:35:25.241Z"
+  },
+  "governance": {
+    "safe": "0x81D228d042fe451E9b0fE63AD782D4F30f2F3259",
+    "soleOwner": "0xa2aA29b363166C59399D10D162F8883ddE6AC5bD",
+    "threshold": 1,
+    "pauseOnlyOperator": "0x23316097f5c95A75D2ca2CCd652660a34ab10CFC"
+  },
+  "scope": "Verified deployment identity and initial configuration; not current state, an audit, or permission to activate."
+}

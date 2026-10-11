@@ -34,7 +34,7 @@ function gatedMainnetMetadata(): Plugin {
     },
     async closeBundle() {
       if (!building || enabled) return;
-      await Promise.all(["og-shadow-mainnet.png", "og-shadow-mainnet.svg"].map(name =>
+      await Promise.all(["og-shadow-mainnet.png", "og-shadow-mainnet.svg", "og-shadow-mainnet-public.png", "og-shadow-mainnet-public.svg"].map(name =>
         rm(resolve(outputDirectory, name), { force: true })));
     },
   };

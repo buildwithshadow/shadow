@@ -380,7 +380,9 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
     await verifyCandidate(client)
     await walletMatches(session)
     const accountCode = await client.getCode({ address: session.account })
-    if (accountCode && accountCode !== '0x') throw new Error('This funding interface currently supports browser EOA accounts only. Use the separate Circle signing flow for a Modular Wallet.')
+    if (accountCode && accountCode !== '0x') throw new Error(mainnet && CANDIDATE_FUNDING.selfRegistration
+      ? 'This mainnet funding flow requires an ordinary browser wallet account (EOA), without smart contract code. Switch to a supported account.'
+      : 'This funding interface currently supports browser EOA accounts only. Use the separate Circle signing flow for a Modular Wallet.')
     const call = checkedCall(prepared)
     if (prepared.kind === 'open') {
       const p = call.args[0]
