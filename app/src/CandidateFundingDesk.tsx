@@ -4,6 +4,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
 import { FundingNetworkSelector } from "./FundingNetworkSelector";
 import { observeFundingRoute, prepareFundingContinuation } from "./fundingContinuation";
+import { createBusyOwner, withOwnedBusy } from './ownedBusy.mjs';
 import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, supportsExistingCircleHandoff, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
@@ -118,7 +119,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [prepared, setPrepared] = useState<CandidatePrepared | null>(null);
   const [reviewInput, setReviewInput] = useState<CandidateOpenInput | null>(null);
   const [resolution, setResolution] = useState<CandidateResolution | null>(null);
-  const [busy, setBusy] = useState("");
+  const [busy, setBusyState] = useState("");
+  const busyOwner = useMemo(() => createBusyOwner(setBusyState), [setBusyState]);
+  const setBusy = busyOwner.set;
   const [unresolvedPurchase, setUnresolvedPurchase] = useState(false);
   const [focusPurchase, setFocusPurchase] = useState(false);
   const [error, setError] = useState("");
@@ -605,7 +608,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     setLineId(id);
     setLine(null);
     setError("");
-    setBusy(transactionHash ? "Waiting for purchase confirmation and updating the balance…" : "Updating the funding line balance…");
+    await withOwnedBusy(busyOwner, transactionHash ? "Waiting for purchase confirmation and updating the balance…" : "Updating the funding line balance…", async () => {
     try {
       if (transactionHash) {
         await client.waitForTransactionReceipt({ hash: transactionHash, timeout: 45_000 });
@@ -615,9 +618,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       if (isCurrent()) { setLineId(id); setLine(value); setMode("manage"); }
     } catch (cause) {
       if (isCurrent()) setError(`Could not confirm the latest line balance. Use “Check payment & recover result” when your connection recovers; do not submit another purchase. ${messageOf(cause)}`);
-    } finally {
-      if (revision.current === purchaseViewRevision) setBusy("");
     }
+    });
   }
 
   async function refreshAfter(result: CandidateResolution, forAccount: Address, currentRevision: number) {

@@ -218,6 +218,8 @@ jobs:
       - name: Test purchase UI recovery across route remounts
         working-directory: app
         run: pnpm test:purchase-ui
+      - name: Test ownership of async balance refresh messages
+        run: node --test app/scripts/owned-busy.test.mjs
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app
