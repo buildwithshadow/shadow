@@ -19,6 +19,7 @@ The server loads the kit and the app's `viem` by relative path, so run it from a
 export ARC_RPC_URL=https://rpc.testnet.arc.io
 export FLOAT_MAINNET_EXPECTED_CHAIN_ID=5042002
 export FLOAT_PROVIDER_PRIVATE_KEY=...                     # read at start, never printed
+export PROVIDER_ADMISSION_MODE=testnet-unmonitored         # testnet only; mainnet requires public-monitor
 export PROVIDER_ENDPOINT="https://provider.example/api/ask"
 export PROVIDER_PRICE=1000000                             # atomic USDC: 1 USDC
 export PROVIDER_STORE_DIR=/var/lib/shadow-provider
@@ -256,8 +257,8 @@ and finalized provider payments before approving it.
 
 ## Public mainnet admission monitoring
 
-A signing process started with a `publicRegistration: true` release manifest
-requires `PROVIDER_MONITOR_BASELINE` and `PROVIDER_MONITOR_STATE_DIR`. Use the
+A mainnet signing process requires `PROVIDER_ADMISSION_MODE=public-monitor`,
+a `publicRegistration: true` release manifest, and `PROVIDER_MONITOR_BASELINE` and `PROVIDER_MONITOR_STATE_DIR`. Use the
 schema 2 public admission baseline for that exact release. Its contract, chain
 and runtime must match the provider manifest. Keep the operator-selected
 manifest and baseline root protected and grant the provider read-only access to

@@ -40,3 +40,14 @@ export function createProviderMonitorGuard({ connection, manifestPath, baselineP
     requireThat(final.runId === initial.runId && final.snapshotHash === initial.snapshotHash);
   };
 }
+
+
+// An explicit startup mode avoids silently treating a missing public marker as
+// a private deployment. Unmonitored signing is restricted to testnet; all new
+// mainnet signing processes require a validated public monitor configuration.
+export function configureProviderAdmission({mode, recoveryOnly = false, ...options}) {
+  if (recoveryOnly) return null;
+  if (mode === "public-monitor") return createProviderMonitorGuard(options);
+  if (mode === "testnet-unmonitored" && String(options.connection?.chainId) === "5042002") return null;
+  throw new Error("Signing requires PROVIDER_ADMISSION_MODE=public-monitor with bound monitor configuration; testnet may explicitly select testnet-unmonitored");
+}

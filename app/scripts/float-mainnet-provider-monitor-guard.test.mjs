@@ -4,7 +4,7 @@ import {mkdtempSync,writeFileSync,rmSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {keccak256} from 'viem';
-import {createProviderMonitorGuard} from './float-mainnet-provider-monitor-guard.mjs';
+import {createProviderMonitorGuard,configureProviderAdmission} from './float-mainnet-provider-monitor-guard.mjs';
 import {loadContext,runMonitorOnce} from './float-mainnet-monitor-runner.mjs';
 const addr=n=>'0x'+n.toString(16).padStart(40,'0');
 const hash=n=>'0x'+n.toString(16).padStart(64,'0');
@@ -30,6 +30,7 @@ for(const [name,change] of [
  ['missing heartbeat',f=>rmSync(join(f.options.stateDir,'heartbeat.json'))],
  ['latched hold',f=>writeFileSync(join(f.options.stateDir,'hold.json'),JSON.stringify({incidentId:'test'}))],
  ['stale heartbeat',f=>{const p=join(f.options.stateDir,'heartbeat.json');const h=JSON.parse(readFileSync(p));h.startedAt=h.completedAt=new Date(Date.now()-60000).toISOString();writeFileSync(p,JSON.stringify(h));}],
+ ['substituted canonical observation',f=>{const p=join(f.options.stateDir,'heartbeat.json');const h=JSON.parse(readFileSync(p));h.observedAt={...h.observedAt,blockNumber:'101',blockHash:hash(101)};writeFileSync(p,JSON.stringify(h));f.options.connection.client.getBlock=async()=>({number:101n,hash:hash(101),timestamp:BigInt(h.observedAt.timestamp)});}],
  ['checking heartbeat',f=>{const p=join(f.options.stateDir,'heartbeat.json');const h=JSON.parse(readFileSync(p));h.status='checking';writeFileSync(p,JSON.stringify(h));}],
  ['changed policy',f=>{f.baseline.policy.maxHeartbeatAgeMs=20000;writeFileSync(f.options.baselinePath,JSON.stringify(f.baseline));}],
  ['changed manifest',f=>{f.manifest.extra='changed';writeFileSync(f.options.manifestPath,JSON.stringify(f.manifest));}],
@@ -43,5 +44,20 @@ test('provider startup refuses missing configuration and wrong release identity'
   assert.throws(()=>createProviderMonitorGuard({...f.options,connection:{...f.options.connection,address:addr(99)}}));
   f.manifest.bytecode.onchainRuntimeKeccak256=hash(99);writeFileSync(f.options.manifestPath,JSON.stringify(f.manifest));
   assert.throws(()=>createProviderMonitorGuard(f.options));
+ }finally{f.cleanup();}
+});
+
+test('signing startup requires an explicit validated mode and never falls back on a missing public marker',async()=>{
+ const f=await fixture();try{
+  for(const mode of [undefined,'','legacy','testnet-unmonitored']) assert.throws(()=>configureProviderAdmission({...f.options,mode}));
+  assert.equal(typeof configureProviderAdmission({...f.options,mode:'public-monitor'}),'function');
+  assert.throws(()=>configureProviderAdmission({...f.options,mode:'public-monitor',manifestPath:undefined}));
+  for(const marker of [undefined,false]){
+   f.manifest.publicRegistration=marker;writeFileSync(f.options.manifestPath,JSON.stringify(f.manifest));
+   assert.throws(()=>configureProviderAdmission({...f.options,mode:'public-monitor'}));
+  }
+  assert.equal(configureProviderAdmission({mode:'testnet-unmonitored',connection:{chainId:5042002n}}),null);
+  for(const chainId of [undefined,1n,31337n]) assert.throws(()=>configureProviderAdmission({mode:'testnet-unmonitored',connection:{chainId}}));
+  assert.equal(configureProviderAdmission({recoveryOnly:true}),null);
  }finally{f.cleanup();}
 });

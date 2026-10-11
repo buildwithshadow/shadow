@@ -120,7 +120,10 @@ export function heartbeatStatus(context, nowMs = Date.now()) {
     if (heartbeat.status === "checking") alerts.push(alert("CHECK_IN_PROGRESS", "a fresh complete check is not available"));
     const snapshot = optionalJson(paths(context).snapshot);
     if (!snapshot || digestJson(snapshot) !== heartbeat.snapshotHash) alerts.push(alert("SNAPSHOT_BINDING_MISMATCH", "persisted snapshot is missing or does not match the heartbeat"));
-    else alerts.push(...evaluateSnapshot(context.baseline, snapshot, nowMs).alerts);
+    else {
+      alerts.push(...evaluateSnapshot(context.baseline, snapshot, nowMs).alerts);
+      if (canonicalJson(snapshot.observedAt) !== canonicalJson(heartbeat.observedAt)) alerts.push(alert("OBSERVATION_BINDING_MISMATCH", "heartbeat observation differs from its hashed snapshot"));
+    }
     const hold = optionalJson(paths(context).hold);
     if (hold) alerts.push(alert("HOLD_LATCHED", `incident ${hold.incidentId} needs explicit local acknowledgement`));
     if (heartbeat.ok !== true || heartbeat.hold !== false) alerts.push(...(Array.isArray(heartbeat.alerts) ? heartbeat.alerts : [alert("HEARTBEAT_INVALID", "heartbeat has no alert policy result")]));

@@ -35,7 +35,7 @@ import {
 // The example has no install of its own; keccak256 comes from the viem the kit uses.
 const { keccak256 } = createRequire(new URL("../../app/package.json", import.meta.url))("viem");
 
-import { createProviderMonitorGuard } from "../../app/scripts/float-mainnet-provider-monitor-guard.mjs";
+import { configureProviderAdmission } from "../../app/scripts/float-mainnet-provider-monitor-guard.mjs";
 
 import { createStoreWitness, ProviderStoreHold } from "./store-witness.mjs";
 
@@ -629,11 +629,11 @@ async function main() {
   const host = env.HOST?.trim() || "127.0.0.1";
 
   const connection = await connectCandidate(readDeployment(env, { manifest: values.manifest }));
-  const publicRelease = values.manifest && JSON.parse(readFileSync(values.manifest, "utf8")).publicRegistration === true;
-  const admissionGuard = !recoveryOnly && publicRelease ? createProviderMonitorGuard({
+  const admissionGuard = configureProviderAdmission({
+    mode: env.PROVIDER_ADMISSION_MODE, recoveryOnly,
     connection, manifestPath: values.manifest,
     baselinePath: env.PROVIDER_MONITOR_BASELINE, stateDir: env.PROVIDER_MONITOR_STATE_DIR,
-  }) : null;
+  });
   const account = recoveryOnly ? { address: providerAddress } : walletFromEnv(connection, KEY).account;
   // The key now lives only in `account`: the service, loaded below, and any
   // process it starts do not inherit it.

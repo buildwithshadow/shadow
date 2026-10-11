@@ -292,7 +292,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         FLOAT_MAINNET_EXPECTED_CHAIN_ID: CHAIN_ID.toString(),
         FLOAT_MAINNET_ADDRESS: float,
         FLOAT_PROVIDER_PRIVATE_KEY: keyOf(5),
-        PROVIDER_ENDPOINT: ENDPOINT,
+        PROVIDER_ADMISSION_MODE: "testnet-unmonitored", PROVIDER_ENDPOINT: ENDPOINT,
         PROVIDER_PRICE: PRICE.toString(),
         PROVIDER_STORE_DIR: childStore,
         PORT: String(port),
