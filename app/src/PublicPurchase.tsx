@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation } from 'react-router-dom';
-import { recoverOriginalPurchase } from './purchaseRecovery.mjs';
+import { recoverOriginalPurchase, type RecoveryResult } from './purchaseRecovery.mjs';
 import { walletReportDisplay } from './walletReportDisplay.mjs';
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
 import { candidateErrorMessage, candidateChainFor, candidateFundingAbi, type CandidateDeployment } from './candidateFunding';
@@ -24,6 +24,9 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [recoveryEpoch, setRecoveryEpoch] = useState(0);
+  const deferredRecovery = useRef(new Map<string, RecoveryResult>());
+  const automaticSessions = useRef(new Map<string, {attempts:number; waited:number; stopped:boolean}>());
   const [documentVisible, setDocumentVisible] = useState(document.visibilityState === 'visible');
   useEffect(() => {
     const changed = () => setDocumentVisible(document.visibilityState === 'visible');
@@ -107,33 +110,58 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     let cancelled = false;
     const generation = routeGeneration.current, current = revision.current;
     const digest = record.intent.digest;
+    const sessionKey = `${deployment.chainId}:${deployment.address}:${account}:${digest}`;
+    const budget = automaticSessions.current.get(sessionKey) ?? {attempts:0, waited:0, stopped:false};
+    automaticSessions.current.set(sessionKey, budget);
+    if (budget.stopped) return;
     const isCurrent = () => !cancelled && revision.current === current && routeGeneration.current === generation &&
       currentView.current.active && currentView.current.correctNetwork && !currentView.current.busy &&
       currentView.current.account === account && currentView.current.deployment === deployment && document.visibilityState === 'visible';
-    void recoverOriginalPurchase({
-      isCurrent,
-      isBusy: () => inFlight.current,
-      recover: async () => {
-        if (inFlight.current) throw new Error('Another wallet action is in progress. Check the original purchase afterward.');
-        if (engine.load()?.intent.digest !== digest) throw new Error('The saved purchase changed.');
-        inFlight.current = true; setRecovering(true);
-        try { return await engine.recover(); }
-        finally { inFlight.current = false; if (isCurrent()) setRecovering(false); }
-      },
-      onResult: recovered => {
+    const publishRecovered = (recovered: RecoveryResult) => {
         setRecord(recovered.record);
         setReceiptCheck({ key: `${digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
         if (recovered.status === 'blocked') { setRefusedDigest(digest); setNotice('The contract refused this purchase. No provider payment was made for this intent.'); }
         else if (recovered.bytes) {
           try { setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes)); setError(''); setNotice('Payment confirmed and the original service result recovered.'); }
-          catch { setError('The verified service result is not readable UTF-8 text. Keep the original purchase.'); }
+          catch { budget.stopped = true; setError('The verified service result is not readable UTF-8 text. Keep the original purchase.'); }
           void Promise.resolve().then(() => onPurchaseChanged(recovered.record.intent.typedData.message.lineId)).catch(() => { /* receipt remains verified; balances can refresh separately */ });
         } else setNotice('Checking the original payment. Do not submit another purchase while confirmation is unclear.');
+      };
+    const deferred = deferredRecovery.current.get(sessionKey);
+    if (deferred) {
+      try {
+        if (engine.load()?.intent.digest === digest) {
+          deferredRecovery.current.delete(sessionKey); publishRecovered(deferred); return;
+        }
+      } catch (cause) { budget.stopped = true; setError(candidateErrorMessage(cause)); return; }
+    }
+    // The old read's finally schedules a new effect. Do not spend this view's
+    // budget while it is still settling, including a canceled sixth attempt.
+    if (inFlight.current) return;
+    void recoverOriginalPurchase({
+      isCurrent,
+      budget,
+      isBusy: () => inFlight.current,
+      recover: async () => {
+        if (inFlight.current) throw new Error('Another wallet action is in progress. Check the original purchase afterward.');
+        if (engine.load()?.intent.digest !== digest) throw new Error('The saved purchase changed.');
+        inFlight.current = true; setRecovering(true);
+        try {
+          const recovered = await engine.recover();
+          if (!isCurrent() && (recovered.status === 'delivered' || recovered.status === 'blocked')) deferredRecovery.current.set(sessionKey, recovered);
+          return recovered;
+        }
+        finally {
+          inFlight.current = false;
+          if (isCurrent()) setRecovering(false);
+          else setRecoveryEpoch(value => value + 1);
+        }
       },
-      onStop: cause => { setRecovering(false); setNotice('Automatic checks have stopped. Check the original payment again below; this never sends another payment.'); if (cause) setError(candidateErrorMessage(cause)); },
+      onResult: publishRecovered,
+      onStop: cause => { budget.stopped = true; setRecovering(false); setNotice('Automatic checks have stopped. Check the original payment again below; this never sends another payment.'); if (cause) setError(candidateErrorMessage(cause)); },
     });
     return () => { cancelled = true; setRecovering(false); };
-  }, [engine, record?.intent.digest, active, correctNetwork, busy, needsRecovery, location.key, documentVisible]);
+  }, [engine, record?.intent.digest, active, correctNetwork, busy, needsRecovery, location.key, documentVisible, recoveryEpoch]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
     if (!engine || inFlight.current || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
@@ -164,6 +192,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         await engine.submit();
         if (revision.current === current) { setReviewing(false); setNotice('Transaction requested. Check payment and recover the result below; do not submit a new purchase.'); }
       } else if (kind === 'recover') {
+        if (record) automaticSessions.current.delete(`${deployment.chainId}:${deployment.address}:${account}:${record.intent.digest}`);
         const recovered = await engine.recover();
         if (revision.current === current) {
           setReceiptCheck({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });

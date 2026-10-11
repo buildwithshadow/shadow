@@ -36,6 +36,19 @@ test('a returning view waits for the canceled read to settle before recovery',as
   const h=harness({isBusy:()=>oldRead,wait:async()=>{oldRead=false;},recover:async()=>{calls++;return {status:'delivered'};}});
   await recoverOriginalPurchase(h.options);assert.equal(calls,1);assert.deepEqual(h.results,['delivered']);assert.deepEqual(h.stops,[]);
 });
-test('a permanently busy view exhausts its budget without overlapping reads',async()=>{
-  const h=harness({isBusy:()=>true});await recoverOriginalPurchase(h.options);assert.equal(h.calls(),0);assert.deepEqual(h.stops,[null]);
+test('a canceled slow read does not consume replacement attempts or permanently stop recovery',async()=>{
+  const budget={attempts:0,waited:0};const h=harness({isBusy:()=>true,budget});await recoverOriginalPurchase(h.options);assert.equal(h.calls(),0);assert.deepEqual(h.stops,[]);assert.equal(budget.attempts,0);
+  await recoverOriginalPurchase({...h.options,isBusy:()=>false,recover:async()=>({status:'delivered'})});assert.deepEqual(h.results,['delivered']);
+});
+test('interrupted view batches share a finite attempt budget',async()=>{
+  const budget={attempts:0,waited:0};let current=true,calls=0;
+  const h=harness({budget,isCurrent:()=>current,recover:async()=>{calls++;return {status:'unconfirmed'};},wait:async()=>{current=false;}});
+  for(let i=0;i<8;i++){current=true;await recoverOriginalPurchase(h.options);}
+  assert.equal(calls,6);assert.equal(budget.attempts,6);assert.ok(h.stops.length>0);
+});
+test('invalid evidence remains stopped until an explicit new recovery budget is supplied',async()=>{
+  const budget={attempts:0,waited:0};let calls=0;
+  const h=harness({budget,recover:async()=>{calls++;throw new Error('Invalid signed delivery.');}});
+  await recoverOriginalPurchase(h.options);await recoverOriginalPurchase(h.options);assert.equal(calls,1);assert.equal(budget.stopped,true);
+  await recoverOriginalPurchase({...h.options,budget:{attempts:0,waited:0}});assert.equal(calls,2);
 });
