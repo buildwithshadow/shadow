@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
 import { FundingNetworkSelector } from "./FundingNetworkSelector";
-import { prepareFundingContinuation } from "./fundingContinuation";
+import { observeFundingRoute, prepareFundingContinuation } from "./fundingContinuation";
 import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, supportsExistingCircleHandoff, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
@@ -146,8 +146,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const submitting = useRef(false);
   const autoChecked = useRef("");
   const previousRoute = useRef(location.key);
-  const activeRouteKey = useRef(location.key);
-  activeRouteKey.current = location.key;
+  const activeRoute = useRef({ key: location.key, generation: 0 });
+  activeRoute.current = observeFundingRoute(activeRoute.current, location.key);
   const autoLoadedLink = useRef("");
   const correctNetwork = chainId === CANDIDATE_FUNDING.chainId;
   const canWrite = Boolean(account && correctNetwork && !busy && !pending && !journalError && !gatewayHeld);
@@ -644,7 +644,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     if (!account || !prepared || !window.ethereum || submitting.current) return;
     const intent = prepared;
     const fundingInput = reviewInput ? { ...reviewInput } : null;
-    const originRoute = location.key;
+    const originRoute = activeRoute.current.generation;
     const sender = account;
     const currentRevision = revision.current;
     const isCurrent = () => activeAccount.current === sender && revision.current === currentRevision;
@@ -676,9 +676,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           setBusy("Allowance confirmed. Checking the line for your separate funding confirmation…");
           try {
             const next = await prepareFundingContinuation({ approval: intent, resolution: result, input: fundingInput, isCurrent,
-              originRoute, currentRoute: () => activeRouteKey.current,
+              originRoute, currentRoute: () => activeRoute.current.generation,
               prepareOpen: (forAccount, input) => prepareCandidateOpen(client, forAccount, input) });
-            if (!isCurrent() || activeRouteKey.current !== originRoute) return;
+            if (!isCurrent() || activeRoute.current.generation !== originRoute) return;
             if (next) { setPrepared(next); setReviewInput(fundingInput); setNotice("Step 2 of 2: fund the line. Your allowance is already confirmed; this separate transaction deposits the reserve."); }
           } catch (cause) {
             if (isCurrent()) setError(`Your allowance is confirmed and no funding transaction was requested. ${messageOf(cause)}`);

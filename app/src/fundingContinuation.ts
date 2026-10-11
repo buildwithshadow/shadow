@@ -1,13 +1,17 @@
 import type { CandidateOpenInput, CandidatePrepared, CandidateResolution } from './candidateFunding';
 
+export function observeFundingRoute(previous: { key: string; generation: number }, key: string) {
+  return previous.key === key ? previous : { key, generation: previous.generation + 1 };
+}
+
 // A confirmed allowance can prepare the next review, never send another transaction.
 export async function prepareFundingContinuation({ approval, resolution, input, isCurrent, originRoute, currentRoute, prepareOpen }: {
   approval: CandidatePrepared;
   resolution: CandidateResolution;
   input: CandidateOpenInput | null;
   isCurrent: () => boolean;
-  originRoute: string;
-  currentRoute: () => string;
+  originRoute: number;
+  currentRoute: () => number;
   prepareOpen: (account: string, input: CandidateOpenInput) => Promise<CandidatePrepared>;
 }): Promise<CandidatePrepared | null> {
   if (approval.kind !== 'approve' || approval.nextAction !== 'open' || resolution.status !== 'confirmed') return null;

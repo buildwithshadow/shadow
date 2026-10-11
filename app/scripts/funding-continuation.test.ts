@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { prepareFundingContinuation } from '../src/fundingContinuation.ts';
+import { observeFundingRoute, prepareFundingContinuation } from '../src/fundingContinuation.ts';
 import type { CandidateOpenInput, CandidatePrepared, CandidateResolution } from '../src/candidateFunding.ts';
 
 const sponsor = '0x1111111111111111111111111111111111111111';
@@ -9,7 +9,7 @@ const input: CandidateOpenInput = { agent, provider: '0x333333333333333333333333
 const approval: CandidatePrepared = { kind: 'approve', account: sponsor, to: sponsor, data: '0x', value: '0', amount: 100000n, lineId: null, agent: null, expectedEpoch: null, observedBlock: 1n, summary: '', nextAction: 'open' };
 const next: CandidatePrepared = { ...approval, kind: 'open', agent, nextAction: undefined };
 const confirmed: CandidateResolution = { status: 'confirmed', txHash: null, message: '' };
-const route = { originRoute: 'fund-review', currentRoute: () => 'fund-review' };
+const route = { originRoute: 0, currentRoute: () => 0 };
 
 test('confirmed allowance prepares the reviewed funding input without sending another transaction', async () => {
   let calls = 0;
@@ -47,17 +47,24 @@ test('RPC failure preserves the completed allowance and does not fabricate a fun
 });
 
 test('leaving the funding route before allowance confirmation does not prepare another review', async () => {
-  assert.equal(await prepareFundingContinuation({...route,currentRoute:()=> 'budget',approval,resolution:confirmed,input,isCurrent:()=>true,
+  assert.equal(await prepareFundingContinuation({...route,currentRoute:()=> 1,approval,resolution:confirmed,input,isCurrent:()=>true,
     prepareOpen:async()=>{throw new Error('must not prepare');}}),null);
 });
 
 test('navigation away and back during preparation cannot revive the original review', async () => {
-  let routeKey = 'fund-review';
+  let routeState = { key: 'fund-review', generation: 0 };
   let release!: (value: CandidatePrepared) => void;
   const waiting = new Promise<CandidatePrepared>(resolve => {release=resolve;});
-  const result = prepareFundingContinuation({...route,currentRoute:()=>routeKey,approval,resolution:confirmed,input,isCurrent:()=>true,prepareOpen:async()=>waiting});
-  routeKey = 'budget';
-  routeKey = 'new-fund-review';
+  const result = prepareFundingContinuation({...route,currentRoute:()=>routeState.generation,approval,resolution:confirmed,input,isCurrent:()=>true,prepareOpen:async()=>waiting});
+  routeState = observeFundingRoute(routeState,'budget');
+  routeState = observeFundingRoute(routeState,'fund-review');
+  assert.equal(routeState.key,'fund-review','browser Back restores the original history key');
+  assert.equal(routeState.generation,2);
   release(next);
   assert.equal(await result,null);
+});
+
+test('renders without navigation preserve the generation and do not cancel continuation', () => {
+  const current = {key:'fund-review',generation:3};
+  assert.equal(observeFundingRoute(current,'fund-review'),current);
 });
