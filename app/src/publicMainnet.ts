@@ -1,18 +1,23 @@
+import manifest from '../../contracts/deployments/float-mainnet-public/arc-mainnet.manifest.json' with { type: 'json' }
 import type { CandidateDeployment } from './candidateFunding'
 import type { PublicService } from './PublicPurchase'
 
 // Verified deployment only. Importing this module does not enable the public route,
 // activate the provider or change either onchain pause.
+if (!manifest.ok || !manifest.publicRegistration || manifest.repaymentBindingVersion !== 2 || manifest.chainId !== '5042' || BigInt(manifest.deployment.blockNumber) <= 0n) {
+  throw new Error('Invalid public mainnet deployment identity')
+}
+
 export const PUBLIC_MAINNET: CandidateDeployment = Object.freeze({
-  chainId: 5042,
-  address: '0xcA819e8713b04a4Bd7e437c04BB97ac9274e2ce5',
-  usdc: '0x3600000000000000000000000000000000000000',
-  runtimeHash: '0xa210397556c84e50f9f345168fc65fa0bc19d913d513a8b2daf8131330c3d52d',
+  chainId: Number(manifest.chainId),
+  address: manifest.contract.address as `0x${string}`,
+  usdc: manifest.config.usdc as `0x${string}`,
+  runtimeHash: manifest.bytecode.onchainRuntimeKeccak256 as `0x${string}`,
   signatureTtl: 900n,
-  maxReserve: 100_000n,
-  maxLineSpend: 5_000n,
-  maxDailySpend: 5_000n,
-  maxPerSpend: 5_000n,
+  maxReserve: BigInt(manifest.config.initial.lineReserve),
+  maxLineSpend: BigInt(manifest.config.initial.lineSpend),
+  maxDailySpend: BigInt(manifest.config.initial.dailySpend),
+  maxPerSpend: BigInt(manifest.config.initial.perSpend),
   drawBoundRepayment: true,
   selfRegistration: true,
 })
