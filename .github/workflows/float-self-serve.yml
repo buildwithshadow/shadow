@@ -28,6 +28,8 @@ on:
       - "app/src/HomePage.tsx"
       - "app/src/home.css"
       - "app/src/fundingJourney.*"
+      - "app/src/fundingContinuation.ts"
+      - "app/scripts/funding-continuation.test.ts"
       - "app/scripts/funding-journey.test.ts"
       - "app/scripts/funding-network.test.ts"
       - "app/scripts/wallet-network.test.ts"
@@ -197,7 +199,7 @@ jobs:
       - name: Test domain migration and mandate identity compatibility
         run: node --test app/scripts/shadow-url-migration.test.mjs
       - name: Test public Arc testnet wallet settings and RPC repair guidance
-        run: node --test app/scripts/arc-testnet-network.test.mjs app/scripts/wallet-network.test.ts app/scripts/funding-journey.test.ts app/scripts/funding-network.test.ts
+        run: node --test app/scripts/arc-testnet-network.test.mjs app/scripts/wallet-network.test.ts app/scripts/funding-journey.test.ts app/scripts/funding-network.test.ts app/scripts/funding-continuation.test.ts
       - name: Install agent dependencies
         working-directory: agent
         run: pnpm install --frozen-lockfile --ignore-workspace

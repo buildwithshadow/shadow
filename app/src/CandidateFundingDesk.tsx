@@ -3,6 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
 import { FundingNetworkSelector } from "./FundingNetworkSelector";
+import { prepareFundingContinuation } from "./fundingContinuation";
 import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, supportsExistingCircleHandoff, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
@@ -640,11 +641,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   async function sendReviewed() {
     if (!account || !prepared || !window.ethereum || submitting.current) return;
     const intent = prepared;
+    const fundingInput = reviewInput ? { ...reviewInput } : null;
     const sender = account;
     const currentRevision = revision.current;
     const isCurrent = () => activeAccount.current === sender && revision.current === currentRevision;
     submitting.current = true;
-    setBusy("Check and approve this transaction in your wallet…"); setError("");
+    setBusy("Checking this transaction before requesting wallet approval…"); setError("");
     try {
       if (!navigator.locks) throw new Error("This browser cannot protect concurrent transactions. Use a current browser over HTTPS.");
       const journal = createCandidateJournal(window.localStorage, sender);
@@ -657,14 +659,27 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           publicClient: client,
           walletClient: createWalletClient({ chain, transport: custom(window.ethereum!), account: sender }),
           account: sender, journal,
-          onStage: (value) => { if (isCurrent()) { setPending(value); setBusy(value.txHash ? "Checking transaction confirmation…" : "Check and approve this transaction in your wallet…"); } },
+          onStage: (value) => { if (isCurrent()) { setPending(value); setBusy(value.txHash ? "Checking transaction confirmation…" : "Checking the final wallet state before requesting approval…"); } },
+          onProgress: (value) => { if (isCurrent()) setBusy(value); },
         }, intent);
         if (!isCurrent()) return;
         setResolution(result);
         setPrepared(null);
         loadJournal(sender);
         if (result.status === "confirmed" && intent.kind === "approve") {
-          setNotice(`USDC approval confirmed. ${intent.nextAction === "open" ? "Review the funding line again to open it." : "Review repayment again to pay the current debt."}`);
+          setNotice(`Step 1 of 2 complete: USDC allowance confirmed. ${intent.nextAction === "open" ? "Preparing the funding transaction. No funds have moved yet." : "Next, review the separate repayment transaction."}`);
+        }
+        if (result.status === "confirmed" && intent.kind === "approve" && intent.nextAction === "open") {
+          setBusy("Allowance confirmed. Checking the line for your separate funding confirmation…");
+          try {
+            const next = await prepareFundingContinuation({ approval: intent, resolution: result, input: fundingInput, isCurrent,
+              prepareOpen: (forAccount, input) => prepareCandidateOpen(client, forAccount, input) });
+            if (!isCurrent()) return;
+            if (next) { setPrepared(next); setReviewInput(fundingInput); setNotice("Step 2 of 2: fund the line. Your allowance is already confirmed; this separate transaction deposits the reserve."); }
+          } catch (cause) {
+            if (isCurrent()) setError(`Your allowance is confirmed and no funding transaction was requested. ${messageOf(cause)}`);
+          }
+          return;
         }
         await refreshAfter(result, sender, currentRevision);
       });
@@ -882,6 +897,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       {prepared && <><p className="pageEyebrow">{network} · Wallet confirmation</p>
         <h2 ref={dialogTitle} id="funding-review-title" tabIndex={-1}>{prepared.kind === "register" ? "Register your sponsor wallet" : prepared.kind === "approve" ? "Approve this USDC amount" : prepared.kind === "open" ? "Open this funding line" : prepared.kind === "repay" ? "Repay this amount" : prepared.kind === "default" ? "Declare this line in default" : "Reclaim eligible funds"}</h2>
         <p id="funding-review-description">{prepared.summary}</p>
+        {prepared.kind === 'approve' && <p>Step 1 of 2: approve the exact token allowance. {prepared.nextAction === 'open' ? 'Next, fund your line in a separate wallet transaction.' : 'Next, repay the debt in a separate wallet transaction.'}</p>}
+        {prepared.kind === 'open' && <p>The token allowance is already sufficient. This transaction funds the line; it is not another allowance approval.</p>}
         <dl className="fundingDetails"><div><dt>Wallet</dt><dd><code>{prepared.account}</code></dd></div>
           <div><dt>{prepared.kind === "default" ? "Outstanding principal" : "Amount"}</dt><dd>{usdc(prepared.amount)} {mainnet ? 'USDC' : 'test USDC'}</dd></div>
           <div><dt>Contract receiving the call</dt><dd><code>{prepared.to}</code></dd></div>
@@ -892,7 +909,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         <p>{prepared.kind === "register" ? "Registration enables funding from this wallet only. Your tokens remain in your wallet." : prepared.kind === "approve" ? "This approval does not open a line or repay debt. You will review that transaction separately." : prepared.kind === "repay" ? "Review the repayment scope above. Legacy lines pay current debt at execution and can settle a newer purchase if approval is delayed; guarded lines reject a different purchase. Check confirmation before retrying." : prepared.kind === "default" ? "Unpaid spent principal remains a loss unless it is repaid." : prepared.kind === "open" ? "The sponsor bears repayment risk. A paid provider can leave debt outstanding even if delivery fails." : "Closing an open line ends its purchase access and returns eligible reserve to its sponsor."}</p>
         <p>Finish other transactions from this account first. If you submit one elsewhere while this wallet prompt is open, cancel this request and review it again. Shadow cannot reserve a wallet nonce across other apps or devices.</p>
         <div className="fundingActions"><button type="button" onClick={() => setPrepared(null)} disabled={Boolean(busy)}>Back</button>
-          <button className="fundingPrimary" type="button" onClick={() => void sendReviewed()} disabled={Boolean(busy)}>Confirm in wallet</button></div>
+          <button className="fundingPrimary" type="button" onClick={() => void sendReviewed()} disabled={Boolean(busy)}>{prepared.kind === 'approve' ? 'Approve allowance in wallet' : prepared.kind === 'open' ? 'Fund line in wallet' : prepared.kind === 'repay' ? 'Repay in wallet' : 'Confirm in wallet'}</button></div>
         {busy && <p role="status">{busy}</p>}
       </>}
     </dialog>;

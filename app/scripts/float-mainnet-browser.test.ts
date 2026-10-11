@@ -116,6 +116,22 @@ test('wrong RPC chain and mismatched deployed generation fail before wallet acce
   assert.equal(f.state.sends, 0)
 })
 
+test('wallet approval progress is reported only after successful preflight checks', async () => {
+  const f = fixture();
+  const prepared = await prepareCandidateOpen(f.client,sponsor,input);
+  const progress: string[] = [];
+  f.state.simulationError = new Error('simulation unavailable');
+  await assert.rejects(executeCandidateCall({...f.session,onProgress:value=>progress.push(value)},prepared),/simulation unavailable/);
+  assert.equal(f.state.sends,0);
+  assert.ok(progress.some(value=>value.startsWith('Checking')));
+  assert.ok(!progress.includes('Check and approve this transaction in your wallet…'));
+  f.state.simulationError = null;
+  f.mined(prepared);
+  f.state.onSend = () => { assert.equal(progress.at(-1),'Check and approve this transaction in your wallet…'); return txHash; };
+  assert.equal((await executeCandidateCall({...f.session,onProgress:value=>progress.push(value)},prepared)).status,'confirmed');
+  assert.equal(f.state.sends,1);
+})
+
 test('identity read failure queues no later reads and a fresh retry succeeds', async () => {
   const f = fixture()
   f.state.failRead = 'VERSION_HASH'
