@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { recoverySession, resetRecoverySession, recoveryWalletBusy, beginRecoveryWalletWork, finishRecoveryWalletWork, subscribeRecoverySettlement } from './purchaseRecoverySession.mjs';
 import { useLocation } from 'react-router-dom';
 import { recoverOriginalPurchase, type RecoveryResult } from './purchaseRecovery.mjs';
 import { walletReportDisplay } from './walletReportDisplay.mjs';
@@ -25,8 +26,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [reviewing, setReviewing] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [recoveryEpoch, setRecoveryEpoch] = useState(0);
-  const deferredRecovery = useRef(new Map<string, RecoveryResult>());
-  const automaticSessions = useRef(new Map<string, {attempts:number; waited:number; stopped:boolean}>());
+  const walletWorkKey = `${deployment.chainId}:${account}`;
+  useEffect(() => subscribeRecoverySettlement(() => setRecoveryEpoch(value => value + 1)), []);
   const [documentVisible, setDocumentVisible] = useState(document.visibilityState === 'visible');
   useEffect(() => {
     const changed = () => setDocumentVisible(document.visibilityState === 'visible');
@@ -110,9 +111,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     let cancelled = false;
     const generation = routeGeneration.current, current = revision.current;
     const digest = record.intent.digest;
-    const sessionKey = `${deployment.chainId}:${deployment.address}:${account}:${digest}`;
-    const budget = automaticSessions.current.get(sessionKey) ?? {attempts:0, waited:0, stopped:false};
-    automaticSessions.current.set(sessionKey, budget);
+    const sessionKey = `${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${digest}`;
+    const budget = recoverySession(sessionKey);
     if (budget.stopped) return;
     const isCurrent = () => !cancelled && revision.current === current && routeGeneration.current === generation &&
       currentView.current.active && currentView.current.correctNetwork && !currentView.current.busy &&
@@ -127,34 +127,34 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           void Promise.resolve().then(() => onPurchaseChanged(recovered.record.intent.typedData.message.lineId)).catch(() => { /* receipt remains verified; balances can refresh separately */ });
         } else setNotice('Checking the original payment. Do not submit another purchase while confirmation is unclear.');
       };
-    const deferred = deferredRecovery.current.get(sessionKey);
+    const deferred = budget.deferred;
     if (deferred) {
       try {
         if (engine.load()?.intent.digest === digest) {
-          deferredRecovery.current.delete(sessionKey); publishRecovered(deferred); return;
+          budget.deferred = null; publishRecovered(deferred); return;
         }
       } catch (cause) { budget.stopped = true; setError(candidateErrorMessage(cause)); return; }
     }
     // The old read's finally schedules a new effect. Do not spend this view's
     // budget while it is still settling, including a canceled sixth attempt.
-    if (inFlight.current) return;
+    if (inFlight.current || recoveryWalletBusy(walletWorkKey)) return;
     void recoverOriginalPurchase({
       isCurrent,
       budget,
-      isBusy: () => inFlight.current,
+      isBusy: () => inFlight.current || recoveryWalletBusy(walletWorkKey),
       recover: async () => {
         if (inFlight.current) throw new Error('Another wallet action is in progress. Check the original purchase afterward.');
         if (engine.load()?.intent.digest !== digest) throw new Error('The saved purchase changed.');
-        inFlight.current = true; setRecovering(true);
+        inFlight.current = true; beginRecoveryWalletWork(walletWorkKey); setRecovering(true);
         try {
           const recovered = await engine.recover();
-          if (!isCurrent() && (recovered.status === 'delivered' || recovered.status === 'blocked')) deferredRecovery.current.set(sessionKey, recovered);
+          if (!isCurrent() && (recovered.status === 'delivered' || recovered.status === 'blocked')) budget.deferred = recovered;
           return recovered;
         }
         finally {
           inFlight.current = false;
           if (isCurrent()) setRecovering(false);
-          else setRecoveryEpoch(value => value + 1);
+          finishRecoveryWalletWork(walletWorkKey, !isCurrent());
         }
       },
       onResult: publishRecovered,
@@ -164,8 +164,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   }, [engine, record?.intent.digest, active, correctNetwork, busy, needsRecovery, location.key, documentVisible, recoveryEpoch]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
-    if (!engine || inFlight.current || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
-    inFlight.current = true;
+    if (!engine || inFlight.current || recoveryWalletBusy(walletWorkKey) || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
+    inFlight.current = true; beginRecoveryWalletWork(walletWorkKey);
     const current = revision.current;
     let recoveryFailed = false;
     setError(''); setNotice(''); setBusy(kind === 'submit' ? 'Confirm the purchase signature, then the transaction in your wallet…' : 'Checking your purchase…');
@@ -192,7 +192,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         await engine.submit();
         if (revision.current === current) { setReviewing(false); setNotice('Transaction requested. Check payment and recover the result below; do not submit a new purchase.'); }
       } else if (kind === 'recover') {
-        if (record) automaticSessions.current.delete(`${deployment.chainId}:${deployment.address}:${account}:${record.intent.digest}`);
+        if (record) resetRecoverySession(`${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${record.intent.digest}`);
         const recovered = await engine.recover();
         if (revision.current === current) {
           setReceiptCheck({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
@@ -226,13 +226,14 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           }
         } catch (cause) { setError(candidateErrorMessage(cause)); }
       }
-      inFlight.current = false; setBusy('');
+      inFlight.current = false; finishRecoveryWalletWork(walletWorkKey); setBusy('');
     }
   }
-  const recoveryDisabled = !account || !correctNetwork || Boolean(busy) || recovering;
+  const earlierReadPending = recoveryWalletBusy(walletWorkKey);
+  const recoveryDisabled = !account || !correctNetwork || Boolean(busy) || recovering || earlierReadPending;
   const disabled = recoveryDisabled || fundingPending;
   const blocker = !account ? 'Connect the agent wallet to continue.' : !correctNetwork ? `Switch to ${network} to continue.`
-    : busy ? busy : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
+    : busy ? busy : earlierReadPending ? 'An earlier wallet operation is settling. The original purchase will be checked when it finishes.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
   const readableReport = result && record && account ? walletReportDisplay(result, { account, requestId: record.requestId, chainId: deployment.chainId }) : null;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
