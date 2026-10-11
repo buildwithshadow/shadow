@@ -19,6 +19,7 @@ The server loads the kit and the app's `viem` by relative path, so run it from a
 export ARC_RPC_URL=https://rpc.testnet.arc.io
 export FLOAT_MAINNET_EXPECTED_CHAIN_ID=5042002
 export FLOAT_PROVIDER_PRIVATE_KEY=...                     # read at start, never printed
+export PROVIDER_ADMISSION_MODE=testnet-unmonitored         # testnet only; mainnet requires public-monitor
 export PROVIDER_ENDPOINT="https://provider.example/api/ask"
 export PROVIDER_PRICE=1000000                             # atomic USDC: 1 USDC
 export PROVIDER_STORE_DIR=/var/lib/shadow-provider
@@ -252,3 +253,28 @@ leaves an interrupted initialization incomplete. It never modifies original
 provider records. A fingerprint of a freshly inspected store is not historical
 completeness proof: reconcile original signatures, request bindings, results
 and finalized provider payments before approving it.
+
+
+## Public mainnet admission monitoring
+
+A mainnet signing process requires `PROVIDER_ADMISSION_MODE=public-monitor`,
+a `publicRegistration: true` release manifest, and `PROVIDER_MONITOR_BASELINE` and `PROVIDER_MONITOR_STATE_DIR`. Use the
+schema 2 public admission baseline for that exact release. Its contract, chain
+and runtime must match the provider manifest. Keep the operator-selected
+manifest and baseline root protected and grant the provider read-only access to
+monitor state. Changing either file requires a deliberate provider restart.
+
+Before preparing a new acceptance and immediately before signing it, the server
+requires a completed healthy heartbeat, matching snapshot, no latched hold,
+canonical observed block and the pinned contract runtime. A scan in progress,
+stale state, wrong binding or unreadable state refuses admission with HTTP 503.
+The baseline must explicitly approve spending. This does not change contract
+pauses or replace the agent's policy checks.
+
+Replaying an unpaid stored acceptance also requires healthy monitoring. Paid
+acceptance and result recovery remain available during a monitor hold through
+`/accept`, `/serve` and `/status`; they retain their original stored bytes.
+Previously issued signatures remain usable onchain until their own expiry or
+nonce cancellation, subject to contract policy and pauses. This provider gate
+cannot revoke an authorization already handed to a client. Use the pause-only
+operator when an incident requires an immediate onchain stop.

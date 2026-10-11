@@ -35,6 +35,8 @@ import {
 // The example has no install of its own; keccak256 comes from the viem the kit uses.
 const { keccak256 } = createRequire(new URL("../../app/package.json", import.meta.url))("viem");
 
+import { configureProviderAdmission } from "../../app/scripts/float-mainnet-provider-monitor-guard.mjs";
+
 import { createStoreWitness, ProviderStoreHold } from "./store-witness.mjs";
 
 const KEY = "FLOAT_PROVIDER_PRIVATE_KEY";
@@ -98,7 +100,14 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null }) {
+  if (admissionGuard !== null && typeof admissionGuard !== "function") throw new Error("admissionGuard must be a function");
+  const assertAdmission = async () => {
+    if (!admissionGuard) return;
+    try { await admissionGuard(); } catch {
+      throw new HttpError("Service temporarily unavailable. No new payment acceptance was signed. Retry this same request.", 503);
+    }
+  };
   if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
   for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine, maxSignatureTtl]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
   if (typeof recoveryOnly !== "boolean") throw new Error("recoveryOnly must be boolean");
@@ -240,12 +249,16 @@ export function createProviderServer({ connection, account, endpointHash, price,
   async function acceptOnce({ digest, struct, signature }, intent, requestId) {
     const stored = storedReceipt(digest, ACCEPTANCE_KIND);
     if (stored) {
+      // An unpaid stored signature still authorizes a new payment. Only an
+      // already paid digest may bypass the admission hold for recovery.
+      if (admissionGuard && RECEIPT_STATUSES[Number(await read(connection, "receiptStatus", [digest]))] !== "paid") await assertAdmission();
       if (typeof service.prepare === "function" && !checkedPrepared(digest, stored.requestId)) {
         throw new HttpError(`prepared service result for digest ${digest} is missing; the provider must reconcile it before payment`, 409);
       }
       bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
     }
+    await assertAdmission();
     const releaseAdmission = await reserveAdmission(digest, struct);
     try {
     // acceptIntent's checks that need no chain read, made first, so that an
@@ -294,6 +307,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
         bindRequest(requestId, digest);
         rememberAdmission();
         witness?.assertConsistent();
+        await assertAdmission();
         return account.signTypedData(typed);
       },
     };
@@ -615,6 +629,11 @@ async function main() {
   const host = env.HOST?.trim() || "127.0.0.1";
 
   const connection = await connectCandidate(readDeployment(env, { manifest: values.manifest }));
+  const admissionGuard = configureProviderAdmission({
+    mode: env.PROVIDER_ADMISSION_MODE, recoveryOnly,
+    connection, manifestPath: values.manifest,
+    baselinePath: env.PROVIDER_MONITOR_BASELINE, stateDir: env.PROVIDER_MONITOR_STATE_DIR,
+  });
   const account = recoveryOnly ? { address: providerAddress } : walletFromEnv(connection, KEY).account;
   // The key now lives only in `account`: the service, loaded below, and any
   // process it starts do not inherit it.
@@ -641,7 +660,7 @@ async function main() {
     const serviceModule = env.PROVIDER_SERVICE === "shadow-reasoning" ? "./shadow-reasoning-service.mjs" : "./service.mjs";
     ({ default: service } = await import(serviceModule));
   }
-  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, recoveryOnly, witnessDir: env.PROVIDER_WITNESS_DIR?.trim() || null, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
+  const server = createProviderServer({ connection, account, endpointHash, price, storeDir, service, recoveryOnly, admissionGuard, witnessDir: env.PROVIDER_WITNESS_DIR?.trim() || null, publicOrigin: env.PROVIDER_PUBLIC_ORIGIN || null, trustLoopbackProxy: env.PROVIDER_TRUST_LOOPBACK_PROXY === 'true' });
   // A port in use or refused ends main with the one-line JSON error below.
   await new Promise((resolve, reject) => {
     server.once("error", reject);
