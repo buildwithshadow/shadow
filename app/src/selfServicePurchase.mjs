@@ -154,6 +154,10 @@ function createPurchase({
   function load() {
     const raw = storage.getItem(key);
     if (!raw) return null;
+    return parseRecord(raw);
+  }
+  function parseRecord(raw) {
+    assert(typeof raw === 'string' && raw.length <= 2_000_000, 'Saved purchase is too large.');
     const record = JSON.parse(raw);
     assert(
       record.account === account &&
@@ -163,6 +167,29 @@ function createPurchase({
     );
     validate(record);
     return record;
+  }
+  function archivedRecord(digest) {
+    assert(/^0x[0-9a-fA-F]{64}$/.test(digest), 'Invalid archived purchase ID.');
+    const raw = storage.getItem(`${key}:${digest}`);
+    assert(raw, 'This report is not retained in this browser.');
+    const record = parseRecord(raw);
+    assert(same(record.intent.digest, digest) && record.stage === 'delivered' && record.terminalStatus === 'delivered', 'This is not a completed report receipt.');
+    return record;
+  }
+  function listArchived() {
+    // Bound work and never treat local storage as a trusted payment ledger.
+    assert(storage.length <= 2000, 'Too many browser records to list report history safely.');
+    const records = [];
+    for (let index = 0; index < storage.length; index++) {
+      const name = storage.key(index);
+      if (typeof name !== 'string' || !name.startsWith(`${key}:`)) continue;
+      try {
+        const record = archivedRecord(name.slice(key.length + 1));
+        assert(/^(0|[1-9][0-9]{0,77})$/.test(record.resolvedAtBlock), 'Invalid archive block.');
+        records.push(record);
+      } catch { /* malformed and other-service records are not report history */ }
+    }
+    return records.sort((a,b) => BigInt(a.resolvedAtBlock) > BigInt(b.resolvedAtBlock) ? -1 : BigInt(a.resolvedAtBlock) < BigInt(b.resolvedAtBlock) ? 1 : 0).slice(0,20);
   }
   function validate(record) {
     const i = record.intent,
@@ -515,6 +542,13 @@ function createPurchase({
       record.stage === "delivered"
         ? record.result
         : await post("/serve", { digest: record.intent.digest, ...(record.txHash ? { paymentTransactionHash: record.txHash } : {}) });
+    const bytes = await verifyDelivery(record, result);
+    record.stage = "delivered";
+    record.result = result;
+    save(record);
+    return { record, status: "delivered", bytes };
+  }
+  async function verifyDelivery(record, result) {
     const d = await signedReceipt(result.delivery, DELIVERY, "DeliveryReceipt");
     assert(
       same(d.digest, record.intent.digest) &&
@@ -543,10 +577,15 @@ function createPurchase({
       Number(await read("receiptStatus", [record.intent.digest])) === 2,
       "Payment needs reconciliation.",
     );
-    record.stage = "delivered";
-    record.result = result;
-    save(record);
-    return { record, status: "delivered", bytes };
+    return bytes;
+  }
+  async function recoverArchived(digest) {
+    await identity();
+    const record = archivedRecord(digest);
+    assert(Number(await read('receiptStatus', [record.intent.digest])) === 2, 'Archived payment needs reconciliation.');
+    const bytes = await verifyDelivery(record, record.result);
+    // Do not write this record into the active purchase key or contact /serve.
+    return { record, status: 'delivered', bytes };
   }
   // Completion does not silently erase ambiguous payment state.
   async function archive() {
@@ -596,5 +635,7 @@ function createPurchase({
     recover: () => withLock(key, recover, 'recover'),
     archive: () => withLock(key, archive, 'archive'),
     load,
+    listArchived,
+    recoverArchived: digest => withLock(key, () => recoverArchived(digest), 'recover'),
   };
 }

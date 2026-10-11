@@ -16,6 +16,8 @@ export function createSelfServicePurchase(input: {
   recover(): Promise<{ record: PurchaseRecord; status: 'blocked' | 'unconfirmed' | 'delivered'; bytes?: Uint8Array }>;
   archive(): Promise<void>;
   load(): PurchaseRecord | null;
+  listArchived(): PurchaseRecord[];
+  recoverArchived(digest: string): Promise<{record: PurchaseRecord; status: 'delivered'; bytes: Uint8Array}>;
 };
 
 export const createGuardedMainnetPurchase: typeof createSelfServicePurchase;

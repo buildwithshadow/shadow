@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { recoverySession, resetRecoverySession, retainRecoveryTerminal, recoveryWalletBusy, beginRecoveryWalletWork, finishRecoveryWalletWork, subscribeRecoverySettlement } from './purchaseRecoverySession.mjs';
+import { VerifiedServiceReport } from './VerifiedServiceReport';
 import { useLocation } from 'react-router-dom';
 import { recoverOriginalPurchase, type RecoveryResult } from './purchaseRecovery.mjs';
-import { walletReportDisplay } from './walletReportDisplay.mjs';
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
 import { candidateErrorMessage, candidateChainFor, candidateFundingAbi, type CandidateDeployment } from './candidateFunding';
 import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPurchaseResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
@@ -35,6 +35,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     document.addEventListener('visibilitychange', changed);
     return () => document.removeEventListener('visibilitychange', changed);
   }, []);
+  const [history, setHistory] = useState<PurchaseRecord[]>([]);
+  const [historyBusy, setHistoryBusy] = useState(false);
+  const [historyError, setHistoryError] = useState('');
+  const [archivedResult, setArchivedResult] = useState<{record: PurchaseRecord; text: string} | null>(null);
   const location = useLocation();
   const route = useRef(location.key);
   const routeGeneration = useRef(0);
@@ -69,9 +73,13 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       provider: service.provider, providerUrl: service.providerUrl, endpoint: service.endpoint, principal: service.principal },
   }) : null, error: '' }; } catch (cause) { return { engine: null, error: candidateErrorMessage(cause) }; } }, [account, client, deployment, service, mainnet, chain]);
   const engine = setup.engine;
+  function refreshHistory() {
+    try { setHistory(engine?.listArchived() ?? []); setHistoryError(''); }
+    catch (cause) { setHistory([]); setHistoryError(candidateErrorMessage(cause)); }
+  }
   useEffect(() => {
-    revision.current++; setReviewing(false); setRecord(null); setResult(''); setRefusedDigest(null); setReceiptCheck(null); setError(setup.error); setNotice('');
-    const refresh = () => { try { setRecord(engine?.load() ?? null); } catch (cause) { setError(candidateErrorMessage(cause)); } };
+    revision.current++; setHistory([]); setHistoryError(''); setArchivedResult(null); setHistoryBusy(false); setReviewing(false); setRecord(null); setResult(''); setRefusedDigest(null); setReceiptCheck(null); setError(setup.error); setNotice('');
+    const refresh = () => { try { setRecord(engine?.load() ?? null); } catch (cause) { setError(candidateErrorMessage(cause)); } refreshHistory(); };
     refresh(); window.addEventListener('storage', refresh);
     return () => { revision.current++; window.removeEventListener('storage', refresh); };
   }, [engine, correctNetwork, setup.error]);
@@ -213,6 +221,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         try {
           const saved = engine.load();
           setRecord(saved);
+          refreshHistory();
           if (!saved) { setRefusedDigest(null); setReceiptCheck(null); }
           // Even a delivery failure can follow a confirmed payment. Refresh from
           // chain after submission/recovery, never infer balances from delivery.
@@ -233,12 +242,24 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     }
   }
   const earlierReadPending = recoveryWalletBusy(walletWorkKey);
-  const recoveryDisabled = !account || !correctNetwork || Boolean(busy) || recovering || earlierReadPending;
+  async function openArchived(digest: string) {
+    if (!engine || !account || !correctNetwork || busy || recovering || inFlight.current || recoveryWalletBusy(walletWorkKey)) return;
+    const current = revision.current, generation = routeGeneration.current;
+    const isCurrent = () => revision.current === current && routeGeneration.current === generation && visible.current &&
+      currentView.current.account === account && currentView.current.deployment === deployment && currentView.current.correctNetwork;
+    inFlight.current = true; beginRecoveryWalletWork(walletWorkKey); setHistoryBusy(true); setHistoryError(''); setArchivedResult(null);
+    try {
+      const recovered = await engine.recoverArchived(digest);
+      const text = new TextDecoder('utf-8', {fatal:true}).decode(recovered.bytes);
+      if (isCurrent()) setArchivedResult({record:recovered.record,text});
+    } catch (cause) { if (isCurrent()) setHistoryError(candidateErrorMessage(cause)); }
+    finally { inFlight.current = false; if (revision.current === current) setHistoryBusy(false); finishRecoveryWalletWork(walletWorkKey); }
+  }
+  const recoveryDisabled = !account || !correctNetwork || Boolean(busy) || recovering || historyBusy || earlierReadPending;
   const disabled = recoveryDisabled || fundingPending;
   const blocker = !account ? 'Connect the agent wallet to continue.' : !correctNetwork ? `Switch to ${network} to continue.`
     : busy ? busy : earlierReadPending ? 'An earlier wallet operation is settling. The original purchase will be checked when it finishes.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
-  const readableReport = result && record && account ? walletReportDisplay(result, { account, requestId: record.requestId, chainId: deployment.chainId }) : null;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
     <h2 id="purchase-title">Buy a service with your agent’s budget</h2>
     <p>{service.name} · {formatUnits(BigInt(service.principal), 6)} {currency}. {service.requestKind === 'arc-wallet' ? 'Receive a report of your connected wallet’s USDC balance, checked at a confirmed block using two RPC providers.' : 'Receive a report verifying a recorded Shadow payment and repayment. This test service uses public transaction data.'}</p>
@@ -264,24 +285,23 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       <div className="fundingActions">
         {reviewable && !refused && <button type="button" disabled={disabled || !signable} aria-describedby={(disabled || !signable) && blocker ? 'purchase-blocker' : undefined} onClick={() => setReviewing(true)}>Review saved purchase</button>}
         <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('recover')}>Check payment & recover result</button>
-        <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('archive')}>Resolve completed or expired purchase</button>
+        <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('archive')}>{record.stage === 'delivered' ? 'Archive completed report' : 'Resolve refused or expired purchase'}</button>
       </div>
       <p>Recovery never resends a payment. An unknown payment remains held until confirmed or its unpaid authorization has expired. Repay debt and reclaim eligible funds under “Manage a line.”</p>
     </>}
     <div aria-live="polite">{notice && <p role="status">{notice}</p>}{error && <p className="fundingError" role="alert">{error}</p>}</div>
     {automaticChecking && <p role="status">Automatic checks are running for the original payment and report. These checks never send another payment.</p>}
-    {result && <section aria-labelledby="service-result-title">
-      <h3 id="service-result-title">Your verified service report</h3>
-      {readableReport && <>
-        <p><strong>{readableReport.balance} USDC</strong> on {readableReport.network}</p>
-        <dl className="fundingDetails"><div><dt>Wallet checked</dt><dd><code>{readableReport.account}</code></dd></div>
-          <div><dt>Checked at</dt><dd><time dateTime={readableReport.checkedAtUtc}>{readableReport.checkedAtUtc.replace('T', ' ').replace('.000Z', ' UTC')}</time></dd></div>
-          <div><dt>Confirmed block</dt><dd>{readableReport.blockNumber}</dd></div></dl>
-        <ul>{readableReport.checks.map(check => <li key={check}>{check}</li>)}</ul>
-        <p>{readableReport.scope}</p>
-      </>}
-      <details open={!readableReport}><summary>{readableReport ? 'Report JSON' : 'Service result text'}</summary><pre className="publicServiceResult">{result}</pre></details>
-    </section>}
+    {result && record && account && <VerifiedServiceReport text={result} record={record} account={account} chainId={deployment.chainId} />}
+    <section aria-labelledby="report-history-title">
+      <h3 id="report-history-title">Reports saved in this browser</h3>
+      <p>Up to 20 completed reports for this wallet, network and service. Opening a report rechecks its payment and signed result. Clearing site data removes local history.</p>
+      {history.length ? <ul>{history.map(item => <li key={item.intent.digest}>
+        <button type="button" disabled={recoveryDisabled || historyBusy} onClick={() => void openArchived(item.intent.digest)}>Open report {item.intent.digest.slice(0,10)}…{item.intent.digest.slice(-4)}</button>
+      </li>)}</ul> : <p>No completed reports are archived for this wallet and service.</p>}
+      {historyBusy && <p role="status">Checking the saved report receipt. No payment is being sent.</p>}
+      {historyError && <p className="fundingError" role="alert">{historyError}</p>}
+      {archivedResult && account && <VerifiedServiceReport text={archivedResult.text} record={archivedResult.record} account={account} chainId={deployment.chainId} />}
+    </section>
     <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="purchase-review-title" aria-describedby="purchase-review-description" onCancel={event => { if (inFlight.current) event.preventDefault(); else setReviewing(false); }}>
       {message && <><h2 id="purchase-review-title">Review this service purchase</h2>
         <p id="purchase-review-description">Pay {formatUnits(BigInt(message.principal), 6)} {currency} from the sponsor’s line. This creates an equal repayment obligation. A payment does not guarantee service delivery.</p>
