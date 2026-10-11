@@ -18,7 +18,7 @@ export function validateBaseline(raw) {
   must(publicAdmission.minimumRepaymentWindow==='3600' && publicAdmission.maximumRepaymentWindow==='86400', 'Invalid public repayment bounds');
   const b=validateFixedBaseline({...fixed,schemaVersion:1});
   must(b.identity.chainId==='5042' && b.sponsors.length===0 && b.lines.length===0, 'Public policy requires mainnet and predicate admission, not a fixed participant roster');
-  must(BigInt(b.effectiveLimits.lineReserve)<=100000n && BigInt(b.effectiveLimits.lineSpend)<=5000n && BigInt(b.effectiveLimits.perSpend)<=5000n && BigInt(b.effectiveLimits.dailySpend)<=5000n, 'Public pilot limits exceed the approved release bounds');
+  must(BigInt(b.effectiveLimits.protocolReserve)<=1000000n && BigInt(b.effectiveLimits.lineReserve)<=100000n && BigInt(b.effectiveLimits.lineSpend)<=5000n && BigInt(b.effectiveLimits.perSpend)<=5000n && BigInt(b.effectiveLimits.dailySpend)<=5000n, 'Public pilot limits exceed the approved release bounds');
   return {...b,schemaVersion:2,publicAdmission:structuredClone(publicAdmission)};
 }
 

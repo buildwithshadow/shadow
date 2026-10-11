@@ -57,3 +57,11 @@ test('a revoked sponsor is scoped to its line and cannot be relabeled allowed',(
 test('public mode must be declared and cannot exceed pilot ceilings',()=>{
  const {baseline}=fixture();for(const patch of [{sponsors:[addr(3)]},{identity:{...baseline.identity,chainId:'5042002'}},{publicAdmission:{minimumRepaymentWindow:'1',maximumRepaymentWindow:'86400'}},{effectiveLimits:{...baseline.effectiveLimits,lineReserve:'100001'}}])assert.throws(()=>validateBaseline({...baseline,...patch}));
 });
+test('a matching snapshot cannot legitimize an oversized aggregate reserve baseline',()=>{
+ const {baseline,snapshot}=fixture();
+ baseline.effectiveLimits.protocolReserve='1000001';
+ snapshot.contract.effectiveLimits={...baseline.effectiveLimits};
+ snapshot.contract.totalCommittedCapital='1000001';
+ assert.throws(()=>validateBaseline(baseline),/approved release bounds/);
+ assert.throws(()=>evaluateSnapshot(baseline,snapshot,NOW),/approved release bounds/);
+});
