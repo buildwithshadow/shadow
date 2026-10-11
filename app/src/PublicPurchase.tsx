@@ -24,6 +24,12 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [recovering, setRecovering] = useState(false);
+  const [documentVisible, setDocumentVisible] = useState(document.visibilityState === 'visible');
+  useEffect(() => {
+    const changed = () => setDocumentVisible(document.visibilityState === 'visible');
+    document.addEventListener('visibilitychange', changed);
+    return () => document.removeEventListener('visibilitychange', changed);
+  }, []);
   const location = useLocation();
   const route = useRef(location.key);
   const routeGeneration = useRef(0);
@@ -97,7 +103,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
 
   const needsRecovery = Boolean(record && !refused && (record.stage === 'submitted' || paidPending || record.stage === 'delivered' && !result));
   useEffect(() => {
-    if (!engine || !record || !active || !correctNetwork || busy || !needsRecovery) return;
+    if (!engine || !record || !active || !correctNetwork || busy || !needsRecovery || !documentVisible) return;
     let cancelled = false;
     const generation = routeGeneration.current, current = revision.current;
     const digest = record.intent.digest;
@@ -106,6 +112,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       currentView.current.account === account && currentView.current.deployment === deployment && document.visibilityState === 'visible';
     void recoverOriginalPurchase({
       isCurrent,
+      isBusy: () => inFlight.current,
       recover: async () => {
         if (inFlight.current) throw new Error('Another wallet action is in progress. Check the original purchase afterward.');
         if (engine.load()?.intent.digest !== digest) throw new Error('The saved purchase changed.');
@@ -126,7 +133,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       onStop: cause => { setRecovering(false); setNotice('Automatic checks have stopped. Check the original payment again below; this never sends another payment.'); if (cause) setError(candidateErrorMessage(cause)); },
     });
     return () => { cancelled = true; setRecovering(false); };
-  }, [engine, record?.intent.digest, active, correctNetwork, busy, needsRecovery, location.key]);
+  }, [engine, record?.intent.digest, active, correctNetwork, busy, needsRecovery, location.key, documentVisible]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
     if (!engine || inFlight.current || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;

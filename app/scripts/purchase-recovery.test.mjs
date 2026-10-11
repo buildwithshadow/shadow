@@ -31,3 +31,11 @@ test('slow calls consume the wall clock budget',async()=>{
   let time=0,calls=0;const h=harness({now:()=>time,recover:async()=>{calls++;time+=60001;return {status:'unconfirmed'};}});
   await recoverOriginalPurchase(h.options);assert.equal(calls,1);assert.deepEqual(h.stops,[null]);
 });
+test('a returning view waits for the canceled read to settle before recovery',async()=>{
+  let oldRead=true,calls=0;
+  const h=harness({isBusy:()=>oldRead,wait:async()=>{oldRead=false;},recover:async()=>{calls++;return {status:'delivered'};}});
+  await recoverOriginalPurchase(h.options);assert.equal(calls,1);assert.deepEqual(h.results,['delivered']);assert.deepEqual(h.stops,[]);
+});
+test('a permanently busy view exhausts its budget without overlapping reads',async()=>{
+  const h=harness({isBusy:()=>true});await recoverOriginalPurchase(h.options);assert.equal(h.calls(),0);assert.deepEqual(h.stops,[null]);
+});

@@ -615,6 +615,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       if (isCurrent()) { setLineId(id); setLine(value); setMode("manage"); }
     } catch (cause) {
       if (isCurrent()) setError(`Could not confirm the latest line balance. Use “Check payment & recover result” when your connection recovers; do not submit another purchase. ${messageOf(cause)}`);
+    } finally {
+      if (revision.current === purchaseViewRevision) setBusy("");
     }
   }
 

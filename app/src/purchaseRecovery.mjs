@@ -1,9 +1,13 @@
 // Read-only continuation. This module deliberately has no payment/signing API.
-export async function recoverOriginalPurchase({ recover, isCurrent, onResult, onStop,
+export async function recoverOriginalPurchase({ recover, isCurrent, isBusy = () => false, onResult, onStop,
   wait = ms => new Promise(resolve => setTimeout(resolve, ms)), now = Date.now }) {
   const started = now();
   for (let attempt = 0; attempt < 6 && now() - started < 60000; attempt++) {
     if (!isCurrent()) return;
+    if (isBusy()) {
+      if (attempt < 5 && now() - started < 50000) { await wait(10000); continue; }
+      break;
+    }
     try {
       const result = await recover();
       if (!isCurrent()) return;
