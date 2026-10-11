@@ -6,6 +6,7 @@ import { PUBLIC_MAINNET, PUBLIC_MAINNET_SERVICE } from "./publicMainnet";
 import { GUARDED_TESTNET, GUARDED_TESTNET_SERVICE } from "./guardedTestnet";
 import { PUBLIC_TESTNET, PUBLIC_TEST_SERVICE } from "./publicTestnet";
 import { HomePage } from "./HomePage";
+import { selectedFundingNetwork, fundingNetworkDestination } from "./fundingNetwork";
 import { CandidateFundingDesk } from "./CandidateFundingDesk";
 import { BuildersPage } from "./BuildersPage";
 import { RoadmapPage } from "./RoadmapPage";
@@ -1460,13 +1461,14 @@ function EvidenceRedirect({ fallbackHash = "" }: { fallbackHash?: string }) {
 }
 
 function App() {
-  const { pathname } = useLocation();
+  const { pathname, search } = useLocation();
   const route = pathname.toLowerCase().replace(/\/+$/, "") || "/";
   const isEvidenceRoute = route === "/evidence";
   const usesFloatV2State = isEvidenceRoute || route === "/builders/v2";
-  const isGuardedMainnetRoute = route === "/mainnet" && import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
   const isGuardedTestnetRoute = route === "/guarded-testnet" && import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true";
   const isFundingDeskRoute = route === "/funding" || (route === "/start" || route.startsWith("/start/")) || route === "/mainnet" || isGuardedTestnetRoute;
+  const mainnetAvailable = import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
+  const fundingEntry = fundingNetworkDestination(selectedFundingNetwork(route, search, mainnetAvailable));
   const [account, setAccount] = useState<Address>();
   const [action, setAction] = useState<ActionState>({ label: "ready" });
   const [selectedSource, setSelectedSource] = useState<Address | null>(null);
@@ -1758,7 +1760,7 @@ function App() {
           </NavLink>
         </div>
         <div className="navActions">
-          {!isFundingDeskRoute && <button
+          {!isFundingDeskRoute && route !== "/" && <button
             className={account ? "navWallet connected" : "navWallet"}
             onClick={connectWallet}
             type="button"
@@ -1767,7 +1769,7 @@ function App() {
             <span className="navWalletDot" />
             {account ? shortAddress(account) : "Wallet"}
           </button>}
-          <Link to={isGuardedMainnetRoute ? "/mainnet" : isGuardedTestnetRoute ? "/guarded-testnet" : "/start"} className="navCta">
+          <Link to={isGuardedTestnetRoute ? "/guarded-testnet" : fundingEntry} className="navCta">
             Fund an agent
           </Link>
         </div>
@@ -1776,7 +1778,7 @@ function App() {
       <RouteScroll />
 
       <Routes>
-        <Route path="/" element={<HomePage />} />
+        <Route path="/" element={<HomePage mainnetAvailable={mainnetAvailable} />} />
         <Route path="/evidence" element={evidencePage} />
         <Route path="/agents" element={<EvidenceRedirect />} />
         <Route path="/follow" element={<Navigate to="/builders/v2" replace />} />

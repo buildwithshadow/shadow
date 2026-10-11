@@ -1,0 +1,11 @@
+.fundingNetworkPicker { margin: 0 0 24px; min-width: 0; }
+.fundingNetworkOptions { display: inline-flex; padding: 4px; gap: 4px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); max-width: 100%; }
+.fundingNetworkOptions a, .fundingNetworkOptions button { display: flex; align-items: center; justify-content: center; flex-wrap: wrap; gap: 8px; min-height: 44px; padding: 10px 16px; border: 1px solid transparent; border-radius: 8px; background: transparent; color: var(--ink-soft); text-decoration: none; font: inherit; }
+.fundingNetworkOptions strong { font-size: 15px; }
+.fundingNetworkOptions span { font-size: 12px; }
+.fundingNetworkOptions .selected { color: var(--ink); background: var(--surface-3); border-color: var(--accent); }
+.fundingNetworkOptions a:hover { color: var(--ink); border-color: var(--accent); }
+.fundingNetworkOptions a:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
+.fundingNetworkOptions button:disabled { cursor: not-allowed; opacity: .65; }
+.fundingNetworkPicker > p { color: var(--ink-soft); font-size: 13px; line-height: 1.5; margin: 10px 0 0; max-width: 65ch; text-wrap: pretty; }
+@media (max-width: 480px) { .fundingNetworkOptions { display: flex; } .fundingNetworkOptions a, .fundingNetworkOptions button { flex: 1; flex-direction: column; gap: 2px; padding: 10px 12px; } }

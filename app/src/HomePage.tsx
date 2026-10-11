@@ -1,4 +1,8 @@
-import { Link } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
+import { FundingNetworkSelector } from "./FundingNetworkSelector";
+import { selectedFundingNetwork, fundingNetworkDestination } from "./fundingNetwork";
+import { PUBLIC_MAINNET } from "./publicMainnet";
+import { formatUnits } from "viem";
 import {
   HOME_CONTRACT,
   HOME_EXPLORER,
@@ -11,11 +15,23 @@ import "./home.css";
 
 const short = (value: string) => `${value.slice(0, 6)}…${value.slice(-4)}`;
 
-export function HomePage() {
+export function HomePage({ mainnetAvailable = false }: { mainnetAvailable?: boolean }) {
+  const location = useLocation();
+  const network = selectedFundingNetwork(location.pathname, location.search, mainnetAvailable);
+  const fundingUrl = fundingNetworkDestination(network);
+  const limits = network === "mainnet" ? [
+    { label: "Set aside per line", value: formatUnits(PUBLIC_MAINNET.maxReserve!, 6) },
+    { label: "One purchase", value: formatUnits(PUBLIC_MAINNET.maxPerSpend!, 6) },
+    { label: "Total spend per line", value: formatUnits(PUBLIC_MAINNET.maxLineSpend!, 6) },
+    { label: "Spend per line, per day", value: formatUnits(PUBLIC_MAINNET.maxDailySpend!, 6) },
+    { label: "Time to repay a purchase", value: "1 hour to 24 hours" },
+    { label: "Pausing purchases or new lines", value: "By Shadow. Repayment and eligible reclaim remain available." },
+  ] : HOME_LIMITS;
   return (
     <div className="homePage">
       <section className="homeHero" aria-labelledby="homeTitle">
-        <p className="homeEyebrow">Arc testnet · test USDC</p>
+        <FundingNetworkSelector selected={network} mainnetAvailable={mainnetAvailable} home />
+        <p className="homeEyebrow">{network === "mainnet" ? "Arc mainnet · Real USDC" : "Arc testnet · Test USDC"}</p>
         <h1 id="homeTitle">Let your agent buy services on a budget you set.</h1>
         <p className="homeLede">
           You set aside USDC and the limits. Your agent signs each purchase
@@ -24,13 +40,14 @@ export function HomePage() {
           when the sponsor closes the line.
         </p>
         <div className="homeActions">
-          <Link className="homeCta" to="/start">
+          <Link className="homeCta" to={fundingUrl}>
             Fund an agent
           </Link>
-          <Link className="homeAgentLink" to="/start?role=agent">
+          <Link className="homeAgentLink" to={`${fundingUrl}?role=agent`}>
             I run an agent
           </Link>
         </div>
+        <p className="homeNote">{network === "mainnet" ? "Capped public release: up to 0.10 USDC reserve and 0.005 USDC total purchases per line. No independent human security audit yet. Sponsors bear unpaid repayment risk." : "Practice the full flow with test USDC before using real funds. Testnet tokens have no monetary value."}</p>
       </section>
 
       <section
@@ -39,7 +56,7 @@ export function HomePage() {
         aria-labelledby="homeCycleTitle"
       >
         <div className="homeSectionHead">
-          <p className="homeEyebrow">One real cycle</p>
+          <p className="homeEyebrow">Testnet rehearsal</p>
           <h2 id="homeCycleTitle">What happens to the money</h2>
           <p>
             Team rehearsal, {HOME_REHEARSAL.date}: run from the command line
@@ -194,7 +211,7 @@ export function HomePage() {
           </p>
         </div>
         <table className="homeLimitTable">
-          <caption>Contract limits today. Amounts in test USDC.</caption>
+          <caption>{network === "mainnet" ? "Mainnet release limits. Amounts in USDC." : "Testnet contract limits. Amounts in test USDC."}</caption>
           <thead>
             <tr>
               <th scope="col">Limit</th>
@@ -202,7 +219,7 @@ export function HomePage() {
             </tr>
           </thead>
           <tbody>
-            {HOME_LIMITS.map((limit) => (
+            {limits.map((limit) => (
               <tr key={limit.label}>
                 <th scope="row">{limit.label}</th>
                 <td>{limit.value}</td>
@@ -211,7 +228,7 @@ export function HomePage() {
           </tbody>
         </table>
         <p className="homeNote">
-          Read from the contract at block {HOME_LIMITS_BLOCK}.
+          {network === "mainnet" ? <>Current limits are checked again before funding. <a href={`https://explorer.arc.io/address/${PUBLIC_MAINNET.address}`}>View the mainnet contract</a>.</> : <>Read from the testnet contract at block {HOME_LIMITS_BLOCK}.</>}
         </p>
       </section>
 
@@ -220,7 +237,7 @@ export function HomePage() {
         id="evidence"
         aria-labelledby="homeEvidenceTitle"
       >
-        <h2 id="homeEvidenceTitle">Check it yourself</h2>
+        <h2 id="homeEvidenceTitle">Check the testnet rehearsal</h2>
         <ul role="list">
           <li>
             <span>Contract</span>

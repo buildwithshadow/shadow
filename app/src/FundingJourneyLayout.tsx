@@ -11,6 +11,7 @@ export function FundingJourney({
   summary,
   onNavigate,
   wallet,
+  networkSelector,
 }: {
   step: FundingStep;
   busy: boolean;
@@ -20,10 +21,12 @@ export function FundingJourney({
   summary?: ReactNode;
   onNavigate: (step: FundingStep) => void;
   wallet?: ReactNode;
+  networkSelector?: ReactNode;
 }) {
   const index = fundingSteps.indexOf(step as (typeof fundingSteps)[number]);
   return (
     <div className="fundingDesk fundingJourney">
+      {networkSelector}
       <header className="journeyHeading">
         <div>
           <p className="pageEyebrow">
