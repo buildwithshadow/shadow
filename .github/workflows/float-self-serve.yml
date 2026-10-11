@@ -215,6 +215,9 @@ jobs:
         run: node --test app/scripts/circle-agent-*.test.mjs
       - name: Test reasoning availability before payment and provider acceptance
         run: node --test app/scripts/reasoning-x402-availability.test.mjs app/scripts/shadow-reasoning-service.test.mjs app/scripts/shadow-arc-wallet-service.test.mjs
+      - name: Test purchase UI recovery across route remounts
+        working-directory: app
+        run: pnpm test:purchase-ui
       - name: Typecheck app and API
         run: npm run app:typecheck
       - name: Build production app

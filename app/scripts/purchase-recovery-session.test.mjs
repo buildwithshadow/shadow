@@ -31,3 +31,8 @@ test('a normally delivered report remains available through more remounts than t
   for(let i=0;i<10;i++){const mounted=recoverySession('normal-delivery');assert.equal(mounted.deferred,result);assert.equal(mounted.attempts,1);}
   assert.equal(recoverySession('another-purchase').deferred,null);
 });
+test('explicit manual recovery replaces a stopped budget and retains its terminal result for remounts',()=>{
+  const key='manual-delivery';recoverySession(key).stopped=true;resetRecoverySession(key);
+  const session=recoverySession(key), result={status:'delivered',record:{intent:{digest:'manual-original'}},bytes:new Uint8Array([3])};
+  retainRecoveryTerminal(session,result);assert.equal(recoverySession(key).deferred,result);assert.equal(recoverySession(key).stopped,false);assert.equal(recoverySession(key).attempts,0);
+});

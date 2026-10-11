@@ -194,6 +194,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       } else if (kind === 'recover') {
         if (record) resetRecoverySession(`${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${record.intent.digest}`);
         const recovered = await engine.recover();
+        retainRecoveryTerminal(recoverySession(`${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${recovered.record.intent.digest}`), recovered);
         if (revision.current === current) {
           setReceiptCheck({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
           setNotice(recovered.status === 'delivered' ? 'Payment confirmed and the original service result recovered.' : recovered.status === 'blocked' ? 'The contract refused this purchase. No provider payment was made for this intent.' : 'No confirmed payment found yet. Finish any wallet prompt, then check again. This does not resend a transaction.');
