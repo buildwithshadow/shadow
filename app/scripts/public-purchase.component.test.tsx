@@ -24,7 +24,7 @@ function fixture(status=2n) {
     archive:vi.fn(async()=>{archived.push(saved);saved=null;}),listArchived:()=>archived,
     recoverArchived:vi.fn(async(digest:string)=>({record:archived.find(item=>item.intent.digest===digest),status:'delivered',bytes:new TextEncoder().encode('retained report')}))};
   h.engines.set(account,engine);
-  const client: any = {readContract:vi.fn(async()=>status)};
+  const client: any = {readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
 function Host({client, loadedLine = null, lineId = ''}: {client:any; loadedLine?:any; lineId?:string}) {
@@ -180,4 +180,28 @@ test('an unpaid saved intent on a closed line is not offered for signing',async(
   await screen.findByText('This line is closed. Check the original payment or view its saved report; no new purchase can be signed.', {selector:'#purchase-blocker'});
   expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);
   expect(document.querySelector('dialog')?.hasAttribute('open')).toBe(false);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('an unpaid intent stays unsigned while line loading is delayed and after it proves closed',async()=>{
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'prepared'});let settle!:(value:any)=>void;
+  f.client.readContract.mockImplementation(async({functionName}:any)=>functionName==='getLine'?new Promise(resolve=>{settle=resolve;}):0n);
+  render(<Host client={f.client}/>);await screen.findByText(/Verify that the funding line is open/,{selector:'#purchase-blocker'});
+  expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);
+  await act(async()=>{settle({state:4n});});await screen.findByText(/This line is closed/,{selector:'#purchase-blocker'});
+  expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+test('failed line lookup cannot enable a saved unpaid intent',async()=>{
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'accepted'});
+  f.client.readContract.mockImplementation(async({functionName}:any)=>{if(functionName==='getLine')throw Error('RPC unavailable');return 0n;});
+  render(<Host client={f.client}/>);await screen.findByText('RPC unavailable');
+  expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('a line closed after review is checked again before requesting a signature',async()=>{
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'accepted'});
+  render(<Host client={f.client}/>);await waitFor(()=>expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(false));
+  fireEvent.click(screen.getByRole('button',{name:'Review saved purchase'}));const submit=await screen.findByRole('button',{name:'Sign & submit in wallet'});
+  f.client.readContract.mockImplementation(async({functionName}:any)=>functionName==='getLine'?{state:4n}:0n);
+  fireEvent.click(submit);await screen.findByText('Funding line is not open. No signature was requested.');
+  expect(f.engine.submit).not.toHaveBeenCalled();expect(document.querySelector('dialog')?.hasAttribute('open')).toBe(false);
 });

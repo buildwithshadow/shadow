@@ -19,7 +19,11 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const currency = mainnet ? 'USDC' : 'test USDC';
   const chain = useMemo(() => candidateChainFor(deployment), [deployment]);
   const [record, setRecord] = useState<PurchaseRecord | null>(null);
-  const recordLineClosed = closedLine && String(record?.intent.typedData.message.lineId ?? '').toLowerCase() === lineId.trim().toLowerCase();
+  const [signingLineError, setSigningLineError] = useState('');
+  const [signingLineCheck, setSigningLineCheck] = useState<{key:string; state:number} | null>(null);
+  const signingKey = record ? `${record.intent.digest}:${record.stage}` : null;
+  const signingLineVerified = signingKey !== null && signingLineCheck?.key === signingKey;
+  const recordLineClosed = (closedLine && String(record?.intent.typedData.message.lineId ?? '').toLowerCase() === lineId.trim().toLowerCase()) || (signingLineVerified && signingLineCheck?.state === 4);
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [result, setResult] = useState('');
@@ -80,7 +84,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     catch (cause) { setHistory([]); setHistoryError(candidateErrorMessage(cause)); }
   }
   useEffect(() => {
-    revision.current++; setHistory([]); setHistoryError(''); setArchivedResult(null); setHistoryBusy(false); setReviewing(false); setRecord(null); setResult(''); setRefusedDigest(null); setReceiptCheck(null); setError(setup.error); setNotice('');
+    revision.current++; setSigningLineCheck(null); setSigningLineError(''); setHistory([]); setHistoryError(''); setArchivedResult(null); setHistoryBusy(false); setReviewing(false); setRecord(null); setResult(''); setRefusedDigest(null); setReceiptCheck(null); setError(setup.error); setNotice('');
     const refresh = () => { try { setRecord(engine?.load() ?? null); } catch (cause) { setError(candidateErrorMessage(cause)); } refreshHistory(); };
     refresh(); window.addEventListener('storage', refresh);
     return () => { revision.current++; window.removeEventListener('storage', refresh); };
@@ -102,12 +106,23 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       .catch(cause => { if (current) setError(candidateErrorMessage(cause)); });
     return () => { current = false; };
   }, [client, deployment.address, engine, record?.intent.digest, record?.stage, refusedDigest]);
+  useEffect(() => {
+    setSigningLineError('');
+    if (!record || !engine || (record.stage !== 'prepared' && record.stage !== 'accepted') || !correctNetwork) return;
+    let current = true;
+    const key = `${record.intent.digest}:${record.stage}`;
+    setSigningLineCheck(null);
+    void client.readContract({address:deployment.address,abi:candidateFundingAbi,functionName:'getLine',args:[record.intent.typedData.message.lineId]})
+      .then(raw => { if (current) { const state = Number((raw as {state:bigint}).state); if (!Number.isInteger(state) || state < 0 || state > 4) throw new Error('Funding line state could not be verified. No signature was requested.'); setSigningLineCheck({key,state}); } })
+      .catch(cause => { if (current) setSigningLineError(candidateErrorMessage(cause)); });
+    return () => { current = false; };
+  }, [client, deployment.address, engine, record?.intent.digest, record?.stage, correctNetwork, recoveryEpoch]);
   const refused = refusedDigest === record?.intent.digest;
   const receiptCheckKey = record ? `${record.intent.digest}:${record.stage}` : null;
   const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey;
   const receiptUnconfirmed = Boolean(record && !receiptChecked);
   const reviewable = record?.stage === 'prepared' || record?.stage === 'accepted';
-  const signable = Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused && !recordLineClosed);
+  const signable = Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused && !recordLineClosed && signingLineVerified && signingLineCheck?.state === 1);
   const checkingStatus = reviewable && !refused && receiptUnconfirmed;
   const paidPending = Boolean(record && !refused && record.stage !== 'delivered' && receiptChecked && receiptCheck?.status === 2);
   useEffect(() => {
@@ -201,6 +216,11 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           setNotice('A payment receipt is recorded. Check payment and recover the result before continuing.');
           return;
         }
+        const freshLine = await client.readContract({address:deployment.address,abi:candidateFundingAbi,functionName:'getLine',args:[record.intent.typedData.message.lineId]});
+        if (revision.current !== current || !visible.current || currentView.current.account !== account || currentView.current.deployment !== deployment || !currentView.current.correctNetwork) return;
+        const freshState = Number((freshLine as {state:bigint}).state);
+        setSigningLineCheck({key:receiptCheckKey,state:freshState});
+        if (freshState !== 1) throw new Error('Funding line is not open. No signature was requested.');
         await engine.submit();
         if (revision.current === current) { setReviewing(false); setNotice('Transaction requested. Check payment and recover the result below; do not submit a new purchase.'); }
       } else if (kind === 'recover') {
@@ -217,7 +237,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         await engine.archive();
         if (revision.current === current) { setResult(''); setReviewing(false); setNotice('Purchase resolved and archived in this browser. You can prepare another purchase when the line permits it.'); }
       }
-    } catch (cause) { if (kind === 'recover') recoveryFailed = true; if (revision.current === current) { setError(candidateErrorMessage(cause)); setReviewing(false); } }
+    } catch (cause) { if (kind === 'recover') recoveryFailed = true; if (kind === 'submit') setSigningLineCheck(null); if (revision.current === current) { setError(candidateErrorMessage(cause)); setReviewing(false); } }
     finally {
       if (revision.current === current) {
         try {
@@ -262,7 +282,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const completedView = closedLine && !record;
   const visibleHistory = completedView ? history.filter(item => String(item.intent.typedData.message.lineId).toLowerCase() === lineId.trim().toLowerCase()) : history;
   const blocker = !account ? (completedView ? null : 'Connect the agent wallet to continue.') : !correctNetwork ? `Switch to ${network} to continue.`
-    : busy ? busy : earlierReadPending && !inFlight.current ? 'Another operation for this wallet is finishing. The original purchase will be checked afterward.' : recordLineClosed ? 'This line is closed. Check the original payment or view its saved report; no new purchase can be signed.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
+    : busy ? busy : earlierReadPending && !inFlight.current ? 'Another operation for this wallet is finishing. The original purchase will be checked afterward.' : recordLineClosed ? 'This line is closed. Check the original payment or view its saved report; no new purchase can be signed.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : reviewable && (!signingLineVerified || signingLineCheck?.state !== 1) ? 'Verify that the funding line is open before wallet review. If the check failed, refresh this page; payment recovery remains available.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
     <h2 id="purchase-title">{completedView ? 'Reports from your completed line' : 'Buy a service with your agent’s budget'}</h2>
@@ -294,7 +314,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       </div>
       <p>Recovery never resends a payment. An unknown payment remains held until confirmed or its unpaid authorization has expired. Repay debt and reclaim eligible funds under “Manage a line.”</p>
     </>}
-    <div aria-live="polite">{notice && <p role="status">{notice}</p>}{error && <p className="fundingError" role="alert">{error}</p>}</div>
+    <div aria-live="polite">{notice && <p role="status">{notice}</p>}{error && <p className="fundingError" role="alert">{error}</p>}{signingLineError && <p className="fundingError" role="alert">{signingLineError}</p>}</div>
     {automaticChecking && <p role="status">Automatic checks are running for the original payment and report. These checks never send another payment.</p>}
     {result && record && account && <VerifiedServiceReport text={result} record={record} account={account} chainId={deployment.chainId} />}
     <section aria-labelledby="report-history-title">
