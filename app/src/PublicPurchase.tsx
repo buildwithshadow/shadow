@@ -221,7 +221,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         const freshState = Number((freshLine as {state:bigint}).state);
         setSigningLineCheck({key:receiptCheckKey,state:freshState});
         if (freshState !== 1) throw new Error('Funding line is not open. No signature was requested.');
-        await engine.submit();
+        await engine.submit(record.intent.digest);
         if (revision.current === current) { setReviewing(false); setNotice('Transaction requested. Check payment and recover the result below; do not submit a new purchase.'); }
       } else if (kind === 'recover') {
         if (record) resetRecoverySession(`${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${record.intent.digest}`);

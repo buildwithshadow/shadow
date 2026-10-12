@@ -435,3 +435,21 @@ test('unknown cyclic wallet errors retain the purchase reconciliation barrier', 
   assert.equal(flow.load().stage,'submitted');
   await assert.rejects(flow.submit(),/reconciliation/);
 });
+
+test('locked submission refuses a different valid intent from the one reviewed',async()=>{
+  const h=setup(),flow=h.create();const original=await flow.prepare(lineId,'review-original');
+  h.advance(1700n);await flow.archive();const replacement=await flow.prepare(lineId,'review-replacement');
+  assert.notEqual(original.intent.digest,replacement.intent.digest);
+  await assert.rejects(flow.submit(original.intent.digest),/saved purchase changed after review/);
+  assert.deepEqual(h.counts(),{sends:0,signs:0});assert.equal(flow.load().intent.digest,replacement.intent.digest);
+});
+test('a closed line is rejected inside the submission lock before any signature',async()=>{
+  const h=setup(),flow=h.create();const prepared=await flow.prepare(lineId,'line-closes');
+  const read=h.client.readContract;h.client.readContract=async request=>request.functionName==='lines'?{...(await read(request)),state:4}:read(request);
+  await assert.rejects(flow.submit(prepared.intent.digest),/Funding line is not open/);assert.deepEqual(h.counts(),{sends:0,signs:0});
+});
+test('a failed locked line lookup cannot request a signature',async()=>{
+  const h=setup(),flow=h.create();const prepared=await flow.prepare(lineId,'line-unavailable');
+  const read=h.client.readContract;h.client.readContract=async request=>{if(request.functionName==='lines')throw Error('line RPC unavailable');return read(request);};
+  await assert.rejects(flow.submit(prepared.intent.digest),/line RPC unavailable/);assert.deepEqual(h.counts(),{sends:0,signs:0});
+});
