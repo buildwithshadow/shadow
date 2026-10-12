@@ -261,7 +261,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const disabled = recoveryDisabled || fundingPending;
   const completedView = closedLine && !record;
   const visibleHistory = completedView ? history.filter(item => String(item.intent.typedData.message.lineId).toLowerCase() === lineId.trim().toLowerCase()) : history;
-  const blocker = !account ? (completedView ? 'Connect the purchase wallet to view its saved reports.' : 'Connect the agent wallet to continue.') : !correctNetwork ? `Switch to ${network} to continue.`
+  const blocker = !account ? (completedView ? null : 'Connect the agent wallet to continue.') : !correctNetwork ? `Switch to ${network} to continue.`
     : busy ? busy : earlierReadPending && !inFlight.current ? 'Another operation for this wallet is finishing. The original purchase will be checked afterward.' : recordLineClosed ? 'This line is closed. Check the original payment or view its saved report; no new purchase can be signed.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
