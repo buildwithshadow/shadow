@@ -27,13 +27,13 @@ function fixture(status=2n) {
   const client: any = {readContract:vi.fn(async()=>status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
-function Host({client}: {client:any}) {
+function Host({client, loadedLine = null, lineId = ''}: {client:any; loadedLine?:any; lineId?:string}) {
   const [busy,setBusy]=useState('');
   return <MemoryRouter initialEntries={['/start/purchase']}>
     <Link to="/other">Leave funding</Link><Link to="/start/purchase">Return to purchase</Link>
     <Routes><Route path="/other" element={<p>Other page</p>}/><Route path="/start/purchase" element={<PublicPurchase
       account={account} correctNetwork deployment={deployment} service={service} client={client} busy={busy} setBusy={setBusy}
-      fundingPending={false} lineId="" onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}}/>}/></Routes>
+      fundingPending={false} lineId={lineId} loadedLine={loadedLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}}/>}/></Routes>
   </MemoryRouter>;
 }
 beforeEach(()=>{
@@ -138,4 +138,46 @@ test('an archived read settling after unmount wakes recovery of the new active j
   await act(async()=>{settle({record:older,status:'delivered',bytes:new TextEncoder().encode('old historical report')});});
   await waitFor(()=>expect(f.engine.recover).toHaveBeenCalledTimes(2));await screen.findByText(text);
   expect(screen.queryByText('old historical report')).toBeNull();expect(f.engine.load().intent.digest).toBe(next.intent.digest);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('a closed line leads with retained reports and cannot prepare another purchase',async()=>{
+  const f=fixture();f.delivered();await f.engine.archive();
+  const original=f.archived[0];f.archived.push({...original,intent:{...original.intent,digest:`0x${'99'.repeat(32)}`,typedData:{message:{...original.intent.typedData.message,lineId:`0x${'66'.repeat(32)}`}}}});
+  render(<Host client={f.client} lineId={`0x${'55'.repeat(32)}`} loadedLine={{lineId:`0x${'55'.repeat(32)}`,stateName:'CLOSED'}}/>);
+  expect(screen.getByRole('heading',{name:'Reports from your completed line'})).toBeTruthy();
+  expect(screen.getAllByRole('button',{name:/Open report/})).toHaveLength(1);
+  expect(screen.queryByRole('button',{name:'Review service purchase'})).toBeNull();
+  expect(screen.queryByRole('list',{name:'Purchase steps'})).toBeNull();
+  fireEvent.click(screen.getByRole('button',{name:/Open report/}));await screen.findByText('retained report');
+  expect(screen.queryByText(/Another operation for this wallet/)).toBeNull();
+  expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();expect(f.engine.load()).toBeNull();
+});
+test('closed-line presentation never blocks original paid result recovery',async()=>{
+  const f=fixture(),text=`original report ${counter}`;
+  render(<Host client={f.client} lineId={`0x${'55'.repeat(32)}`} loadedLine={{lineId:`0x${'55'.repeat(32)}`,stateName:'CLOSED'}}/>);
+  await screen.findByText(text);expect(screen.getByRole('button',{name:'Archive completed report'})).toBeTruthy();
+  expect(f.engine.recover).toHaveBeenCalledTimes(1);expect(f.engine.submit).not.toHaveBeenCalled();
+});
+test('a different closed line does not hide this line purchase form',async()=>{
+  const f=fixture();f.delivered();await f.engine.archive();
+  render(<Host client={f.client} lineId={`0x${'66'.repeat(32)}`} loadedLine={{lineId:`0x${'55'.repeat(32)}`,stateName:'CLOSED'}}/>);
+  expect(screen.getByRole('button',{name:'Review service purchase'})).toBeTruthy();
+  expect(screen.queryByRole('heading',{name:'Reports from your completed line'})).toBeNull();
+});
+test('opening history names the receipt read rather than an earlier wallet approval',async()=>{
+  const f=fixture();f.delivered();await f.engine.archive();let settle!:(value:any)=>void;
+  f.engine.recoverArchived.mockImplementation(()=>new Promise(resolve=>{settle=resolve;}));
+  render(<Host client={f.client}/>);fireEvent.click(screen.getByRole('button',{name:/Open report/}));
+  expect(screen.getByText('Checking the saved report receipt. No payment is being sent.')).toBeTruthy();
+  expect(screen.queryByText(/Another operation for this wallet/)).toBeNull();
+  await act(async()=>{settle({record:f.archived[0],status:'delivered',bytes:new TextEncoder().encode('retained report')});});
+  await screen.findByText('retained report');expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('an unpaid saved intent on a closed line is not offered for signing',async()=>{
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'prepared'});
+  render(<Host client={f.client} lineId={`0x${'55'.repeat(32)}`} loadedLine={{lineId:`0x${'55'.repeat(32)}`,stateName:'CLOSED'}}/>);
+  await screen.findByText('This line is closed. Check the original payment or view its saved report; no new purchase can be signed.', {selector:'#purchase-blocker'});
+  expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);
+  expect(document.querySelector('dialog')?.hasAttribute('open')).toBe(false);expect(f.engine.submit).not.toHaveBeenCalled();
 });

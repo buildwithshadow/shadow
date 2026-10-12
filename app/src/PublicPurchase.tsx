@@ -4,20 +4,22 @@ import { VerifiedServiceReport } from './VerifiedServiceReport';
 import { useLocation } from 'react-router-dom';
 import { recoverOriginalPurchase, type RecoveryResult } from './purchaseRecovery.mjs';
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
-import { candidateErrorMessage, candidateChainFor, candidateFundingAbi, type CandidateDeployment } from './candidateFunding';
+import { candidateErrorMessage, candidateChainFor, candidateFundingAbi, type CandidateDeployment, type CandidateLine } from './candidateFunding';
 import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPurchaseResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
 import { createSelfServicePurchase, createGuardedMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string; requestKind?: 'arc-wallet' }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, active = true }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, loadedLine = null, active = true }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; active?: boolean;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; loadedLine?: Pick<CandidateLine, 'lineId' | 'stateName'> | null; active?: boolean;
 }) {
+  const closedLine = loadedLine?.stateName === 'CLOSED' && loadedLine.lineId.toLowerCase() === lineId.trim().toLowerCase();
   const mainnet = deployment.chainId === 5042;
   const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
   const currency = mainnet ? 'USDC' : 'test USDC';
   const chain = useMemo(() => candidateChainFor(deployment), [deployment]);
   const [record, setRecord] = useState<PurchaseRecord | null>(null);
+  const recordLineClosed = closedLine && String(record?.intent.typedData.message.lineId ?? '').toLowerCase() === lineId.trim().toLowerCase();
   const [error, setError] = useState('');
   const [notice, setNotice] = useState('');
   const [result, setResult] = useState('');
@@ -105,7 +107,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey;
   const receiptUnconfirmed = Boolean(record && !receiptChecked);
   const reviewable = record?.stage === 'prepared' || record?.stage === 'accepted';
-  const signable = Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused);
+  const signable = Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused && !recordLineClosed);
   const checkingStatus = reviewable && !refused && receiptUnconfirmed;
   const paidPending = Boolean(record && !refused && record.stage !== 'delivered' && receiptChecked && receiptCheck?.status === 2);
   useEffect(() => {
@@ -174,7 +176,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   }, [engine, record?.intent.digest, active, correctNetwork, busy, needsRecovery, location.key, documentVisible, recoveryEpoch]);
 
   async function action(kind: 'prepare' | 'submit' | 'recover' | 'archive') {
-    if (!engine || inFlight.current || recoveryWalletBusy(walletWorkKey) || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
+    if (!engine || ((kind === 'prepare' && closedLine) || (kind === 'submit' && recordLineClosed)) || inFlight.current || recoveryWalletBusy(walletWorkKey) || busy || !correctNetwork || (refused && (kind === 'prepare' || kind === 'submit')) || (kind === 'submit' && !signable) || (fundingPending && (kind === 'prepare' || kind === 'submit'))) return;
     inFlight.current = true; beginRecoveryWalletWork(walletWorkKey);
     const current = revision.current;
     let recoveryFailed = false;
@@ -257,27 +259,30 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   }
   const recoveryDisabled = !account || !correctNetwork || Boolean(busy) || recovering || historyBusy || earlierReadPending;
   const disabled = recoveryDisabled || fundingPending;
-  const blocker = !account ? 'Connect the agent wallet to continue.' : !correctNetwork ? `Switch to ${network} to continue.`
-    : busy ? busy : earlierReadPending ? 'An earlier wallet operation is settling. The original purchase will be checked when it finishes.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
+  const completedView = closedLine && !record;
+  const visibleHistory = completedView ? history.filter(item => String(item.intent.typedData.message.lineId).toLowerCase() === lineId.trim().toLowerCase()) : history;
+  const blocker = !account ? (completedView ? 'Connect the purchase wallet to view its saved reports.' : 'Connect the agent wallet to continue.') : !correctNetwork ? `Switch to ${network} to continue.`
+    : busy ? busy : earlierReadPending && !inFlight.current ? 'Another operation for this wallet is finishing. The original purchase will be checked afterward.' : recordLineClosed ? 'This line is closed. Check the original payment or view its saved report; no new purchase can be signed.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
-    <h2 id="purchase-title">Buy a service with your agent’s budget</h2>
-    <p>{service.name} · {formatUnits(BigInt(service.principal), 6)} {currency}. {service.requestKind === 'arc-wallet' ? 'Receive a report of your connected wallet’s USDC balance, checked at a confirmed block using two RPC providers.' : 'Receive a report verifying a recorded Shadow payment and repayment. This test service uses public transaction data.'}</p>
-    <p>Connect the agent’s browser wallet to sign and execute the purchase. It pays {mainnet ? 'mainnet' : 'testnet'} gas in USDC. The sponsor’s line covers the service price and records the repayment obligation.</p>
-    <ol className="purchaseSteps" role="list" aria-label="Purchase steps">
+    <h2 id="purchase-title">{completedView ? 'Reports from your completed line' : 'Buy a service with your agent’s budget'}</h2>
+    {completedView ? <p>{service.name}. Opening a saved report does not send a payment.</p> : <p>{service.name} · {formatUnits(BigInt(service.principal), 6)} {currency}. {service.requestKind === 'arc-wallet' ? 'Receive a report of your connected wallet’s USDC balance, checked at a confirmed block using two RPC providers.' : 'Receive a report verifying a recorded Shadow payment and repayment. This test service uses public transaction data.'}</p>}
+    {completedView ? <p>This funding line is closed. View its saved reports below. Open another funding line for new purchases.</p> : <p>Connect the agent’s browser wallet to sign and execute the purchase. It pays {mainnet ? 'mainnet' : 'testnet'} gas in USDC. The sponsor’s line covers the service price and records the repayment obligation.</p>}
+    {!completedView && <ol className="purchaseSteps" role="list" aria-label="Purchase steps">
       <li data-state={!record ? 'current' : 'complete'} aria-current={!record ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">1</span><span className="purchaseStepLabel">Line</span></li>
       <li data-state={signable ? reviewing && busy ? 'complete' : 'current' : checkingStatus ? 'current' : !record ? 'upcoming' : 'complete'} aria-current={signable && !(reviewing && busy) || checkingStatus ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">2</span><span className="purchaseStepLabel">{checkingStatus ? 'Checking status' : 'Review terms'}</span></li>
       <li data-state={signable && reviewing && busy ? 'current' : !record || reviewable && !refused && (signable || receiptUnconfirmed) ? 'upcoming' : 'complete'} aria-current={signable && reviewing && Boolean(busy) ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">3</span><span className="purchaseStepLabel">Sign and submit</span></li>
       <li data-state={refused || paidPending ? 'complete' : record?.stage === 'submitted' ? 'current' : record?.stage === 'delivered' ? 'complete' : 'upcoming'} aria-current={!refused && !paidPending && record?.stage === 'submitted' ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">4</span><span className="purchaseStepLabel">{refused ? 'Payment refused' : 'Payment'}</span></li>
       <li data-state={!refused && record?.stage === 'delivered' ? result ? 'complete' : 'current' : paidPending ? 'current' : 'upcoming'} aria-current={!refused && record?.stage === 'delivered' && !result || paidPending ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">5</span><span className="purchaseStepLabel">Result</span></li>
       <li data-state={refused || record?.stage === 'delivered' && result ? 'current' : 'upcoming'} aria-current={refused || record?.stage === 'delivered' && result ? 'step' : undefined}><span className="purchaseStepNumber" aria-hidden="true">6</span><span className="purchaseStepLabel">Recover or archive</span></li>
-    </ol>
+    </ol>}
     {blocker && <p id="purchase-blocker" role="status">{blocker}</p>}
-    {!record && <form onSubmit={event => { event.preventDefault(); void action('prepare'); }}>
+    {!record && !completedView && <form onSubmit={event => { event.preventDefault(); void action('prepare'); }}>
       <div className="fundingField"><label htmlFor="purchase-line">Funding line ID</label>
         <input id="purchase-line" value={lineId} onChange={event => onLineIdChange(event.target.value)} required disabled={Boolean(busy)} autoComplete="off" spellCheck={false} />
       </div><button type="submit" className="fundingPrimary" disabled={disabled} aria-describedby={blocker ? 'purchase-blocker' : undefined}>Review service purchase</button>
     </form>}
+    {completedView && <dl className="fundingDetails"><div><dt>Closed line</dt><dd><code>{lineId}</code></dd></div></dl>}
     {record && <>
       <p>Saved purchase: <strong>{refused ? 'Refused by contract' : record.stage === 'delivered' ? 'Delivered' : receiptUnconfirmed ? 'Checking status' : paidPending ? 'Payment receipt found' : record.stage === 'submitted' ? 'Awaiting confirmation' : 'Ready for wallet review'}</strong>. Keep this browser’s site data until resolved.</p>
       <dl className="fundingDetails"><div><dt>Line</dt><dd><code>{message?.lineId}</code></dd></div><div><dt>Purchase ID</dt><dd><code>{record.intent.digest}</code></dd></div></dl>
@@ -294,10 +299,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     {result && record && account && <VerifiedServiceReport text={result} record={record} account={account} chainId={deployment.chainId} />}
     <section aria-labelledby="report-history-title">
       <h3 id="report-history-title">Reports saved in this browser</h3>
-      <p>Up to 20 completed reports for this wallet, network and service. Opening a report rechecks its payment and signed result. Clearing site data removes local history.</p>
-      {history.length ? <ul>{history.map(item => <li key={item.intent.digest}>
+      <p>{completedView ? 'Reports for this line from this browser’s recent history.' : 'Up to 20 completed reports for this wallet, network and service.'} Opening a report rechecks its payment and signed result. Clearing site data removes local history.</p>
+      {visibleHistory.length ? <ul>{visibleHistory.map(item => <li key={item.intent.digest}>
         <button type="button" disabled={recoveryDisabled || historyBusy} onClick={() => void openArchived(item.intent.digest)}>Open report {item.intent.digest.slice(0,10)}…{item.intent.digest.slice(-4)}</button>
-      </li>)}</ul> : <p>No completed reports are archived for this wallet and service.</p>}
+      </li>)}</ul> : <p>{account ? completedView ? 'No report for this line is saved in this browser’s recent history.' : 'No completed reports are archived for this wallet and service.' : 'Connect the purchase wallet to view reports saved in this browser.'}</p>}
       {historyBusy && <p role="status">Checking the saved report receipt. No payment is being sent.</p>}
       {historyError && <p className="fundingError" role="alert">{historyError}</p>}
       {archivedResult && account && <VerifiedServiceReport text={archivedResult.text} record={archivedResult.record} account={account} chainId={deployment.chainId} />}
