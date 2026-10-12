@@ -157,6 +157,8 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     await new Promise((r) => server.listen(0, "127.0.0.1", r));
     const map = new Map(),
       storage = {
+        get length() { return map.size; },
+        key: index => [...map.keys()][index] ?? null,
         getItem: (k) => map.get(k) ?? null,
         setItem: (k, v) => map.set(k, v),
         removeItem: (k) => map.delete(k),
@@ -247,6 +249,7 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     await assert.rejects(create().submit(), /reconciliation/);
     assert.equal(sends, 1);
     unrelatedFundingHold = true;
+    const activeKey = [...map.keys()][0], pendingJournal = map.get(activeKey);
     let result, recoveryAttempts = 0;
     await recoverOriginalPurchase({
       recover: async () => {
@@ -290,5 +293,37 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
       100000n,
     );
     assert.equal((await read("lines", [lineId])).principalOutstanding, 0n);
+    // Anvil finality trails the latest block. Preserve production's same-block
+    // archive proof instead of substituting a latest-block read in the test.
+    await client.request({method:'anvil_mine',params:['0x40']});
+    await create().archive();
+    assert.equal(create().load(), null);
+    const paidDigest = result.record.intent.digest;
+    const archives = create().listArchived();
+    assert.equal(archives.length, 1);
+    assert.equal(archives[0].intent.digest, paidDigest);
+    // Opening an earlier receipt must never replace an unresolved journal.
+    map.set(activeKey, pendingJournal);
+    const reopened = await create().recoverArchived(paidDigest);
+    assert.equal(new TextDecoder().decode(reopened.bytes), 'paid report');
+    assert.equal(map.get(activeKey), pendingJournal);
+    assert.equal(sends, 1); assert.equal(jobs, 1);
+    const archiveKey = `${activeKey}:${paidDigest}`, archivedRaw = map.get(archiveKey);
+    const tampered = JSON.parse(archivedRaw); tampered.result.result = btoa('altered report');
+    map.set(archiveKey, JSON.stringify(tampered));
+    await assert.rejects(create().recoverArchived(paidDigest), /signed receipt/);
+    assert.equal(map.get(activeKey), pendingJournal);
+    map.set(archiveKey, archivedRaw);
+    const wrongDelivery = JSON.parse(archivedRaw);
+    wrongDelivery.result.delivery.typedData.message.requestIdHash = `0x${'00'.repeat(32)}`;
+    map.set(archiveKey, JSON.stringify(wrongDelivery));
+    await assert.rejects(create().recoverArchived(paidDigest));
+    assert.equal(map.get(activeKey), pendingJournal);
+    map.set(archiveKey, archivedRaw);
+    const originalRead = client.readContract;
+    client.readContract = args => args.functionName === 'receiptStatus' ? Promise.resolve(0n) : originalRead(args);
+    await assert.rejects(create().recoverArchived(paidDigest), /reconciliation/);
+    client.readContract = originalRead;
+    assert.equal(map.get(activeKey), pendingJournal);
   },
 );

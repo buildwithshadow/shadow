@@ -342,6 +342,25 @@ test("confirmed refusal can be archived but unresolved payments remain held", as
   assert.equal(flow.load().requestId, "job-next");
 });
 
+test('history excludes refusal, other deployments and malformed archives without altering the active purchase', async()=>{
+  const h=setup(),flow=h.create();const record=await flow.prepare(lineId,'history-source');
+  const key=[...h.data.keys()][0],raw=h.data.get(key);
+  const archive={...record,stage:'delivered',terminalStatus:'delivered',resolvedAtBlock:'123'};
+  const archiveKey=`${key}:${record.intent.digest}`;
+  h.data.set(archiveKey,JSON.stringify(archive));assert.equal(flow.listArchived().length,1);
+  for(const altered of [{...archive,account:sponsor},{...archive,chainId:5042},{...archive,terminalStatus:'blocked'}, {...archive,resolvedAtBlock:'NaN'}]) {
+    h.data.set(archiveKey,JSON.stringify(altered));assert.deepEqual(flow.listArchived(),[]);
+  }
+  h.data.set(archiveKey,'x'.repeat(2_000_001));assert.deepEqual(flow.listArchived(),[]);
+  h.data.set(archiveKey,JSON.stringify(archive));
+  await assert.rejects(flow.recoverArchived(record.intent.digest),/reconciliation/);
+  assert.equal(h.data.get(key),raw);assert.deepEqual(h.counts(),{sends:0,signs:0});
+});
+test('history listing has an absolute storage work bound and sends nothing',()=>{
+  const h=setup(),flow=h.create();for(let i=0;i<2001;i++)h.data.set(`unrelated:${i}`,'{}');
+  assert.throws(()=>flow.listArchived(),/Too many browser records/);assert.deepEqual(h.counts(),{sends:0,signs:0});
+});
+
 test("lost wallet response remains held until its unpaid authorization expires", async () => {
   const h = setup(),
     flow = h.create();
