@@ -1,10 +1,50 @@
 # Shadow
 
-**Shadow Float is sponsor-backed USDC capacity for autonomous agents on Arc.**
+**Give an agent a USDC service budget on Arc, with spending limits, repayment tracking and eligible reserve reclaim.**
+
+## Start on Arc mainnet
+
+Use [Shadow on mainnet](https://www.shadowbuild.xyz/mainnet), or select Mainnet or Testnet on [the website](https://www.shadowbuild.xyz). A sponsor registers its wallet, chooses an agent, approves an exact reserve allowance and funds a line. The agent buys the approved service within its limits. Repayment clears the recorded debt; the sponsor can close a debt free line and reclaim eligible reserve.
+
+The public browser release uses ordinary EOA wallets for funding. Its sample service is an Arc wallet report checked against two RPC sources. The public page does not currently expose Circle CLI handoff. Circle Agent Wallet purchase and repayment evidence below belongs to the separate guarded deployment.
+
+| Current public mainnet deployment | Value |
+| --- | --- |
+| Network | Arc mainnet, chain `5042` |
+| Contract | [`0xcA819e8713b04a4Bd7e437c04BB97ac9274e2ce5`](https://explorer.arc.io/address/0xcA819e8713b04a4Bd7e437c04BB97ac9274e2ce5?tab=contract) |
+| Source verification | Blockscout verified source, partial match as checked 12 October 2026 |
+| USDC | `0x3600000000000000000000000000000000000000` |
+| Reserve ceiling | `0.10 USDC` per line; `1 USDC` committed across the protocol |
+| Purchase ceiling | `0.005 USDC` total, daily and per purchase per line |
+| Repayment | Bound to the exact current draw through `repayForDraw` |
+| Deployment identity | [Public mainnet manifest](contracts/deployments/float-mainnet-public/arc-mainnet.manifest.json) |
+
+Read the current limits and pause flags before approving a transaction. Deployment configuration records are historical; they are not a guarantee of current availability.
+
+### Building with Shadow
+
+Shadow adds a repayable sponsor funding relationship to agent wallets and payments. The reusable pieces are in this repository; no standalone SDK package is claimed.
+
+| Primitive | Source or guide |
+| --- | --- |
+| Public sponsor registration, bounded reserves and draw bound repayment | [Public contract](contracts/src/ShadowFloatMainnetPublic.sol) |
+| Signed purchase preparation, execution and saved result recovery | [Purchase engine](app/src/selfServicePurchase.mjs) |
+| Provider payment and delivery adapter | [Purchase adapter](app/scripts/float-mainnet-purchase-adapter.mjs) |
+| Participant flow and deployment boundaries | [Mainnet participant guide](docs/public-mainnet-participant.md) |
+| Public admission monitoring and stop controls | [Monitoring guide](docs/public-mainnet-monitoring.md) |
+| Browser testnet flow | [Testnet guide](docs/SELF_SERVICE_TESTNET.md) |
+
+Recovery checks the original payment before another purchase can proceed. Completed reports can be retained in local browser history and reopened after their receipt and result checks pass. Do not clear site data while an operation is unresolved; local history is not a cross device backup.
+
+Repayment is unsecured. Sponsors bear the risk of unpaid spent principal; reclaim applies only to eligible funds. Payment does not guarantee provider delivery. No independent human security audit is claimed. Automated tests and reviews do not guarantee security. Pause authority remains with the contract owner and authorized stop operator; repayment and eligible reclaim remain available during pauses.
+
+## Historical Float V2 testnet and integration evidence
+
+The following V2 material describes the older Arc testnet deployment. Its autonomous desk, scoring and external integration records are separate from the current public mainnet contract.
 
 Agents need paid data, compute, and APIs before they have money of their own. On Shadow Float, a sponsor reserves Arc USDC for an agent, the agent signs a bounded EIP-712 spend intent, and `ShadowFloat` verifies the signer, nonce, expiry, provider, endpoint, amount, executor, and max cumulative debt onchain before any provider payment moves.
 
-Three things are true on this testnet right now:
+The V2 testnet release documented these three capabilities:
 
 1. **An autonomous desk runs the book.** An LLM-driven desk decides what to buy, its one-sentence rationale rides inside the signed intent, and the intent digest becomes the onchain `requestHash`, so every decision is cryptographically bound to its receipt. After the desk's first clean lifecycle, the contract raised the desk's own credit limit from behavior alone.
 2. **Outside projects use it with their own wallets.** Nine independently controlled external-agent lines still hold reserve, while the public history retains two debt-free CitePay line generations after reclaim. A cross-project loop let one team's agent borrow Shadow credit to pay another team's API. Two external sponsors put their own USDC behind lines; Forum Tollgate remains reserve-backed.
@@ -64,7 +104,7 @@ The following documents describe the earlier unguarded contract and testnet cand
 
 Shadow began this period with a deployed protocol proof and ended it as a self-serve external pilot: sponsor and agent wallet onboarding, a live reserve/debt/reclaim monitor, independently controlled sponsor-agent-provider cycles, autonomous Desk decisions bound to EIP-712 receipts, and crash-safe provider-payment reconciliation.
 
-## Current Float V2
+## Historical Float V2 deployment
 
 | Item | Value |
 | --- | --- |
