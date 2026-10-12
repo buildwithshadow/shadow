@@ -643,3 +643,20 @@ test('a receipt transport failure cannot be treated as evidence of a pending ori
  assert.equal((await executeCandidateCall({...f.session,publicClient:client},prepared)).status,'unknown');
  assert.equal(f.journal.load()!.actualNonce,undefined);
 });
+
+test('line-opening execution verifies identity once while retaining current state and simulation checks',async()=>{
+  const f=fixture();const prepared=await prepareCandidateOpen(f.client,sponsor,input);f.mined(prepared);f.state.readCalls=[];let preflight:string[]=[];f.state.onSend=()=>{preflight=[...f.state.readCalls];return txHash;};
+  const result=await executeCandidateCall(f.session,prepared);assert.equal(result.status,'confirmed');
+  for(const name of ['NAME_HASH','VERSION_HASH','SPEND_INTENT_TYPEHASH','deploymentChainId','usdc','decimals']) assert.equal(preflight.filter(x=>x===name).length,1,name);
+  assert.equal(f.state.readCalls.filter((x:string)=>x==='NAME_HASH').length,2,'identity is checked again after mining');
+  assert.ok(f.state.readCalls.includes('effectiveLimits'));assert.ok(f.state.readCalls.includes('nextLineEpoch'));
+  assert.equal(f.state.simulation,1);assert.equal(f.state.sends,1);assert.ok(f.state.walletNonceReads>=2);
+});
+test('repayment execution verifies identity once and still reads current debt before simulation',async()=>{
+  const f=fixture();f.state.line.state=2;f.state.line.principalOutstanding=50_000n;
+  const prepared=await prepareCandidateRepay(f.client,sponsor,lineId);f.mined(prepared);f.state.readCalls=[];let preflight:string[]=[];f.state.onSend=()=>{preflight=[...f.state.readCalls];return txHash;};
+  const result=await executeCandidateCall(f.session,prepared);assert.equal(result.status,'confirmed');
+  for(const name of ['NAME_HASH','VERSION_HASH','SPEND_INTENT_TYPEHASH','deploymentChainId','usdc','decimals']) assert.equal(preflight.filter(x=>x===name).length,1,name);
+  assert.equal(f.state.readCalls.filter((x:string)=>x==='NAME_HASH').length,2,'identity is checked again after mining');
+  assert.ok(f.state.readCalls.includes('getLine'));assert.equal(f.state.simulation,1);assert.equal(f.state.sends,1);
+});

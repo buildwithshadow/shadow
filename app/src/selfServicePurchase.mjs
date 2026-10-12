@@ -422,13 +422,17 @@ function createPurchase({
     save(record);
     return record;
   }
-  async function submit() {
+  async function submit(expectedDigest) {
     assert(!locks.has(key), "A wallet request is already running.");
     locks.add(key);
     try {
       await connected();
       let record = load();
       assert(record, "Prepare a purchase first.");
+      if (expectedDigest !== undefined) {
+        assert(typeof expectedDigest === 'string' && /^0x[0-9a-fA-F]{64}$/.test(expectedDigest), 'Reviewed purchase identity is invalid.');
+        assert(same(record.intent.digest, expectedDigest), 'The saved purchase changed after review. Review the current purchase before signing.');
+      }
       assert(
         record.stage === "prepared" || record.stage === "accepted",
         "The original payment needs reconciliation; do not send again.",
@@ -444,6 +448,15 @@ function createPurchase({
           same(intent.verifyingContract, contract),
         "Purchase wallet or contract changed.",
       );
+      // This runs inside both wallet/purchase locks and uses the record loaded
+      // there, rather than the UI's earlier copy of its line or receipt.
+      const submissionBlock = await client.getBlock();
+      const submissionLine = await read('lines', [intent.typedData.message.lineId], submissionBlock.number);
+      assert(Number(submissionLine.state) === 1, 'Funding line is not open. No signature was requested.');
+      assert(same(submissionLine.agent, account) && same(submissionLine.sponsor, intent.typedData.message.sponsor)
+        && BigInt(submissionLine.epoch) === BigInt(intent.typedData.message.lineEpoch), 'Funding line identity changed. Review the current purchase before signing.');
+      assert(submissionBlock.timestamp < BigInt(intent.typedData.message.signatureExpiry), 'The saved purchase authorization expired. Resolve it before preparing another.');
+      assert(same(load()?.intent.digest, intent.digest), 'The saved purchase changed during verification. Review the current purchase before signing.');
       if (record.stage === "prepared") {
         const signature = await wallet.request({
           method: "eth_signTypedData_v4",
@@ -631,7 +644,7 @@ function createPurchase({
   }
   return {
     prepare: (...args) => withLock(key, () => prepare(...args), 'prepare'),
-    submit: () => withLock(key, submit, 'submit'),
+    submit: expectedDigest => withLock(key, () => submit(expectedDigest), 'submit'),
     recover: () => withLock(key, recover, 'recover'),
     archive: () => withLock(key, archive, 'archive'),
     load,

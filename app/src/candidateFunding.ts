@@ -184,6 +184,12 @@ async function readCandidateSnapshot(client: CandidateReadClient, input: { spons
   const sponsor = address(input.sponsor)
   const agent = input.agent ? address(input.agent, 'Agent') : null
   await verifyCandidate(client)
+  return snapshotAfterVerification(client, sponsor, agent)
+}
+
+// Internal continuation only: both callers verify the candidate in this same
+// operation. No cached identity, skipped public verification or stale snapshot.
+async function snapshotAfterVerification(client: CandidateReadClient, sponsor: Address, agent: Address | null): Promise<CandidateSnapshot> {
   const block = await client.getBlock()
   const at = (name: string, args: readonly unknown[] = []) => read(client, name, args, block.number)
   const allowed = await at('sponsorAllowed', [sponsor])
@@ -391,12 +397,12 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
     progress(session, 'Checking current limits and transaction details. The wallet request follows these checks…')
     if (prepared.kind === 'open') {
       const p = call.args[0]
-      const current = await readCandidateSnapshot(client, { sponsor: session.account, agent: p.agent })
+      const current = await snapshotAfterVerification(client, session.account, address(p.agent, 'Agent'))
       if (mainnet && (await client.getCode({address:p.provider,blockNumber:current.observedBlock}) ?? '0x') !== '0x') throw new Error('Provider wallet is no longer an ordinary EOA. Review the provider again.')
       if (prepared.expectedEpoch !== current.nextEpoch || !prepared.lineId || !same(predictedLine(session.account, p.agent, current.nextEpoch), prepared.lineId)) throw new Error('The funding-line epoch changed. Refresh before opening a line.')
       if (BigInt(p.lineExpiry) < current.observedTimestamp + current.minimumRepaymentWindow + CANDIDATE_FUNDING.signatureTtl || BigInt(p.providerExpiry) < current.observedTimestamp + current.minimumRepaymentWindow + CANDIDATE_FUNDING.signatureTtl) throw new Error('This prepared line expires too soon. Refresh before funding.')
     } else if (prepared.kind !== 'approve' && prepared.kind !== 'register') {
-      const current = await readCandidateLine(client, prepared.lineId!)
+      const current = await lineAt(client, hash(prepared.lineId!), await client.getBlock())
       if (!prepared.lineFingerprint || fingerprint(current) !== prepared.lineFingerprint) throw new Error('The line or debt changed. Refresh and review the current amount before confirming.')
       if (prepared.kind === 'repay' && deployment.drawBoundRepayment && !same(call.args[1], current.drawDigest!)) throw new Error('The repayment calldata names a different purchase. Review it again.')
       if (prepared.kind === 'default' && prepared.amount !== current.principalOutstanding) throw new Error('The outstanding debt changed. Refresh before declaring default.')
