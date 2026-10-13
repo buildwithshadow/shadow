@@ -297,6 +297,37 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     } catch (cause) { if (isCurrent()) setHistoryError(candidateErrorMessage(cause)); }
     finally { inFlight.current = false; if (revision.current === current) setHistoryBusy(false); finishRecoveryWalletWork(walletWorkKey); }
   }
+  async function portableReport(kind: 'download' | 'import', value: string | File) {
+    if (!engine || !account || !correctNetwork || busy || recovering || inFlight.current || recoveryWalletBusy(walletWorkKey)) return;
+    const current = revision.current, generation = routeGeneration.current;
+    const isCurrent = () => revision.current === current && routeGeneration.current === generation && visible.current &&
+      currentView.current.account === account && currentView.current.deployment === deployment && currentView.current.correctNetwork;
+    inFlight.current = true; beginRecoveryWalletWork(walletWorkKey); setHistoryBusy(true); setHistoryError(''); setNotice('');
+    if (kind === 'import') setArchivedResult(null);
+    try {
+      if (kind === 'download') {
+        const raw = await engine.exportArchived(String(value));
+        if (!isCurrent()) return;
+        const url = URL.createObjectURL(new Blob([raw],{type:'application/json'}));
+        const link = document.createElement('a'); link.href = url; link.download = `shadow-report-${value}.json`;
+        document.body.append(link); link.click(); link.remove();
+        window.setTimeout(()=>URL.revokeObjectURL(url),10_000);
+        setNotice('Report receipt downloaded. It includes the report and its signed delivery proof.');
+      } else {
+        const file = value as File;
+        if (file.size > 2_000_000) throw new Error('Completed receipt is too large. Choose a file smaller than 2 MB.');
+        const raw = await file.text();
+        if (!isCurrent()) return;
+        const recovered = await engine.importCompleted(raw,{mayCommit:isCurrent});
+        if (isCurrent()) {
+          setArchivedResult({record:recovered.record,text:new TextDecoder('utf-8',{fatal:true}).decode(recovered.bytes)});
+          refreshHistory();
+          setNotice('Imported report verified and saved in this browser. No payment was sent.');
+        }
+      }
+    } catch (cause) { if (isCurrent()) setHistoryError(candidateErrorMessage(cause)); }
+    finally { inFlight.current = false; if (revision.current === current) setHistoryBusy(false); finishRecoveryWalletWork(walletWorkKey); }
+  }
   const recoveryDisabled = !account || !correctNetwork || Boolean(busy) || recovering || historyBusy || earlierReadPending;
   const disabled = recoveryDisabled || fundingPending;
   const completedView = closedLine && !record;
@@ -341,9 +372,15 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     <section aria-labelledby="report-history-title">
       <h3 id="report-history-title">Reports saved in this browser</h3>
       <p>{completedView ? 'Reports for this line from this browser’s recent history.' : 'Up to 20 completed reports for this wallet, network and service.'} Opening a report rechecks its payment and signed result. Clearing site data removes local history.</p>
-      {visibleHistory.length ? <ul>{visibleHistory.map(item => <li key={item.intent.digest}>
+      {visibleHistory.length ? <ul>{visibleHistory.map(item => <li key={item.intent.digest}><div className="fundingActions">
         <button type="button" disabled={recoveryDisabled || historyBusy} onClick={() => void openArchived(item.intent.digest)}>Open report {item.intent.digest.slice(0,10)}…{item.intent.digest.slice(-4)}</button>
-      </li>)}</ul> : <p>{account ? completedView ? 'No report for this line is saved in this browser’s recent history.' : 'No completed reports are archived for this wallet and service.' : 'Connect the purchase wallet to view reports saved in this browser.'}</p>}
+        <button type="button" disabled={recoveryDisabled || historyBusy} onClick={() => void portableReport('download',item.intent.digest)}>Download report receipt {item.intent.digest.slice(0,10)}…{item.intent.digest.slice(-4)}</button>
+      </div></li>)}</ul> : <p>{account ? completedView ? 'No report for this line is saved in this browser’s recent history.' : 'No completed reports are archived for this wallet and service.' : 'Connect the purchase wallet to view reports saved in this browser.'}</p>}
+      <div className="fundingField"><label htmlFor="report-receipt-file">Import a completed report receipt</label>
+        <input id="report-receipt-file" type="file" accept=".json,application/json" disabled={recoveryDisabled || historyBusy}
+          aria-describedby="report-import-hint" onChange={event=>{const file=event.target.files?.[0];event.target.value='';if(file)void portableReport('import',file);}} />
+        <small id="report-import-hint">Connect the same purchase wallet on the same network. Import checks the paid receipt and provider signature before saving the report. It sends no payment.</small>
+      </div>
       {historyBusy && <p role="status">Checking the saved report receipt. No payment is being sent.</p>}
       {historyError && <p className="fundingError" role="alert">{historyError}</p>}
       {archivedResult && account && <VerifiedServiceReport text={archivedResult.text} record={archivedResult.record} account={account} chainId={deployment.chainId} />}

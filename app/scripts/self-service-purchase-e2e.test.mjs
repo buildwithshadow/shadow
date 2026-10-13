@@ -188,12 +188,12 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     };
     let droppedDelivery = false, unrelatedFundingHold = false;
     const acceptanceRequests = [];
-    const create = () =>
+    const create = (selectedStorage = storage) =>
       (mainnet?createGuardedMainnetPurchase:createSelfServicePurchase)({
         client,
         wallet: agentWallet,
         config,
-        storage,
+        storage: selectedStorage,
         wait: async () => {},
         withLock: async (_k, work, operation) => {
           if (unrelatedFundingHold && (operation === 'prepare' || operation === 'submit')) throw Error('unresolved funding');
@@ -309,6 +309,43 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     assert.equal(map.get(activeKey), pendingJournal);
     assert.equal(sends, 1); assert.equal(jobs, 1);
     const archiveKey = `${activeKey}:${paidDigest}`, archivedRaw = map.get(archiveKey);
+    const portable = await create().exportArchived(paidDigest);
+    assert.equal(JSON.parse(portable).kind,'shadow.completed-service-receipt');
+    assert.equal(JSON.parse(portable).record.acceptance,undefined);
+    assert.equal(JSON.parse(portable).record.agentSignature,undefined);
+    const fresh = new Map(), freshStorage = {
+      get length(){return fresh.size;},key:index=>[...fresh.keys()][index]??null,
+      getItem:key=>fresh.get(key)??null,setItem:(key,value)=>fresh.set(key,value),removeItem:key=>fresh.delete(key),
+    };
+    const restored = create(freshStorage);
+    const imported = await restored.importCompleted(portable);
+    assert.equal(new TextDecoder().decode(imported.bytes),'paid report');
+    assert.equal(restored.load(),null,'import never creates an active purchase');
+    assert.equal(restored.listArchived().length,1);
+    assert.equal((await restored.recoverArchived(paidDigest)).record.intent.digest,paidDigest);
+    assert.equal(map.get(activeKey),pendingJournal,'source active purchase remains unchanged');
+    fresh.set(activeKey,pendingJournal);
+    await restored.importCompleted(portable);
+    assert.equal(fresh.get(activeKey),pendingJournal,'destination active purchase remains unchanged');
+    for(const [field,value] of [['account',sponsor.address],['chainId',123],['contract',token]]) {
+      const wrong=JSON.parse(portable);wrong.record[field]=value;
+      await assert.rejects(restored.importCompleted(JSON.stringify(wrong)),/another wallet or deployment/);
+      assert.equal(fresh.get(activeKey),pendingJournal);
+    }
+    const beforeCanceled=[...fresh.entries()];
+    let mayCommit=true;
+    const previousVerify=client.verifyTypedData;
+    client.verifyTypedData=async args=>{mayCommit=false;return previousVerify(args);};
+    await assert.rejects(restored.importCompleted(portable,{mayCommit:()=>mayCommit}),/context changed/);
+    client.verifyTypedData=previousVerify;
+    assert.deepEqual([...fresh.entries()],beforeCanceled,'context cancellation must happen before storage writes');
+    const changedResult=JSON.parse(portable);changedResult.record.result.result=btoa('forged result');
+    await assert.rejects(restored.importCompleted(JSON.stringify(changedResult)),/signed receipt/);
+    const changedSignature=JSON.parse(portable);changedSignature.record.result.delivery.signature=`0x${'12'.repeat(65)}`;
+    await assert.rejects(restored.importCompleted(JSON.stringify(changedSignature)));
+    await assert.rejects(restored.importCompleted('x'.repeat(2_000_001)),/too large/);
+    assert.equal(fresh.get(activeKey),pendingJournal);
+    assert.equal(sends,1);assert.equal(jobs,1);
     const tampered = JSON.parse(archivedRaw); tampered.result.result = btoa('altered report');
     map.set(archiveKey, JSON.stringify(tampered));
     await assert.rejects(create().recoverArchived(paidDigest), /signed receipt/);
@@ -323,6 +360,8 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     const originalRead = client.readContract;
     client.readContract = args => args.functionName === 'receiptStatus' ? Promise.resolve(0n) : originalRead(args);
     await assert.rejects(create().recoverArchived(paidDigest), /reconciliation/);
+    await assert.rejects(restored.importCompleted(portable),/reconciliation/);
+    assert.equal(fresh.get(activeKey),pendingJournal);
     client.readContract = originalRead;
     assert.equal(map.get(activeKey), pendingJournal);
   },
