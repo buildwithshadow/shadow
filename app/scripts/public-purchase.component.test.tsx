@@ -24,7 +24,7 @@ function fixture(status=2n) {
     archive:vi.fn(async()=>{archived.push(saved);saved=null;}),listArchived:()=>archived,
     recoverArchived:vi.fn(async(digest:string)=>({record:archived.find(item=>item.intent.digest===digest),status:'delivered',bytes:new TextEncoder().encode('retained report')}))};
   h.engines.set(account,engine);
-  const client: any = {readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
+  const client: any = {getBlock:vi.fn(async()=>({number:123n,timestamp:2000000000n})),readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
 function Host({client, loadedLine = null, lineId = ''}: {client:any; loadedLine?:any; lineId?:string}) {
@@ -231,4 +231,24 @@ test('expiry alone cannot clear a payment when the finalized archive check fails
   expect(screen.queryByText('The original purchase was confirmed unpaid or refused and cleared. You can review a new purchase when the line permits it.')).toBeNull();
   expect(f.engine.load()).not.toBeNull();
   expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+
+test('a fast device clock cannot expire an authorization whose confirmed chain time is still valid', async()=>{
+  vi.spyOn(Date,'now').mockReturnValue(3000000000000);
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'prepared'});
+  render(<Host client={f.client}/>);
+  await screen.findByText('Ready for wallet review');
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(false));
+  expect(screen.queryByText('Authorization expired, payment check required')).toBeNull();
+  expect(f.client.readContract.mock.calls.some(([args]:any)=>args.functionName==='receiptStatus' && args.blockNumber===123n)).toBe(true);
+});
+
+test('only a chain timestamp strictly after signature expiry enables clearing',async()=>{
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'prepared'});
+  f.client.getBlock.mockResolvedValue({number:123n,timestamp:2000000000n});
+  render(<Host client={f.client}/>);
+  await screen.findByText('Ready for wallet review');
+  expect(screen.queryByRole('button',{name:'Check and clear expired authorization'})).toBeNull();
+  expect(f.engine.archive).not.toHaveBeenCalled();
 });

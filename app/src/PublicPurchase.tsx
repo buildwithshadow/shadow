@@ -28,11 +28,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [notice, setNotice] = useState('');
   const [result, setResult] = useState('');
   const [refusedDigest, setRefusedDigest] = useState<string | null>(null);
-  const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number } | null>(null);
+  const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number; timestamp?: bigint } | null>(null);
   const [reviewing, setReviewing] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [automaticChecking, setAutomaticChecking] = useState(false);
-  const [clock, setClock] = useState(() => Date.now());
   const [recoveryEpoch, setRecoveryEpoch] = useState(0);
   const walletWorkKey = `${deployment.chainId}:${account}`;
   useEffect(() => subscribeRecoverySettlement(() => setRecoveryEpoch(value => value + 1)), []);
@@ -94,18 +93,29 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     if (!engine || !record || refusedDigest === record.intent.digest) return;
     const checkKey = `${record.intent.digest}:${record.stage}`;
     let current = true;
-    void client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [record.intent.digest] })
-      .then(status => {
+    let reading = false;
+    async function check() {
+      if (reading || !current) return;
+      reading = true;
+      try {
+        const block = await client.getBlock({blockTag:'finalized'});
+        if (typeof block.number !== 'bigint' || typeof block.timestamp !== 'bigint') throw new Error('Confirmed purchase time is unavailable. Check the original payment again.');
+        const status = Number(await client.readContract({address:deployment.address, abi:candidateFundingAbi, functionName:'receiptStatus', args:[record!.intent.digest], blockNumber:block.number}));
         if (!current) return;
-        setReceiptCheck({ key: checkKey, status: Number(status) });
-        if (Number(status) === 1) {
-          setRefusedDigest(record.intent.digest);
+        setReceiptCheck({key:checkKey, status, timestamp:block.timestamp});
+        if (status === 1) {
+          setRefusedDigest(record!.intent.digest);
           setReviewing(false);
           setNotice('The contract refused this purchase. No provider payment was made for this intent.');
         }
-      })
-      .catch(cause => { if (current) setError(candidateErrorMessage(cause)); });
-    return () => { current = false; };
+      } catch (cause) { if (current) setError(candidateErrorMessage(cause)); }
+      finally { reading = false; }
+    }
+    void check();
+    const timer = record.stage === 'delivered' ? null : window.setInterval(() => {
+      if (document.visibilityState === 'visible') void check();
+    },10_000);
+    return () => { current = false; if (timer !== null) window.clearInterval(timer); };
   }, [client, deployment.address, engine, record?.intent.digest, record?.stage, refusedDigest]);
   useEffect(() => {
     setSigningLineError('');
@@ -123,15 +133,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey;
   const receiptUnconfirmed = Boolean(record && !receiptChecked);
   const reviewable = record?.stage === 'prepared' || record?.stage === 'accepted';
-  const authorizationExpired = Boolean(record && BigInt(Math.floor(clock / 1000)) >= BigInt(record.intent.typedData.message.signatureExpiry));
-  useEffect(() => {
-    if (!record || record.stage === 'delivered') return;
-    setClock(Date.now());
-    const timer = window.setInterval(() => setClock(Date.now()), 10_000);
-    return () => window.clearInterval(timer);
-  }, [record?.intent.digest, record?.stage]);
-  // Browser time is a display/signing guard only. Archive verifies the original
-  // receipt at a finalized block after expiry before clearing unpaid records.
+  // The finalized receipt and its timestamp come from the same block. A device
+  // clock cannot declare an unpaid authorization expired or strand a valid one.
+  const authorizationExpired = Boolean(record && receiptChecked && receiptCheck?.timestamp !== undefined &&
+    receiptCheck.timestamp > BigInt(record.intent.typedData.message.signatureExpiry));
   const signable = Boolean(reviewable && !authorizationExpired && receiptChecked && receiptCheck?.status === 0 && !refused && !recordLineClosed && signingLineVerified && signingLineCheck?.state === 1);
   const checkingStatus = reviewable && !refused && receiptUnconfirmed;
   const paidPending = Boolean(record && !refused && record.stage !== 'delivered' && receiptChecked && receiptCheck?.status === 2);
