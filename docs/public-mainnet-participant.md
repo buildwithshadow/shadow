@@ -23,3 +23,11 @@ Reconcile the original sender, nonce, exact calldata, canonical receipt and matc
 Automated reviews and local tests do not constitute an independent human audit. The public page discloses that audit status. Repayment is unsecured: the sponsor bears unpaid spent principal risk, and the contract cannot guarantee delivery. Engineering rehearsals and cross project integration records do not establish independent customer adoption.
 
 The verified deployment manifest is [arc-mainnet.manifest.json](../contracts/deployments/float-mainnet-public/arc-mainnet.manifest.json). It includes the deployment block and transaction, runtime identity, public registration and repayment binding. The frontend derives its deployment identity and caps from this record. Use this manifest with a separately selected monitoring baseline. Verification timestamps and initial configuration are historical facts, not current pause state or activation permission.
+
+## Moving a completed report to another browser
+
+After saving a completed report in browser history, choose **Download report receipt**. The JSON file contains the purchase identity, report bytes and signed provider delivery proof. It does not contain a private key, wallet login credential or purchase signing material.
+
+In another browser, connect the same purchase wallet on the same network and open the same service. Choose **Import a completed report receipt**. Shadow checks the deployment, intent, confirmed paid receipt, provider signature and result hash before saving it in local report history. Import does not request a new payment or replace an unresolved purchase journal. Files larger than 2 MB are rejected.
+
+Keep the downloaded file yourself. Clearing browser storage still removes local history; the file makes that report portable. This is a purchase and delivery receipt, not proof of repayment, reserve reclaim or future provider performance. Optional transaction hashes from local storage are omitted from the portable artifact because they are not authenticated by the delivery signature.

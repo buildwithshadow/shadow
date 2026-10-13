@@ -8,6 +8,7 @@ export function VerifiedServiceReport({text, record, account, chainId}: {text:st
   const report = walletReportDisplay(text, {account, requestId:record.requestId, chainId});
   return <section aria-labelledby={titleId}>
     <h3 id={titleId}>Your verified service report</h3>
+    <p>Funding line: <code>{record.intent.typedData.message.lineId}</code></p>
     {report && <>
       <p><strong>{report.balance} USDC</strong> on {report.network}</p>
       <dl className="fundingDetails"><div><dt>Wallet checked</dt><dd><code>{report.account}</code></dd></div>

@@ -205,3 +205,40 @@ test('a line closed after review is checked again before requesting a signature'
   fireEvent.click(submit);await screen.findByText('Funding line is not open. No signature was requested.');
   expect(f.engine.submit).not.toHaveBeenCalled();expect(document.querySelector('dialog')?.hasAttribute('open')).toBe(false);
 });
+
+
+test('completed receipts download only after engine verification without changing the active purchase',async()=>{
+  const f=fixture();f.delivered();await f.engine.archive();
+  (f.engine as any).exportArchived=vi.fn(async()=>'{"kind":"shadow.completed-service-receipt"}');
+  Object.defineProperty(URL,'createObjectURL',{configurable:true,value:vi.fn(()=> 'blob:verified-report')});
+  Object.defineProperty(URL,'revokeObjectURL',{configurable:true,value:vi.fn()});
+  const click=vi.spyOn(HTMLAnchorElement.prototype,'click').mockImplementation(()=>{});
+  render(<Host client={f.client}/>);
+  fireEvent.click(screen.getByRole('button',{name:/Download report receipt/}));
+  await screen.findByText('Report receipt downloaded. It includes the report and its signed delivery proof.');
+  expect((f.engine as any).exportArchived).toHaveBeenCalledWith(f.digest);
+  expect(click).toHaveBeenCalledTimes(1);
+  expect(f.engine.load()).toBeNull();expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('an imported receipt displays its verified report without preparing or submitting a purchase',async()=>{
+  const f=fixture();const original=f.delivered().record;await f.engine.archive();
+  (f.engine as any).importCompleted=vi.fn(async()=>({record:original,status:'delivered',bytes:new TextEncoder().encode('imported original report')}));
+  const file=new File(['verified receipt'],'report.json',{type:'application/json'});
+  Object.defineProperty(file,'text',{value:async()=> 'verified receipt'});
+  render(<Host client={f.client}/>);
+  fireEvent.change(screen.getByLabelText('Import a completed report receipt'),{target:{files:[file]}});
+  await screen.findByText('imported original report');
+  expect((f.engine as any).importCompleted).toHaveBeenCalledWith('verified receipt');
+  expect(screen.getByText('Imported report verified and saved in this browser. No payment was sent.')).toBeTruthy();
+  expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('an oversized receipt file is rejected before engine verification',async()=>{
+  const f=fixture();f.delivered();await f.engine.archive();(f.engine as any).importCompleted=vi.fn();
+  const file=new File(['x'.repeat(2_000_001)],'too-large.json');
+  render(<Host client={f.client}/>);
+  fireEvent.change(screen.getByLabelText('Import a completed report receipt'),{target:{files:[file]}});
+  await screen.findByText('Completed receipt is too large. Choose a file smaller than 2 MB.');
+  expect((f.engine as any).importCompleted).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
+});

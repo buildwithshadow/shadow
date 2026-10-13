@@ -600,6 +600,51 @@ function createPurchase({
     // Do not write this record into the active purchase key or contact /serve.
     return { record, status: 'delivered', bytes };
   }
+  function portableRecord(record) {
+    // Export only receipt data, never acceptance credentials, signing material
+    // or arbitrary extra properties from browser storage/provider responses.
+    const message = Object.fromEntries(TYPES.SpendIntent.map(({name}) => [name, record.intent.typedData.message[name]]));
+    const typedData = {domain, types:TYPES, primaryType:'SpendIntent', message};
+    const externalSignerTypedData = serial({types:{EIP712Domain:DOMAIN_FIELDS,...TYPES},primaryType:'SpendIntent',domain:{...domain,chainId:String(config.chainId)},message});
+    const delivery = record.result.delivery;
+    return {
+      version:1,chainId:config.chainId,account,contract,requestId:record.requestId,stage:'delivered',
+      // Receipt status authenticates the purchase digest, not optional local
+      // transaction-hash metadata. Do not export that metadata as verified.
+      txHash:null,
+      intent:{kind:'ShadowFloatMainnet.SpendIntent',chainId:String(config.chainId),verifyingContract:contract,
+        digest:record.intent.digest,typedData,externalSignerTypedData},
+      result:{result:record.result.result,delivery:{signature:delivery.signature,resultRef:delivery.resultRef,
+        typedData:{domain:{name:'ShadowFloatMainnetProvider',version:'1',chainId:config.chainId,verifyingContract:contract},
+          types:DELIVERY,primaryType:'DeliveryReceipt',message:Object.fromEntries(DELIVERY.DeliveryReceipt.map(({name})=>[name,delivery.typedData.message[name]]))}}},
+    };
+  }
+  async function exportArchived(digest) {
+    const recovered = await recoverArchived(digest);
+    const text = serial({kind:'shadow.completed-service-receipt',version:1,record:portableRecord(recovered.record)});
+    assert(new TextEncoder().encode(text).byteLength <= 2_000_000, 'Completed receipt is too large to export.');
+    return text;
+  }
+  async function importCompleted(raw) {
+    assert(typeof raw === 'string' && raw.length <= 2_000_000 && new TextEncoder().encode(raw).byteLength <= 2_000_000, 'Completed receipt is too large.');
+    const file = JSON.parse(raw);
+    assert(file?.kind === 'shadow.completed-service-receipt' && file.version === 1, 'Not a Shadow completed service receipt.');
+    const record = parseRecord(serial(file.record));
+    assert(record.stage === 'delivered', 'Only a completed service report can be imported.');
+    await identity();
+    const block = await client.getBlock({blockTag:'finalized'});
+    assert(typeof block.number === 'bigint', 'A confirmed block is required to import this report.');
+    assert(Number(await read('receiptStatus',[record.intent.digest],block.number)) === 2, 'Imported payment needs reconciliation.');
+    const bytes = await verifyDelivery(record,record.result);
+    const clean = {...portableRecord(record),terminalStatus:'delivered',resolvedAtBlock:block.number};
+    const value = serial(clean), destination = `${key}:${record.intent.digest}`;
+    assert(storage.getItem(destination) !== null || storage.length < 2000, 'Too many browser records to import safely.');
+    storage.setItem(destination,value);
+    assert(storage.getItem(destination) === value, 'Imported report could not be saved in this browser.');
+    // The active transaction journal remains untouched, including uncertain
+    // payments. Import is only a verified addition to completed history.
+    return {record:JSON.parse(value),status:'delivered',bytes};
+  }
   // Completion does not silently erase ambiguous payment state.
   async function archive() {
     const record = load();
@@ -650,5 +695,7 @@ function createPurchase({
     load,
     listArchived,
     recoverArchived: digest => withLock(key, () => recoverArchived(digest), 'recover'),
+    exportArchived: digest => withLock(key, () => exportArchived(digest), 'recover'),
+    importCompleted: raw => withLock(key, () => importCompleted(raw), 'recover'),
   };
 }
