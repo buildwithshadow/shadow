@@ -24,7 +24,7 @@ function fixture(status=2n) {
     archive:vi.fn(async()=>{archived.push(saved);saved=null;}),listArchived:()=>archived,
     recoverArchived:vi.fn(async(digest:string)=>({record:archived.find(item=>item.intent.digest===digest),status:'delivered',bytes:new TextEncoder().encode('retained report')}))};
   h.engines.set(account,engine);
-  const client: any = {readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
+  const client: any = {getBlock:vi.fn(async()=>({number:123n,timestamp:2000000000n})),readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
 function Host({client, loadedLine = null, lineId = ''}: {client:any; loadedLine?:any; lineId?:string}) {
@@ -121,7 +121,7 @@ test('a wrapped RPC outage resumes the original report without a wallet request'
 });
 test('archiving retains a reachable report while opening history leaves the active purchase empty',async()=>{
   const f=fixture(),text=`original report ${counter}`;render(<Host client={f.client}/>);await screen.findByText(text);
-  fireEvent.click(screen.getByRole('button',{name:'Archive completed report'}));
+  fireEvent.click(screen.getByRole('button',{name:'Save report in this browser'}));
   const open=await screen.findByRole('button',{name:/Open report/});expect(screen.queryByText(text)).toBeNull();
   fireEvent.click(open);await screen.findByText('retained report');expect(f.engine.load()).toBeNull();
   expect(f.engine.recoverArchived).toHaveBeenCalledWith(f.digest);expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
@@ -155,7 +155,7 @@ test('a closed line leads with retained reports and cannot prepare another purch
 test('closed-line presentation never blocks original paid result recovery',async()=>{
   const f=fixture(),text=`original report ${counter}`;
   render(<Host client={f.client} lineId={`0x${'55'.repeat(32)}`} loadedLine={{lineId:`0x${'55'.repeat(32)}`,stateName:'CLOSED'}}/>);
-  await screen.findByText(text);expect(screen.getByRole('button',{name:'Archive completed report'})).toBeTruthy();
+  await screen.findByText(text);expect(screen.getByRole('button',{name:'Save report in this browser'})).toBeTruthy();
   expect(f.engine.recover).toHaveBeenCalledTimes(1);expect(f.engine.submit).not.toHaveBeenCalled();
 });
 test('a different closed line does not hide this line purchase form',async()=>{
@@ -204,4 +204,79 @@ test('a line closed after review is checked again before requesting a signature'
   f.client.readContract.mockImplementation(async({functionName}:any)=>functionName==='getLine'?{state:4n}:0n);
   fireEvent.click(submit);await screen.findByText('Funding line is not open. No signature was requested.');
   expect(f.engine.submit).not.toHaveBeenCalled();expect(document.querySelector('dialog')?.hasAttribute('open')).toBe(false);
+});
+
+
+test('an expired unpaid authorization offers safe clearing and cannot request a new signature', async () => {
+  const f = fixture(0n);
+  f.replaceSaved({...f.engine.load(), stage:'prepared', intent:{...f.engine.load().intent, typedData:{message:{...f.engine.load().intent.typedData.message, signatureExpiry:'1'}}}});
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  expect(screen.getByRole('button', {name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(screen.getByRole('button', {name:'Check and clear expired authorization'}));
+  await screen.findByText('The original purchase was confirmed unpaid or refused and cleared. You can review a new purchase when the line permits it.');
+  expect(f.engine.archive).toHaveBeenCalledTimes(1);
+  expect(f.engine.prepare).not.toHaveBeenCalled();
+  expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('expiry alone cannot clear a payment when the finalized archive check fails', async () => {
+  const f = fixture(0n);
+  f.replaceSaved({...f.engine.load(),stage:'prepared',intent:{...f.engine.load().intent,typedData:{message:{...f.engine.load().intent.typedData.message,signatureExpiry:'1'}}}});
+  f.engine.archive.mockRejectedValue(new Error('Only a confirmed refusal, expired unpaid intent or delivered purchase can be archived.'));
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  fireEvent.click(screen.getByRole('button',{name:'Check and clear expired authorization'}));
+  await screen.findByText('Only a confirmed refusal, expired unpaid intent or delivered purchase can be archived.');
+  expect(screen.queryByText('The original purchase was confirmed unpaid or refused and cleared. You can review a new purchase when the line permits it.')).toBeNull();
+  expect(f.engine.load()).not.toBeNull();
+  expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+
+test('a fast device clock cannot expire an authorization whose confirmed chain time is still valid', async()=>{
+  vi.spyOn(Date,'now').mockReturnValue(3000000000000);
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'prepared'});
+  render(<Host client={f.client}/>);
+  await screen.findByText('Ready for wallet review');
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(false));
+  expect(screen.queryByText('Authorization expired, payment check required')).toBeNull();
+  expect(f.client.readContract.mock.calls.some(([args]:any)=>args.functionName==='receiptStatus' && args.blockNumber===123n)).toBe(true);
+});
+
+test('only a chain timestamp strictly after signature expiry enables clearing',async()=>{
+  const f=fixture(0n);f.replaceSaved({...f.engine.load(),stage:'prepared'});
+  f.client.getBlock.mockResolvedValue({number:123n,timestamp:2000000000n});
+  render(<Host client={f.client}/>);
+  await screen.findByText('Ready for wallet review');
+  expect(screen.queryByRole('button',{name:'Check and clear expired authorization'})).toBeNull();
+  expect(f.engine.archive).not.toHaveBeenCalled();
+});
+
+
+test('manual unconfirmed recovery preserves expiry and never reopens wallet review',async()=>{
+  const f=fixture(0n);
+  f.replaceSaved({...f.engine.load(),stage:'prepared',intent:{...f.engine.load().intent,typedData:{message:{...f.engine.load().intent.typedData.message,signatureExpiry:'1'}}}});
+  f.engine.recover.mockImplementation(async()=>({record:f.engine.load(),status:'unconfirmed'}));
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  fireEvent.click(screen.getByRole('button',{name:'Check payment & recover result'}));
+  await waitFor(()=>expect(f.engine.recover).toHaveBeenCalledTimes(1));
+  await screen.findByText('No confirmed payment found yet. Finish any wallet prompt, then check again. This does not resend a transaction.');
+  expect(screen.getByText('Authorization expired, payment check required')).toBeTruthy();
+  expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);
+  expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('a failed recovery status refresh also preserves the finalized expiry guard',async()=>{
+  const f=fixture(0n);
+  f.replaceSaved({...f.engine.load(),stage:'accepted',intent:{...f.engine.load().intent,typedData:{message:{...f.engine.load().intent.typedData.message,signatureExpiry:'1'}}}});
+  f.engine.recover.mockRejectedValue(new Error('Provider unavailable'));
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  fireEvent.click(screen.getByRole('button',{name:'Check payment & recover result'}));
+  await screen.findByText('Provider unavailable');
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true));
+  expect(screen.getByText('Authorization expired, payment check required')).toBeTruthy();
+  expect(f.engine.submit).not.toHaveBeenCalled();
 });

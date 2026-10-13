@@ -28,7 +28,11 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [notice, setNotice] = useState('');
   const [result, setResult] = useState('');
   const [refusedDigest, setRefusedDigest] = useState<string | null>(null);
-  const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number } | null>(null);
+  const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number; timestamp?: bigint } | null>(null);
+  function updateReceipt(next: {key:string; status:number}) {
+    setReceiptCheck(previous => ({...next,
+      ...(previous?.key === next.key && previous.timestamp !== undefined ? {timestamp:previous.timestamp} : {})}));
+  }
   const [reviewing, setReviewing] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [automaticChecking, setAutomaticChecking] = useState(false);
@@ -93,18 +97,29 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     if (!engine || !record || refusedDigest === record.intent.digest) return;
     const checkKey = `${record.intent.digest}:${record.stage}`;
     let current = true;
-    void client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [record.intent.digest] })
-      .then(status => {
+    let reading = false;
+    async function check() {
+      if (reading || !current) return;
+      reading = true;
+      try {
+        const block = await client.getBlock({blockTag:'finalized'});
+        if (typeof block.number !== 'bigint' || typeof block.timestamp !== 'bigint') throw new Error('Confirmed purchase time is unavailable. Check the original payment again.');
+        const status = Number(await client.readContract({address:deployment.address, abi:candidateFundingAbi, functionName:'receiptStatus', args:[record!.intent.digest], blockNumber:block.number}));
         if (!current) return;
-        setReceiptCheck({ key: checkKey, status: Number(status) });
-        if (Number(status) === 1) {
-          setRefusedDigest(record.intent.digest);
+        setReceiptCheck({key:checkKey, status, timestamp:block.timestamp});
+        if (status === 1) {
+          setRefusedDigest(record!.intent.digest);
           setReviewing(false);
           setNotice('The contract refused this purchase. No provider payment was made for this intent.');
         }
-      })
-      .catch(cause => { if (current) setError(candidateErrorMessage(cause)); });
-    return () => { current = false; };
+      } catch (cause) { if (current) setError(candidateErrorMessage(cause)); }
+      finally { reading = false; }
+    }
+    void check();
+    const timer = record.stage === 'delivered' ? null : window.setInterval(() => {
+      if (document.visibilityState === 'visible') void check();
+    },10_000);
+    return () => { current = false; if (timer !== null) window.clearInterval(timer); };
   }, [client, deployment.address, engine, record?.intent.digest, record?.stage, refusedDigest]);
   useEffect(() => {
     setSigningLineError('');
@@ -119,10 +134,14 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   }, [client, deployment.address, engine, record?.intent.digest, record?.stage, correctNetwork, recoveryEpoch]);
   const refused = refusedDigest === record?.intent.digest;
   const receiptCheckKey = record ? `${record.intent.digest}:${record.stage}` : null;
-  const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey;
+  const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey && typeof receiptCheck.timestamp === 'bigint';
   const receiptUnconfirmed = Boolean(record && !receiptChecked);
   const reviewable = record?.stage === 'prepared' || record?.stage === 'accepted';
-  const signable = Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused && !recordLineClosed && signingLineVerified && signingLineCheck?.state === 1);
+  // The finalized receipt and its timestamp come from the same block. A device
+  // clock cannot declare an unpaid authorization expired or strand a valid one.
+  const authorizationExpired = Boolean(record && receiptChecked && receiptCheck?.timestamp !== undefined &&
+    receiptCheck.timestamp > BigInt(record.intent.typedData.message.signatureExpiry));
+  const signable = Boolean(reviewable && !authorizationExpired && receiptChecked && receiptCheck?.status === 0 && !refused && !recordLineClosed && signingLineVerified && signingLineCheck?.state === 1);
   const checkingStatus = reviewable && !refused && receiptUnconfirmed;
   const paidPending = Boolean(record && !refused && record.stage !== 'delivered' && receiptChecked && receiptCheck?.status === 2);
   useEffect(() => {
@@ -145,7 +164,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       currentView.current.account === account && currentView.current.deployment === deployment && document.visibilityState === 'visible';
     const publishRecovered = (recovered: RecoveryResult) => {
         setRecord(recovered.record);
-        setReceiptCheck({ key: `${digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
+        updateReceipt({ key: `${digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
         if (recovered.status === 'blocked') { setRefusedDigest(digest); setNotice('The contract refused this purchase. No provider payment was made for this intent.'); }
         else if (recovered.bytes) {
           try { setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes)); setError(''); setNotice('Payment confirmed and the original service result recovered.'); }
@@ -204,7 +223,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       } else if (kind === 'submit') {
         if (!record || !receiptCheckKey) return;
         const receiptStatus = Number(await client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [record.intent.digest] }));
-        setReceiptCheck({ key: receiptCheckKey, status: receiptStatus });
+        updateReceipt({ key: receiptCheckKey, status: receiptStatus });
         if (receiptStatus === 1) {
           setRefusedDigest(record.intent.digest);
           setReviewing(false);
@@ -228,14 +247,15 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         const recovered = await engine.recover();
         retainRecoveryTerminal(recoverySession(`${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${recovered.record.intent.digest}`), recovered);
         if (revision.current === current) {
-          setReceiptCheck({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
+          updateReceipt({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
           setNotice(recovered.status === 'delivered' ? 'Payment confirmed and the original service result recovered.' : recovered.status === 'blocked' ? 'The contract refused this purchase. No provider payment was made for this intent.' : 'No confirmed payment found yet. Finish any wallet prompt, then check again. This does not resend a transaction.');
           if (recovered.status === 'blocked') { setRefusedDigest(recovered.record.intent.digest); setReviewing(false); }
           if (recovered.bytes) setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes));
         }
       } else {
+        const delivered = record?.stage === 'delivered';
         await engine.archive();
-        if (revision.current === current) { setResult(''); setReviewing(false); setNotice('Purchase resolved and archived in this browser. You can prepare another purchase when the line permits it.'); }
+        if (revision.current === current) { setResult(''); setReviewing(false); setNotice(delivered ? 'Report saved in this browser. You can reopen it below.' : 'The original purchase was confirmed unpaid or refused and cleared. You can review a new purchase when the line permits it.'); }
       }
     } catch (cause) { if (kind === 'recover') recoveryFailed = true; if (kind === 'submit') setSigningLineCheck(null); if (revision.current === current) { setError(candidateErrorMessage(cause)); setReviewing(false); } }
     finally {
@@ -254,7 +274,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           if (saved && recoveryFailed) {
             const status = Number(await client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [saved.intent.digest] }));
             if (revision.current === current) {
-              setReceiptCheck({ key: `${saved.intent.digest}:${saved.stage}`, status });
+              updateReceipt({ key: `${saved.intent.digest}:${saved.stage}`, status });
               if (status === 1) setRefusedDigest(saved.intent.digest);
             }
           }
@@ -282,7 +302,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const completedView = closedLine && !record;
   const visibleHistory = completedView ? history.filter(item => String(item.intent.typedData.message.lineId).toLowerCase() === lineId.trim().toLowerCase()) : history;
   const blocker = !account ? (completedView ? null : 'Connect the agent wallet to continue.') : !correctNetwork ? `Switch to ${network} to continue.`
-    : busy ? busy : earlierReadPending && !inFlight.current ? 'Another operation for this wallet is finishing. The original purchase will be checked afterward.' : recordLineClosed ? 'This line is closed. Check the original payment or view its saved report; no new purchase can be signed.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : reviewable && (!signingLineVerified || signingLineCheck?.state !== 1) ? 'Verify that the funding line is open before wallet review. If the check failed, refresh this page; payment recovery remains available.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
+    : busy ? busy : earlierReadPending && !inFlight.current ? 'Another operation for this wallet is finishing. The original purchase will be checked afterward.' : recordLineClosed ? 'This line is closed. Check the original payment or view its saved report; no new purchase can be signed.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : reviewable && (!signingLineVerified || signingLineCheck?.state !== 1) ? 'Verify that the funding line is open before wallet review. If the check failed, refresh this page; payment recovery remains available.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : authorizationExpired && reviewable && !paidPending ? 'This authorization has expired. Check and clear the original purchase before reviewing another.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
   return <section className="fundingPanel purchasePanel" aria-labelledby="purchase-title">
     <h2 id="purchase-title">{completedView ? 'Reports from your completed line' : 'Buy a service with your agent’s budget'}</h2>
@@ -304,13 +324,14 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     </form>}
     {completedView && <dl className="fundingDetails"><div><dt>Closed line</dt><dd><code>{lineId}</code></dd></div></dl>}
     {record && <>
-      <p>Saved purchase: <strong>{refused ? 'Refused by contract' : record.stage === 'delivered' ? 'Delivered' : receiptUnconfirmed ? 'Checking status' : paidPending ? 'Payment receipt found' : record.stage === 'submitted' ? 'Awaiting confirmation' : 'Ready for wallet review'}</strong>. Keep this browser’s site data until resolved.</p>
+      <p>Saved purchase: <strong>{refused ? 'Refused by contract' : record.stage === 'delivered' ? 'Delivered' : receiptUnconfirmed ? 'Checking original payment' : paidPending ? 'Paid, retrieving report' : authorizationExpired ? 'Authorization expired, payment check required' : record.stage === 'submitted' ? 'Awaiting confirmation' : 'Ready for wallet review'}</strong>. Keep this browser’s site data until resolved.</p>
+      {authorizationExpired && !paidPending && !refused && record.stage !== 'delivered' && <p className="fundingCallout">This authorization has expired. Check the original purchase before trying again. Clearing it verifies the confirmed payment status and never sends a payment.</p>}
       <dl className="fundingDetails"><div><dt>Line</dt><dd><code>{message?.lineId}</code></dd></div><div><dt>Purchase ID</dt><dd><code>{record.intent.digest}</code></dd></div></dl>
       {record.txHash && <a href={`${chain.blockExplorers.default.url}/tx/${record.txHash}`} target="_blank" rel="noreferrer">View original transaction</a>}
       <div className="fundingActions">
         {reviewable && !refused && <button type="button" disabled={disabled || !signable} aria-describedby={(disabled || !signable) && blocker ? 'purchase-blocker' : undefined} onClick={() => setReviewing(true)}>Review saved purchase</button>}
         <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('recover')}>Check payment & recover result</button>
-        <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('archive')}>{record.stage === 'delivered' ? 'Archive completed report' : 'Resolve refused or expired purchase'}</button>
+        <button type="button" disabled={recoveryDisabled} aria-describedby={recoveryDisabled && blocker ? 'purchase-blocker' : undefined} onClick={() => void action('archive')}>{record.stage === 'delivered' ? 'Save report in this browser' : refused ? 'Clear refused purchase' : authorizationExpired ? 'Check and clear expired authorization' : 'Resolve refused or expired purchase'}</button>
       </div>
       <p>Recovery never resends a payment. An unknown payment remains held until confirmed or its unpaid authorization has expired. Repay debt and reclaim eligible funds under “Manage a line.”</p>
     </>}
