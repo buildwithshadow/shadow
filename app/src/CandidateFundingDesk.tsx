@@ -15,6 +15,7 @@ import {
 } from "./candidateFunding";
 import "./candidateFunding.css";
 import { PublicPurchase, type PublicService } from "./PublicPurchase";
+import { ServiceFundingFields } from './ServiceFundingFields';
 import { GatewayFunding } from "./GatewayFunding";
 import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPurchaseResolved, gatewayWalletLockKey } from "./gatewayFundingGuard";
 import { CircleAgentHandoff } from "./CircleAgentHandoff";
@@ -93,7 +94,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [form, setForm] = useState(() => ({ ...initialForm,
     agent: service ? new URLSearchParams(window.location.search).get("agent") || "" : "",
     ...(service ? { provider: service.provider, endpoint: service.endpoint } : {}),
-    ...(mainnet || guardedTestnet ? { lineSpendCap: '0.005', dailySpendCap: '0.005', providerPerSpendCap: '0.005', providerDailyCap: '0.005' } : {}),
+    ...(mainnet || guardedTestnet ? { reserve: '0.005', lineSpendCap: '0.005', dailySpendCap: '0.005', providerPerSpendCap: '0.005', providerDailyCap: '0.005' } : {}),
   }));
   const [draftOwner, setDraftOwner] = useState<string | null>(null);
   const [draftWarning, setDraftWarning] = useState("");
@@ -1037,9 +1038,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div>
       {snapshot && !snapshot.sponsorAllowed && <p className="fundingCallout">{deployment.selfRegistration ? <>Register this wallet before funding. No token approval or transfer is included. <button type="button" disabled={!canWrite || snapshot.openingsPaused} onClick={() => void review("register")}>Review sponsor registration</button></> : "This wallet is not approved as a sponsor yet. Ask the Shadow operator to approve its public address. You can still inspect a line under “Manage a line.”"}</p>}
       {snapshot?.openingsPaused && <p className="fundingCallout">New lines are currently paused. Existing repayment and eligible reclaim remain available.</p>}
-      {agentFields}
-      {budgetFields}
-      {timeFields}
+      {service ? <ServiceFundingFields form={form} service={service} busy={Boolean(busy)} onChange={updateForm} /> : <>{agentFields}{budgetFields}{timeFields}</>}
       {riskAcknowledgment}
       <div className="fundingActions"><button className="fundingPrimary" type="submit" disabled={Boolean(busy) || openBlocker !== null} aria-describedby="funding-open-hint">Review funding line</button>
         <small id="funding-open-hint">{openBlocker ?? (!snapshot && !snapshotError ? "Checking this wallet’s sponsor status…" : "Review first. Any USDC approval and funding transaction need separate wallet confirmations.")}</small></div>

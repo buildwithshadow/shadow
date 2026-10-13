@@ -121,7 +121,7 @@ test('a wrapped RPC outage resumes the original report without a wallet request'
 });
 test('archiving retains a reachable report while opening history leaves the active purchase empty',async()=>{
   const f=fixture(),text=`original report ${counter}`;render(<Host client={f.client}/>);await screen.findByText(text);
-  fireEvent.click(screen.getByRole('button',{name:'Archive completed report'}));
+  fireEvent.click(screen.getByRole('button',{name:'Save report in this browser'}));
   const open=await screen.findByRole('button',{name:/Open report/});expect(screen.queryByText(text)).toBeNull();
   fireEvent.click(open);await screen.findByText('retained report');expect(f.engine.load()).toBeNull();
   expect(f.engine.recoverArchived).toHaveBeenCalledWith(f.digest);expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
@@ -155,7 +155,7 @@ test('a closed line leads with retained reports and cannot prepare another purch
 test('closed-line presentation never blocks original paid result recovery',async()=>{
   const f=fixture(),text=`original report ${counter}`;
   render(<Host client={f.client} lineId={`0x${'55'.repeat(32)}`} loadedLine={{lineId:`0x${'55'.repeat(32)}`,stateName:'CLOSED'}}/>);
-  await screen.findByText(text);expect(screen.getByRole('button',{name:'Archive completed report'})).toBeTruthy();
+  await screen.findByText(text);expect(screen.getByRole('button',{name:'Save report in this browser'})).toBeTruthy();
   expect(f.engine.recover).toHaveBeenCalledTimes(1);expect(f.engine.submit).not.toHaveBeenCalled();
 });
 test('a different closed line does not hide this line purchase form',async()=>{
@@ -204,4 +204,31 @@ test('a line closed after review is checked again before requesting a signature'
   f.client.readContract.mockImplementation(async({functionName}:any)=>functionName==='getLine'?{state:4n}:0n);
   fireEvent.click(submit);await screen.findByText('Funding line is not open. No signature was requested.');
   expect(f.engine.submit).not.toHaveBeenCalled();expect(document.querySelector('dialog')?.hasAttribute('open')).toBe(false);
+});
+
+
+test('an expired unpaid authorization offers safe clearing and cannot request a new signature', async () => {
+  const f = fixture(0n);
+  f.replaceSaved({...f.engine.load(), stage:'prepared', intent:{...f.engine.load().intent, typedData:{message:{...f.engine.load().intent.typedData.message, signatureExpiry:'1'}}}});
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  expect(screen.getByRole('button', {name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);
+  fireEvent.click(screen.getByRole('button', {name:'Check and clear expired authorization'}));
+  await screen.findByText('The original purchase was confirmed unpaid or refused and cleared. You can review a new purchase when the line permits it.');
+  expect(f.engine.archive).toHaveBeenCalledTimes(1);
+  expect(f.engine.prepare).not.toHaveBeenCalled();
+  expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('expiry alone cannot clear a payment when the finalized archive check fails', async () => {
+  const f = fixture(0n);
+  f.replaceSaved({...f.engine.load(),stage:'prepared',intent:{...f.engine.load().intent,typedData:{message:{...f.engine.load().intent.typedData.message,signatureExpiry:'1'}}}});
+  f.engine.archive.mockRejectedValue(new Error('Only a confirmed refusal, expired unpaid intent or delivered purchase can be archived.'));
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  fireEvent.click(screen.getByRole('button',{name:'Check and clear expired authorization'}));
+  await screen.findByText('Only a confirmed refusal, expired unpaid intent or delivered purchase can be archived.');
+  expect(screen.queryByText('The original purchase was confirmed unpaid or refused and cleared. You can review a new purchase when the line permits it.')).toBeNull();
+  expect(f.engine.load()).not.toBeNull();
+  expect(f.engine.submit).not.toHaveBeenCalled();
 });
