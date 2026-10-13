@@ -1,4 +1,4 @@
-import { formatUnits } from 'viem';
+import { formatUnits, parseUnits } from 'viem';
 import type { CandidateOpenInput } from './candidateFunding';
 
 export function ServiceFundingFields({ form, service, busy, onChange }: {
@@ -7,12 +7,18 @@ export function ServiceFundingFields({ form, service, busy, onChange }: {
   busy: boolean;
   onChange(key: keyof CandidateOpenInput, value: string): void;
 }) {
+  const amount = (value: string) => /^\d+(\.\d{1,6})?$/.test(value) ? parseUnits(value,6) : null;
+  const reserve = amount(form.reserve), totalLimit = amount(form.lineSpendCap);
   function field(key: keyof CandidateOpenInput, label: string, hint?: string) {
     return <div className="fundingField">
       <label htmlFor={`funding-${key}`}>{label}</label>
       <input id={`funding-${key}`} name={key} value={form[key]} required disabled={busy}
         inputMode={key === 'agent' ? 'text' : 'decimal'} autoComplete="off" spellCheck={false}
         aria-describedby={hint ? `funding-${key}-hint` : undefined}
+        onInvalid={event => {
+          const disclosure = event.currentTarget.closest('details');
+          if (disclosure) disclosure.open = true;
+        }}
         onChange={event => onChange(key, event.target.value)} />
       {hint && <small id={`funding-${key}-hint`}>{hint}</small>}
     </div>;
@@ -24,8 +30,8 @@ export function ServiceFundingFields({ form, service, busy, onChange }: {
       {field('reserve', 'USDC to set aside', 'Deposited into the funding line. Keep extra USDC in your wallet for fees.')}
       {field('repaymentHours', 'Repayment window (hours)', 'Each purchase sets its due time within this window. Repayment is not guaranteed.')}
     </div>
-    <p>This line permits up to <strong>{form.lineSpendCap} USDC</strong> in total purchases. Repayment restores available funds but does not reset this permission.</p>
-    {Number(form.reserve) > Number(form.lineSpendCap) && <p className="fundingCallout" role="status">You are setting aside more than this line can spend in total. The extra reserve stays unused until you reclaim it.</p>}
+    <p>{totalLimit !== null && totalLimit > 0n ? <>This line permits up to <strong>{form.lineSpendCap} USDC</strong> in total purchases.</> : <>Set a valid total purchase limit in advanced settings.</>} Repayment restores available funds but does not reset this permission.</p>
+    {reserve !== null && totalLimit !== null && totalLimit > 0n && reserve > totalLimit && <p className="fundingCallout" role="status">You are setting aside more than this line can spend in total. The extra reserve stays unused until you reclaim it.</p>}
     <details><summary>Advanced spending limits and service details</summary>
       <div className="fundingGrid">
         {field('lineSpendCap', 'Total purchase limit (USDC)', 'Cumulative across this line, including purchases already repaid.')}

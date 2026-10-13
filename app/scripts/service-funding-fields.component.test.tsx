@@ -43,3 +43,13 @@ test('all inputs stay disabled while the original wallet action is in progress',
   render(<Host busy/>);
   expect(Array.from(document.querySelectorAll('input')).every(input=>input.disabled)).toBe(true);
 });
+test('an invalid advanced value reopens its disclosure so native validation can focus it',()=>{
+  render(<Host/>);
+  const details=document.querySelector('details')!;
+  const input=screen.getByLabelText('Total purchase limit (USDC)');
+  details.open=true;
+  fireEvent.change(input,{target:{value:''}});
+  details.open=false;
+  fireEvent.invalid(input);
+  expect(details.open).toBe(true);
+});
