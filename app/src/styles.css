@@ -5718,7 +5718,7 @@ code {
 .siteFooterColumns {
   display: grid;
   gap: 28px;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
+  grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
 @media (max-width: 600px) {
@@ -5744,6 +5744,10 @@ code {
 }
 
 .siteFooterColumn a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+  min-width: 44px;
   color: var(--ink-soft);
   font-size: 13.5px;
   text-decoration: none;
