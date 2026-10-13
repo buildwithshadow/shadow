@@ -332,3 +332,19 @@ test('a failed recovery status refresh also preserves the finalized expiry guard
   expect(screen.getByText('Authorization expired, payment check required')).toBeTruthy();
   expect(f.engine.submit).not.toHaveBeenCalled();
 });
+
+
+test('a failed second import cannot retain the previous report or its success message',async()=>{
+  const f=fixture();const original=f.delivered().record;await f.engine.archive();
+  (f.engine as any).importCompleted=vi.fn().mockResolvedValueOnce({record:original,status:'delivered',bytes:new TextEncoder().encode('first imported report')}).mockRejectedValueOnce(new Error('Provider receipt signature is invalid.'));
+  const file=new File(['receipt'],'report.json');Object.defineProperty(file,'text',{value:async()=> 'receipt'});
+  render(<Host client={f.client}/>);
+  fireEvent.change(screen.getByLabelText('Import a completed report receipt'),{target:{files:[file]}});
+  await screen.findByText('first imported report');
+  expect(screen.getByText('Imported report verified and saved in this browser. No payment was sent.')).toBeTruthy();
+  fireEvent.change(screen.getByLabelText('Import a completed report receipt'),{target:{files:[file]}});
+  await screen.findByText('Provider receipt signature is invalid.');
+  expect(screen.queryByText('first imported report')).toBeNull();
+  expect(screen.queryByText('Imported report verified and saved in this browser. No payment was sent.')).toBeNull();
+  expect(f.engine.submit).not.toHaveBeenCalled();expect(f.engine.load()).toBeNull();
+});

@@ -302,7 +302,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     const current = revision.current, generation = routeGeneration.current;
     const isCurrent = () => revision.current === current && routeGeneration.current === generation && visible.current &&
       currentView.current.account === account && currentView.current.deployment === deployment && currentView.current.correctNetwork;
-    inFlight.current = true; beginRecoveryWalletWork(walletWorkKey); setHistoryBusy(true); setHistoryError('');
+    inFlight.current = true; beginRecoveryWalletWork(walletWorkKey); setHistoryBusy(true); setHistoryError(''); setNotice('');
+    if (kind === 'import') setArchivedResult(null);
     try {
       if (kind === 'download') {
         const raw = await engine.exportArchived(String(value));
