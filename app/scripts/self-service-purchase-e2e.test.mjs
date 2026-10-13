@@ -332,6 +332,13 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
       await assert.rejects(restored.importCompleted(JSON.stringify(wrong)),/another wallet or deployment/);
       assert.equal(fresh.get(activeKey),pendingJournal);
     }
+    const beforeCanceled=[...fresh.entries()];
+    let mayCommit=true;
+    const previousVerify=client.verifyTypedData;
+    client.verifyTypedData=async args=>{mayCommit=false;return previousVerify(args);};
+    await assert.rejects(restored.importCompleted(portable,{mayCommit:()=>mayCommit}),/context changed/);
+    client.verifyTypedData=previousVerify;
+    assert.deepEqual([...fresh.entries()],beforeCanceled,'context cancellation must happen before storage writes');
     const changedResult=JSON.parse(portable);changedResult.record.result.result=btoa('forged result');
     await assert.rejects(restored.importCompleted(JSON.stringify(changedResult)),/signed receipt/);
     const changedSignature=JSON.parse(portable);changedSignature.record.result.delivery.signature=`0x${'12'.repeat(65)}`;

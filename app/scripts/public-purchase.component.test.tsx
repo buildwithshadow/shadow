@@ -229,7 +229,7 @@ test('an imported receipt displays its verified report without preparing or subm
   render(<Host client={f.client}/>);
   fireEvent.change(screen.getByLabelText('Import a completed report receipt'),{target:{files:[file]}});
   await screen.findByText('imported original report');
-  expect((f.engine as any).importCompleted).toHaveBeenCalledWith('verified receipt');
+  expect((f.engine as any).importCompleted).toHaveBeenCalledWith('verified receipt',expect.objectContaining({mayCommit:expect.any(Function)}));
   expect(screen.getByText('Imported report verified and saved in this browser. No payment was sent.')).toBeTruthy();
   expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
 });
@@ -241,4 +241,20 @@ test('an oversized receipt file is rejected before engine verification',async()=
   fireEvent.change(screen.getByLabelText('Import a completed report receipt'),{target:{files:[file]}});
   await screen.findByText('Completed receipt is too large. Choose a file smaller than 2 MB.');
   expect((f.engine as any).importCompleted).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+
+test('leaving the route during import cancels its commit permission before the old read settles',async()=>{
+  const f=fixture();const original=f.delivered().record;await f.engine.archive();
+  let settle!:(value:any)=>void, options:any;
+  (f.engine as any).importCompleted=vi.fn((_raw,opts)=>{options=opts;return new Promise(resolve=>{settle=resolve;});});
+  const file=new File(['receipt'],'report.json');Object.defineProperty(file,'text',{value:async()=> 'receipt'});
+  render(<Host client={f.client}/>);
+  fireEvent.change(screen.getByLabelText('Import a completed report receipt'),{target:{files:[file]}});
+  await waitFor(()=>expect((f.engine as any).importCompleted).toHaveBeenCalledTimes(1));
+  expect(options.mayCommit()).toBe(true);
+  fireEvent.click(screen.getByText('Leave funding'));
+  expect(options.mayCommit()).toBe(false);
+  await act(async()=>{settle({record:original,status:'delivered',bytes:new TextEncoder().encode('canceled import')});});
+  expect(screen.queryByText('canceled import')).toBeNull();expect(f.engine.submit).not.toHaveBeenCalled();
 });

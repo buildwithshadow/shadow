@@ -625,7 +625,7 @@ function createPurchase({
     assert(new TextEncoder().encode(text).byteLength <= 2_000_000, 'Completed receipt is too large to export.');
     return text;
   }
-  async function importCompleted(raw) {
+  async function importCompleted(raw, {mayCommit = () => true} = {}) {
     assert(typeof raw === 'string' && raw.length <= 2_000_000 && new TextEncoder().encode(raw).byteLength <= 2_000_000, 'Completed receipt is too large.');
     const file = JSON.parse(raw);
     assert(file?.kind === 'shadow.completed-service-receipt' && file.version === 1, 'Not a Shadow completed service receipt.');
@@ -638,6 +638,7 @@ function createPurchase({
     const bytes = await verifyDelivery(record,record.result);
     const clean = {...portableRecord(record),terminalStatus:'delivered',resolvedAtBlock:block.number};
     const value = serial(clean), destination = `${key}:${record.intent.digest}`;
+    assert(typeof mayCommit === 'function' && mayCommit(), 'Import context changed. Receipt was not saved.');
     assert(storage.getItem(destination) !== null || storage.length < 2000, 'Too many browser records to import safely.');
     storage.setItem(destination,value);
     assert(storage.getItem(destination) === value, 'Imported report could not be saved in this browser.');
@@ -696,6 +697,6 @@ function createPurchase({
     listArchived,
     recoverArchived: digest => withLock(key, () => recoverArchived(digest), 'recover'),
     exportArchived: digest => withLock(key, () => exportArchived(digest), 'recover'),
-    importCompleted: raw => withLock(key, () => importCompleted(raw), 'recover'),
+    importCompleted: (raw, options) => withLock(key, () => importCompleted(raw, options), 'recover'),
   };
 }

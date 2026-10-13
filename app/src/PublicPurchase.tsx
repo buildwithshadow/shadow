@@ -295,7 +295,9 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       } else {
         const file = value as File;
         if (file.size > 2_000_000) throw new Error('Completed receipt is too large. Choose a file smaller than 2 MB.');
-        const recovered = await engine.importCompleted(await file.text());
+        const raw = await file.text();
+        if (!isCurrent()) return;
+        const recovered = await engine.importCompleted(raw,{mayCommit:isCurrent});
         if (isCurrent()) {
           setArchivedResult({record:recovered.record,text:new TextDecoder('utf-8',{fatal:true}).decode(recovered.bytes)});
           refreshHistory();
