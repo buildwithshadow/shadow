@@ -29,6 +29,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const [result, setResult] = useState('');
   const [refusedDigest, setRefusedDigest] = useState<string | null>(null);
   const [receiptCheck, setReceiptCheck] = useState<{ key: string; status: number; timestamp?: bigint } | null>(null);
+  function updateReceipt(next: {key:string; status:number}) {
+    setReceiptCheck(previous => ({...next,
+      ...(previous?.key === next.key && previous.timestamp !== undefined ? {timestamp:previous.timestamp} : {})}));
+  }
   const [reviewing, setReviewing] = useState(false);
   const [recovering, setRecovering] = useState(false);
   const [automaticChecking, setAutomaticChecking] = useState(false);
@@ -130,7 +134,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   }, [client, deployment.address, engine, record?.intent.digest, record?.stage, correctNetwork, recoveryEpoch]);
   const refused = refusedDigest === record?.intent.digest;
   const receiptCheckKey = record ? `${record.intent.digest}:${record.stage}` : null;
-  const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey;
+  const receiptChecked = receiptCheckKey !== null && receiptCheck?.key === receiptCheckKey && typeof receiptCheck.timestamp === 'bigint';
   const receiptUnconfirmed = Boolean(record && !receiptChecked);
   const reviewable = record?.stage === 'prepared' || record?.stage === 'accepted';
   // The finalized receipt and its timestamp come from the same block. A device
@@ -160,7 +164,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       currentView.current.account === account && currentView.current.deployment === deployment && document.visibilityState === 'visible';
     const publishRecovered = (recovered: RecoveryResult) => {
         setRecord(recovered.record);
-        setReceiptCheck({ key: `${digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
+        updateReceipt({ key: `${digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
         if (recovered.status === 'blocked') { setRefusedDigest(digest); setNotice('The contract refused this purchase. No provider payment was made for this intent.'); }
         else if (recovered.bytes) {
           try { setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes)); setError(''); setNotice('Payment confirmed and the original service result recovered.'); }
@@ -219,7 +223,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
       } else if (kind === 'submit') {
         if (!record || !receiptCheckKey) return;
         const receiptStatus = Number(await client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [record.intent.digest] }));
-        setReceiptCheck({ key: receiptCheckKey, status: receiptStatus });
+        updateReceipt({ key: receiptCheckKey, status: receiptStatus });
         if (receiptStatus === 1) {
           setRefusedDigest(record.intent.digest);
           setReviewing(false);
@@ -243,7 +247,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         const recovered = await engine.recover();
         retainRecoveryTerminal(recoverySession(`${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}:${account}:${recovered.record.intent.digest}`), recovered);
         if (revision.current === current) {
-          setReceiptCheck({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
+          updateReceipt({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
           setNotice(recovered.status === 'delivered' ? 'Payment confirmed and the original service result recovered.' : recovered.status === 'blocked' ? 'The contract refused this purchase. No provider payment was made for this intent.' : 'No confirmed payment found yet. Finish any wallet prompt, then check again. This does not resend a transaction.');
           if (recovered.status === 'blocked') { setRefusedDigest(recovered.record.intent.digest); setReviewing(false); }
           if (recovered.bytes) setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes));
@@ -270,7 +274,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           if (saved && recoveryFailed) {
             const status = Number(await client.readContract({ address: deployment.address, abi: candidateFundingAbi, functionName: 'receiptStatus', args: [saved.intent.digest] }));
             if (revision.current === current) {
-              setReceiptCheck({ key: `${saved.intent.digest}:${saved.stage}`, status });
+              updateReceipt({ key: `${saved.intent.digest}:${saved.stage}`, status });
               if (status === 1) setRefusedDigest(saved.intent.digest);
             }
           }

@@ -252,3 +252,31 @@ test('only a chain timestamp strictly after signature expiry enables clearing',a
   expect(screen.queryByRole('button',{name:'Check and clear expired authorization'})).toBeNull();
   expect(f.engine.archive).not.toHaveBeenCalled();
 });
+
+
+test('manual unconfirmed recovery preserves expiry and never reopens wallet review',async()=>{
+  const f=fixture(0n);
+  f.replaceSaved({...f.engine.load(),stage:'prepared',intent:{...f.engine.load().intent,typedData:{message:{...f.engine.load().intent.typedData.message,signatureExpiry:'1'}}}});
+  f.engine.recover.mockImplementation(async()=>({record:f.engine.load(),status:'unconfirmed'}));
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  fireEvent.click(screen.getByRole('button',{name:'Check payment & recover result'}));
+  await waitFor(()=>expect(f.engine.recover).toHaveBeenCalledTimes(1));
+  await screen.findByText('No confirmed payment found yet. Finish any wallet prompt, then check again. This does not resend a transaction.');
+  expect(screen.getByText('Authorization expired, payment check required')).toBeTruthy();
+  expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true);
+  expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('a failed recovery status refresh also preserves the finalized expiry guard',async()=>{
+  const f=fixture(0n);
+  f.replaceSaved({...f.engine.load(),stage:'accepted',intent:{...f.engine.load().intent,typedData:{message:{...f.engine.load().intent.typedData.message,signatureExpiry:'1'}}}});
+  f.engine.recover.mockRejectedValue(new Error('Provider unavailable'));
+  render(<Host client={f.client}/>);
+  await screen.findByText('Authorization expired, payment check required');
+  fireEvent.click(screen.getByRole('button',{name:'Check payment & recover result'}));
+  await screen.findByText('Provider unavailable');
+  await waitFor(()=>expect(screen.getByRole('button',{name:'Review saved purchase'}).hasAttribute('disabled')).toBe(true));
+  expect(screen.getByText('Authorization expired, payment check required')).toBeTruthy();
+  expect(f.engine.submit).not.toHaveBeenCalled();
+});
