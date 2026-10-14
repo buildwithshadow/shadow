@@ -258,3 +258,5 @@ jobs:
         run: forge test --root contracts --match-path 'test/ShadowFloatMainnet*.t.sol'
       - name: Enforce implementation runtime and scope locks
         run: node contracts/test/mainnet-scope.test.mjs
+      - name: Check bounded public candidate scope
+        run: node contracts/test/mainnet-scope.test.mjs --public-bounded
