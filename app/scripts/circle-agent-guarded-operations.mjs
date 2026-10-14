@@ -1,6 +1,7 @@
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, keccak256, stringToHex, zeroHash } from 'viem';
 import { circleGuardedRepaymentAbi as abi } from './circle-agent-execution.mjs';
 import { GUARDED_TESTNET as deployment, GUARDED_TESTNET_SERVICE as service } from '../guardedTestnetDeployment.mjs';
+import { BOUNDED_TESTNET, BOUNDED_TESTNET_SERVICE } from '../boundedTestnetDeployment.mjs';
 
 const must = (ok, message) => { if (!ok) throw new Error(message); };
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -13,6 +14,10 @@ const kinds = ['purchase', 'approve-repay', 'repay'];
  */
 export function createGuardedCircleOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }) {
   return createOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }, deployment, service);
+}
+
+export function createBoundedTestnetCircleOperations(options) {
+  return createOperations(options, BOUNDED_TESTNET, BOUNDED_TESTNET_SERVICE);
 }
 
 export function createGuardedMainnetCircleOperations(options) {
