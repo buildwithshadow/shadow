@@ -630,23 +630,28 @@ contract ShadowFloatMainnetPublicBounded {
 
     function closeLine(bytes32 lineId) external nonReentrant {
         _sponsorLine(lineId);
-        _closeDebtFreeLine(lineId);
+        _closeDebtFreeLine(lineId, false);
     }
 
-    /// @notice Anyone may close an expired OPEN debt free line. Funds go only to its sponsor.
+    /// @notice Anyone may close an expired OPEN or fully recovered DEFAULTED line.
+    /// Funds go only to its sponsor; outstanding principal always blocks closure.
     function closeExpiredLine(bytes32 lineId) external nonReentrant {
         if (block.timestamp <= lines[lineId].expiry) revert TooEarly();
         address sponsor = lines[lineId].sponsor;
-        uint256 amount = lines[lineId].availableReserve;
-        _closeDebtFreeLine(lineId);
+        uint256 amount = lines[lineId].availableReserve + lines[lineId].recoveryAvailable;
+        _closeDebtFreeLine(lineId, true);
         emit ExpiredLineClosed(lineId, msg.sender, sponsor, amount);
     }
 
-    function _closeDebtFreeLine(bytes32 lineId) private {
+    function _closeDebtFreeLine(bytes32 lineId, bool allowRecoveredDefault) private {
         Line storage line = lines[lineId];
-        if (line.state != LineState.OPEN || line.principalOutstanding != 0) revert InvalidState();
-        uint256 amount = line.availableReserve;
+        if (
+            (line.state != LineState.OPEN && !(allowRecoveredDefault && line.state == LineState.DEFAULTED))
+                || line.principalOutstanding != 0
+        ) revert InvalidState();
+        uint256 amount = line.availableReserve + line.recoveryAvailable;
         line.availableReserve = 0;
+        line.recoveryAvailable = 0;
         line.state = LineState.CLOSED;
         totalCommittedCapital -= amount;
         totalSponsorObligations -= amount;

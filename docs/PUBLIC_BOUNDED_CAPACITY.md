@@ -6,7 +6,7 @@
 
 A funding line and active provider policy must expire within seven days of line creation. The original maximum is recorded in `maximumLineExpiry`; later term or policy changes cannot move it forward. Repayment still does not reset the cumulative purchase limit.
 
-After the line expires, anyone may call `closeExpiredLine` only for an OPEN line with zero outstanding principal. The full remaining reserve returns exclusively to the recorded sponsor. The caller receives nothing. This remains possible when purchases and openings are paused, or the sponsor's admission has been revoked. Both `LineClosed` and `ExpiredLineClosed` are emitted; the latter identifies the actual caller.
+After the line expires, anyone may call `closeExpiredLine` only for an OPEN or DEFAULTED line with zero outstanding principal. Unused reserve and any recovered repayment return exclusively to the recorded sponsor. The caller receives nothing. This remains possible when purchases and openings are paused, or the sponsor's admission has been revoked. Both `LineClosed` and `ExpiredLineClosed` are emitted; the latter identifies the actual caller.
 
 This bounds passive abandonment. It does not stop an active participant from repeatedly registering wallets or opening new lines when capacity becomes available. Nor does it guarantee repayment or delivery. Debt bearing lines cannot be emptied through expiry closure.
 

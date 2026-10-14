@@ -686,6 +686,70 @@ contract ShadowFloatMainnetPublicBoundedRegressionTest {
         _assertEq(usdc.balanceOf(otherSponsor), 100 * USDC, "other sponsor reserve altered");
     }
 
+    function testExpiredFullyRepaidDefaultReturnsBothBucketsWithoutSponsor() public {
+        bytes32 id = _open(sponsor, agent);
+        ShadowFloatMainnetGuarded.SpendIntent memory intent = _draw(id, 1 * USDC, 191);
+        vm.warp(intent.dueAt);
+        vm.prank(sponsor);
+        float.declareDefault(id);
+        _repay(agent, id, 1 * USDC);
+        _assertEq(float.getLine(id).availableReserve, 4 * USDC, "unused reserve wrong");
+        _assertEq(float.getLine(id).recoveryAvailable, 1 * USDC, "recovery reserve wrong");
+        float.setOpeningsPaused(true);
+        float.setSpendsPaused(true);
+        float.setSponsorAllowed(sponsor, false);
+        vm.warp(uint256(float.getLine(id).expiry) + 1);
+        vm.recordLogs();
+        vm.prank(otherAgent);
+        float.closeExpiredLine(id);
+        VmBoundedRegression.Log[] memory logs = vm.getRecordedLogs();
+        bool attributed;
+        for (uint256 i; i < logs.length; ++i) {
+            if (
+                logs[i].emitter == address(float)
+                    && logs[i].topics[0] == keccak256("ExpiredLineClosed(bytes32,address,address,uint256)")
+            ) {
+                attributed = logs[i].topics[1] == id && logs[i].topics[2] == bytes32(uint256(uint160(otherAgent)))
+                    && logs[i].topics[3] == bytes32(uint256(uint160(sponsor)))
+                    && abi.decode(logs[i].data, (uint256)) == 5 * USDC;
+            }
+        }
+        _assertTrue(attributed, "expiry closure did not attribute both reserve buckets");
+        _assertEq(usdc.balanceOf(sponsor), 100 * USDC, "sponsor did not receive both buckets");
+        _assertEq(usdc.balanceOf(otherAgent), 100 * USDC, "closer received sponsor funds");
+        _assertEq(float.getLine(id).availableReserve, 0, "reserve retained");
+        _assertEq(float.getLine(id).recoveryAvailable, 0, "recovery retained");
+        _assertEq(
+            uint256(float.getLine(id).state),
+            uint256(ShadowFloatMainnetGuarded.LineState.CLOSED),
+            "recovered default not closed"
+        );
+        _assertEq(float.totalCommittedCapital(), 0, "recovered default kept capacity");
+        _assertEq(float.totalSponsorObligations(), 0, "recovered default kept obligations");
+    }
+
+    function testExpiredPartialDefaultStaysBlockedUntilLastRepayment() public {
+        bytes32 id = _open(sponsor, agent);
+        ShadowFloatMainnetGuarded.SpendIntent memory intent = _draw(id, 1 * USDC, 192);
+        vm.warp(intent.dueAt);
+        vm.prank(sponsor);
+        float.declareDefault(id);
+        _repay(agent, id, 200_000);
+        vm.prank(sponsor);
+        float.claimDefaulted(id);
+        vm.warp(uint256(float.getLine(id).expiry) + 1);
+        (bool closed,) = address(float).call(abi.encodeCall(float.closeExpiredLine, (id)));
+        _assertTrue(!closed, "partial debt was forgiven");
+        _assertEq(float.getLine(id).principalOutstanding, 800_000, "partial debt changed");
+        _assertEq(float.totalCommittedCapital(), 800_000, "partial debt capacity changed");
+        _repay(agent, id, 800_000);
+        vm.prank(otherAgent);
+        float.closeExpiredLine(id);
+        _assertEq(usdc.balanceOf(sponsor), 100 * USDC, "late recovery not returned");
+        _assertEq(float.totalCommittedCapital(), 0, "late recovery capacity retained");
+        _assertEq(float.totalSponsorObligations(), 0, "late recovery obligation retained");
+    }
+
     function testTwoStepOwnershipAndOperatorRemoval() public {
         address nextOwner = address(0xABCD);
         float.proposeOwner(nextOwner);
