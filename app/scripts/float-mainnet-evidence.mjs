@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import { decodeFunctionData, isAddressEqual } from "viem";
+import { decodeFunctionData, getAddress, isAddressEqual, zeroAddress } from "viem";
 import { BLOCK_REASONS, floatAbi } from "./float-mainnet-config.mjs";
 import { UsageError, bytes32Flag, connect, parseBytes32, readLine, required, runCli, stateName } from "./float-mainnet-cli.mjs";
 import { validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
@@ -70,6 +70,7 @@ export function assembleBundle({
   const paid = [];
   const refusals = [];
   let exit = { kind: "none", txHash: null, blockNumber: null, amount: null };
+  let closeEvent = null;
   let defaulted = false;
   for (const entry of onLine) {
     const where = { txHash: entry.transactionHash, blockNumber: entry.blockNumber };
@@ -96,6 +97,17 @@ export function assembleBundle({
       defaulted = true;
     } else if (entry.event === "LineClosed") {
       exit = { kind: "close", ...where, amount: entry.args.amount };
+      closeEvent = entry;
+    } else if (entry.event === "ExpiredLineClosed") {
+      if (exit.kind !== "close" || exit.expiryCaller !== undefined || exit.txHash !== where.txHash
+          || exit.blockNumber !== where.blockNumber || BigInt(entry.logIndex) <= BigInt(closeEvent.logIndex)
+          || BigInt(exit.amount) !== BigInt(entry.args.amount)
+          || !isAddressEqual(entry.args.sponsor, opened[0].args.sponsor)) {
+        throw new Error("ExpiredLineClosed does not match a unique preceding LineClosed for this sponsor and amount");
+      }
+      const caller = getAddress(entry.args.caller);
+      if (isAddressEqual(caller, zeroAddress)) throw new Error("ExpiredLineClosed has a zero caller");
+      exit.expiryCaller = caller;
     } else if (entry.event === "SponsorClaimed") {
       exit = { kind: "claim-defaulted", ...where, amount: entry.args.amount };
     }
@@ -216,7 +228,7 @@ export function evidenceMarkdown(bundle, events) {
   const exitLine =
     exit.kind === "none"
       ? "Exit: none recorded up to the observed block."
-      : `Exit: ${exit.kind === "close" ? "sponsor closed the line" : "sponsor claimed after default"}, ${exit.amount} returned, in ${exit.txHash} (block ${exit.blockNumber}).`;
+      : `Exit: ${exit.kind === "close" ? (exit.expiryCaller ? `expired line closed by ${exit.expiryCaller}, reserve returned to sponsor ${line.sponsor}` : "sponsor closed the line") : "sponsor claimed after default"}, ${exit.amount} returned, in ${exit.txHash} (block ${exit.blockNumber}).`;
   return [
     `# Shadow Float evidence: line ${line.lineId}`,
     "",

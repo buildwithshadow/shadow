@@ -5,6 +5,8 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createPublicClient,createWalletClient,decodeFunctionData,defineChain,http,keccak256,stringToHex,erc20Abi} from 'viem';
 import {account,startAnvil,runTool,e2eSkip} from './float-mainnet-e2e.mjs';
+import {assembleBundle,evidenceMarkdown} from './float-mainnet-evidence.mjs';
+import {expiryClosureProblems} from './float-mainnet-verify.mjs';
 import {eip712Domain,SPEND_INTENT_TYPES} from './float-mainnet-config.mjs';
 
 for (const contractName of ['ShadowFloatMainnetGuarded','ShadowFloatMainnetPublicBounded']) test(`${contractName}: repayment CLI binds to a draw and refuses stale or implicit generic consent`, {skip:e2eSkip,timeout:60000}, async t=> {
@@ -78,6 +80,15 @@ for (const contractName of ['ShadowFloatMainnetGuarded','ShadowFloatMainnetPubli
    assert.equal(exits[1].args.caller,owner.address);
    assert.equal(exits[1].args.sponsor,sponsor.address);
    assert.equal(exits[0].transactionHash,exits[1].transactionHash);
+   const recorded=JSON.parse(readFileSync(indexPath)).events;
+   const observed=await c.getBlock();
+   const {bundle}=assembleBundle({deployment:{chainId:'5042002',address:target,deployBlock:deployBlock.toString(),runtimeKeccak256:keccak256(await c.getCode({address:target})),sourceCommit:'0'.repeat(40)},observedAt:{blockNumber:observed.number.toString(),blockHash:observed.hash},lineId:id,events:recorded});
+   assert.equal(bundle.exit.expiryCaller,owner.address);
+   assert.match(evidenceMarkdown(bundle,recorded),new RegExp(`expired line closed by ${owner.address}`));
+   const canonical=exits.map(event=>({...event,eventName:event.event}));
+   assert.deepEqual(expiryClosureProblems(bundle.exit,bundle.line,canonical),[]);
+   assert.match(expiryClosureProblems({...bundle.exit,expiryCaller:sponsor.address},bundle.line,canonical).join(' '),/caller differs/);
+
  }
 
 });

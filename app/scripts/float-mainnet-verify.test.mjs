@@ -30,7 +30,7 @@ import { INDEX_KIND, validateIndex } from "./float-mainnet-indexer.mjs";
 import { SECP256K1_HALF_ORDER, validateIntentFile } from "./float-mainnet-intent.mjs";
 import { PINNED_SOURCE_COMMIT, stableStringify } from "./float-mainnet-preflight.mjs";
 import { ACCEPTANCE_KIND, DELIVERY_KIND, signReceipt, validateReceiptFile } from "./float-mainnet-provider.mjs";
-import { calldataMismatches, manifestProvenance, matchRepayments, refusalTransferProblems } from "./float-mainnet-verify.mjs";
+import { calldataMismatches, expiryClosureProblems, manifestProvenance, matchRepayments, refusalTransferProblems } from "./float-mainnet-verify.mjs";
 
 // The independent verifier against a real local lifecycle driven through the
 // participant CLIs. The evidence bundles are assembled here from the CLIs'
@@ -1527,4 +1527,24 @@ describe("independent candidate verifier", { skip: e2eSkip }, () => {
     ]);
     assert.equal(spent.check("cycle[0].spend.executor").detail, "the intent allows any executor");
   });
+});
+
+
+test("expiry attribution is independently checked against the matching canonical companion", () => {
+  const hash = label => keccak256(toBytes(label));
+  const [sponsor,caller,other] = [1,2,3].map(account);
+  const line={lineId:hash("expiry-line"),sponsor:sponsor.address};
+  const exit={kind:"close",txHash:hash("expiry-tx"),blockNumber:100n,amount:500n,expiryCaller:caller.address};
+  const closed={eventName:"LineClosed",args:{lineId:line.lineId,sponsor:sponsor.address,amount:500n},transactionHash:exit.txHash,blockNumber:100n,logIndex:1};
+  const expiry={...closed,eventName:"ExpiredLineClosed",args:{...closed.args,caller:caller.address},logIndex:2};
+  assert.deepEqual(expiryClosureProblems(exit,line,[closed,expiry]),[]);
+  assert.match(expiryClosureProblems({...exit,expiryCaller:other.address},line,[closed,expiry]).join(" "),/caller differs/);
+  const missing={...exit}; delete missing.expiryCaller;
+  assert.match(expiryClosureProblems(missing,line,[closed,expiry]).join(" "),/caller is missing/);
+  assert.match(expiryClosureProblems(exit,line,[closed]).join(" "),/no ExpiredLineClosed/);
+  assert.match(expiryClosureProblems(exit,line,[closed,expiry,expiry]).join(" "),/exactly one/);
+  assert.match(expiryClosureProblems(exit,line,[closed,{...expiry,args:{...expiry.args,amount:501n}}]).join(" "),/amount|matching/);
+  assert.match(expiryClosureProblems(exit,line,[closed,{...expiry,transactionHash:hash("wrong-tx")}]).join(" "),/transaction/);
+  assert.match(expiryClosureProblems(exit,line,[closed,{...expiry,logIndex:0}]).join(" "),/follow/);
+  assert.deepEqual(expiryClosureProblems(missing,line,[closed]),[]);
 });

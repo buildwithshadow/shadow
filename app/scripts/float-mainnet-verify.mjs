@@ -15,7 +15,7 @@ import {
   parseEventLogs,
   zeroAddress,
 } from "viem";
-import { BLOCK_REASONS, LINE_STATES, connectCandidate, floatAbi, printJson, readDeployment, revertName } from "./float-mainnet-config.mjs";
+import { BLOCK_REASONS, LINE_STATES, connectCandidate, floatAbi, floatEventAbi, printJson, readDeployment, revertName } from "./float-mainnet-config.mjs";
 import { MAX_LOOKBACK_BLOCKS, UsageError, findLogs, parseAddress, parseBytes32, parseUint, read, readPolicy, required, rpcErrorDetail } from "./float-mainnet-cli.mjs";
 import { intentDigest, messageFromStruct, validateIntentFile, writeJsonFile } from "./float-mainnet-intent.mjs";
 import { IMMUTABLE_GETTERS, decodeImmutables, immutableRanges, immutableWord, maskImmutables } from "./float-mainnet-manifest.mjs";
@@ -71,7 +71,7 @@ const KEYS = {
   repayment: ["txHash", "blockNumber", "payer", "amount"],
   provider: ["requestId", "acceptance", "delivery"],
   refusal: ["digest", "txHash", "blockNumber", "reason", "intent"],
-  exit: ["kind", "txHash", "blockNumber", "amount"],
+  exit: ["kind", "txHash", "blockNumber", "amount", "expiryCaller"],
   declared: ["label", "independentControl", "customerPurpose", "assistance", "commercial"],
   exporterSummary: SUMMARY_FIELDS,
 };
@@ -187,6 +187,7 @@ function parseBundle(raw) {
   const exit = objectOf("exit", raw.exit, KEYS.exit);
   if (!Object.hasOwn(EXIT_EVENTS, exit.kind) && exit.kind !== "none") throw new Error(`exit.kind ${JSON.stringify(exit.kind ?? null)} is not close, claim-defaulted or none`);
   const exited = exit.kind !== "none";
+  if (Object.hasOwn(exit, "expiryCaller") && exit.kind !== "close") throw new Error("exit.expiryCaller is valid only for a close exit");
   const summary = objectOf("exporterSummary", raw.exporterSummary, KEYS.exporterSummary);
   const declared = objectOf("declared", raw.declared, KEYS.declared);
   if (declared.label !== DECLARED_LABEL) {
@@ -257,6 +258,7 @@ function parseBundle(raw) {
       txHash: exited ? parseBytes32("exit.txHash", exit.txHash, Error) : exit.txHash,
       blockNumber: exited ? uintOf("exit.blockNumber", exit.blockNumber) : exit.blockNumber,
       amount: exited ? uintOf("exit.amount", exit.amount) : exit.amount,
+      ...(Object.hasOwn(exit, "expiryCaller") ? { expiryCaller: parseAddress("exit.expiryCaller", exit.expiryCaller, Error) } : {}),
     },
     declared,
     exporterSummary: Object.fromEntries(SUMMARY_FIELDS.map((field) => [field, uintOf(`exporterSummary.${field}`, summary[field])])),
@@ -332,7 +334,7 @@ function context(connection, bundle, usdc) {
     receipt: (hash) => cached(receipts, hash, () => connection.client.getTransactionReceipt({ hash })),
     transaction: (hash) => cached(transactions, hash, () => connection.client.getTransaction({ hash })),
     block: (blockNumber) => cached(blocks, blockNumber, () => connection.client.getBlock({ blockNumber })),
-    floatEvents: (receipt) => parseEventLogs({ abi: floatAbi, logs: receipt.logs.filter((log) => isAddressEqual(log.address, float)) }),
+    floatEvents: (receipt) => parseEventLogs({ abi: floatEventAbi, logs: receipt.logs.filter((log) => isAddressEqual(log.address, float)) }),
     transfers: (receipt) =>
       parseEventLogs({ abi: erc20Abi, eventName: "Transfer", logs: receipt.logs.filter((log) => isAddressEqual(log.address, usdc)) }),
   };
@@ -461,6 +463,27 @@ export function matchRepayments(lineId, repayments, eventsByTx) {
 // order, each ProviderPaid (principal to its provider), LineClosed or
 // SponsorClaimed (amount to its sponsor) explains one earlier transfer of
 // exactly that amount to that payee: the nearest one not already explained.
+// Validate optional schema 1 expiry attribution against canonical contract logs.
+// The event caller is msg.sender, which can differ from tx.from for a Safe.
+export function expiryClosureProblems(exit, line, events) {
+  const companions = events.filter(log => log.eventName === "ExpiredLineClosed" && log.args.lineId === line.lineId);
+  const problems = [];
+  if (!companions.length) return Object.hasOwn(exit, "expiryCaller") ? ["exit.expiryCaller has no ExpiredLineClosed event"] : [];
+  if (companions.length !== 1) return ["expiry closure requires exactly one ExpiredLineClosed companion"];
+  const event = companions[0];
+  const closed = events.filter(log => log.eventName === "LineClosed" && log.args.lineId === line.lineId);
+  if (exit.kind !== "close" || !Object.hasOwn(exit, "expiryCaller")) problems.push("expiry closure caller is missing from the close exit");
+  else if (isAddressEqual(exit.expiryCaller, zeroAddress) || !isAddressEqual(event.args.caller, exit.expiryCaller)) problems.push("expiry closure caller differs from ExpiredLineClosed");
+  if (!isAddressEqual(event.args.sponsor, line.sponsor) || BigInt(event.args.amount) !== BigInt(exit.amount)) problems.push("expiry closure sponsor or amount differs from the exit");
+  if (event.transactionHash !== exit.txHash || BigInt(event.blockNumber) !== BigInt(exit.blockNumber)) problems.push("expiry companion has a different transaction or block");
+  if (closed.length !== 1 || closed[0].transactionHash !== event.transactionHash
+      || BigInt(closed[0].blockNumber) !== BigInt(event.blockNumber)
+      || BigInt(closed[0].logIndex) >= BigInt(event.logIndex)
+      || !isAddressEqual(closed[0].args.sponsor, event.args.sponsor)
+      || BigInt(closed[0].args.amount) !== BigInt(event.args.amount)) problems.push("expiry companion does not follow its matching LineClosed");
+  return problems;
+}
+
 export function refusalTransferProblems(float, refusedDigest, floatEvents, transfers) {
   const byLog = (a, b) => a.logIndex - b.logIndex;
   const problems = [];
@@ -1022,6 +1045,7 @@ async function verifyBundle(raw, { rpcUrl, manifest }) {
     const eventName = EXIT_EVENTS[exit.kind];
     const mined = await ctx.receipt(exit.txHash);
     const problems = receiptProblems(ctx, mined, exit);
+    problems.push(...expiryClosureProblems(exit, line, ctx.floatEvents(mined)));
     const found = ctx
       .floatEvents(mined)
       .find((log) => log.eventName === eventName && log.args.lineId === line.lineId && isAddressEqual(log.args.sponsor, line.sponsor));
