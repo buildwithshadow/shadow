@@ -19,3 +19,9 @@ Clients need to enforce the original expiry ceiling and explain permissionless c
 The bounded contract tests include opening and extension boundaries, exact expiry behavior, reserve return with pauses and revocation, capacity reuse, draw bound repayment, EOA and ERC-1271 signatures, defaults, and adversarial token transfer rollback. These tests do not constitute an independent human audit or deployment authorization.
 
 Expiry closure evidence records `expiryCaller` separately from the sponsor recipient. The verifier requires a matching canonical `ExpiredLineClosed` companion in the same transaction and block after `LineClosed`, with the same amount and sponsor. Ordinary sponsor close exports retain their prior shape. The existing legacy artifact certification is not a certification of the bounded candidate; a bounded release needs its own verified compiler/source and runtime record.
+
+## Monitored testnet rehearsal
+
+The provider can explicitly select `PROVIDER_ADMISSION_MODE=testnet-monitor` for a bounded deployment on Arc testnet (5042002). This requires a fixed schema 1 monitor baseline, a version-specific manifest with kind `shadow-public-bounded-testnet-release`, contract name `ShadowFloatMainnetPublicBounded`, public registration, repayment binding version 2 and the original seven-day lifetime bound. Pin the exact participants, lines, limits and pause state in that baseline before enabling acceptance.
+
+The provider still requires a fresh healthy heartbeat, no unresolved hold, a canonical observation block and the exact deployed runtime. Changed files or monitor observations fail closed. Existing paid-result recovery is independent of new-payment admission. This mode cannot satisfy the public mainnet monitor policy or select unmonitored signing by fallback.
