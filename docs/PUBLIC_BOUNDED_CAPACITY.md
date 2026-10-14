@@ -1,6 +1,6 @@
 # Bounded public funding lines
 
-`ShadowFloatMainnetPublicBounded` is a separate, undeployed contract version. It does not change the existing public mainnet deployment, its source, manifests or participant balances.
+`ShadowFloatMainnetPublicBounded` is a separate contract version. Each deployment needs its own verified manifest. It does not change the existing public mainnet deployment, its source, manifests or participant balances.
 
 ## Capacity policy
 
