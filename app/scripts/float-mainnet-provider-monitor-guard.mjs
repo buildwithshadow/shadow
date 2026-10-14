@@ -8,12 +8,20 @@ const requireThat = (condition) => { if (!condition) throw new Error("Provider a
 // Pin operator-selected files at startup. A changed release or policy requires
 // a deliberate provider restart, not policy learned from the current snapshot.
 // This gate has no signing key, writes no monitor state and never affects /serve.
-export function createProviderMonitorGuard({ connection, manifestPath, baselinePath, stateDir }) {
+function createBoundMonitorGuard({ connection, manifestPath, baselinePath, stateDir }, fixedTestnet) {
   requireThat(connection && manifestPath && baselinePath && stateDir);
   const pinned = loadContext({ manifestPath, baselinePath, stateDir });
   const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
   const b = pinned.baseline;
-  requireThat(b.schemaVersion === 2 && manifest.publicRegistration === true && manifest.repaymentBindingVersion === 2);
+  requireThat(manifest.publicRegistration === true && manifest.repaymentBindingVersion === 2);
+  if (fixedTestnet) {
+    requireThat(b.schemaVersion === 1 && b.identity.chainId === "5042002"
+      && manifest.kind === "shadow-public-bounded-testnet-release"
+      && manifest.contract?.name === "ShadowFloatMainnetPublicBounded"
+      && manifest.config?.maximumLineLifetime === "604800");
+  } else {
+    requireThat(b.schemaVersion === 2 && b.identity.chainId === "5042");
+  }
   requireThat(String(connection.chainId) === b.identity.chainId && String(manifest.chainId) === b.identity.chainId);
   requireThat(same(connection.address, b.identity.address) && same(manifest.contract?.address, b.identity.address));
   requireThat(same(manifest.bytecode?.onchainRuntimeKeccak256, b.identity.runtimeCodeHash));
@@ -41,6 +49,16 @@ export function createProviderMonitorGuard({ connection, manifestPath, baselineP
   };
 }
 
+export function createProviderMonitorGuard(options) {
+  return createBoundMonitorGuard(options, false);
+}
+
+// A bounded testnet rehearsal uses an explicit fixed participant/line policy.
+// It retains the same heartbeat, hold, canonical-block and runtime checks.
+// This mode cannot satisfy or downgrade the public mainnet admission policy.
+export function createTestnetProviderMonitorGuard(options) {
+  return createBoundMonitorGuard(options, true);
+}
 
 // An explicit startup mode avoids silently treating a missing public marker as
 // a private deployment. Unmonitored signing is restricted to testnet; all new
@@ -48,6 +66,7 @@ export function createProviderMonitorGuard({ connection, manifestPath, baselineP
 export function configureProviderAdmission({mode, recoveryOnly = false, ...options}) {
   if (recoveryOnly) return null;
   if (mode === "public-monitor") return createProviderMonitorGuard(options);
+  if (mode === "testnet-monitor") return createTestnetProviderMonitorGuard(options);
   if (mode === "testnet-unmonitored" && String(options.connection?.chainId) === "5042002") return null;
-  throw new Error("Signing requires PROVIDER_ADMISSION_MODE=public-monitor with bound monitor configuration; testnet may explicitly select testnet-unmonitored");
+  throw new Error("Signing requires an explicit bound monitor mode; bounded testnet may select testnet-monitor, and other testnet rehearsals may explicitly select testnet-unmonitored");
 }
