@@ -284,7 +284,13 @@ for (const variant of ["testnet", "guarded", "public-bounded"]) for (const fault
     await write(agent, token, erc20Abi, "approve", [contract, price]);
     if(mainnet){const draw=await read('currentDrawDigest',[lineId]);await write(agent,contract,compiled.abi,'repayForDraw',[lineId,draw,price]);}
     else await write(agent,contract,compiled.abi,'repay',[lineId,price]);
-    await write(sponsor, contract, compiled.abi, "closeLine", [lineId]);
+    if (bounded) {
+      const expiry = (await read("lines", [lineId])).expiry;
+      await client.request({method:"evm_setNextBlockTimestamp", params:[Number(expiry + 1n)]});
+      await client.request({method:"evm_mine", params:[]});
+      // A caller other than the sponsor releases only the sponsor's reserve.
+      await write(owner, contract, compiled.abi, "closeExpiredLine", [lineId]);
+    } else await write(sponsor, contract, compiled.abi, "closeLine", [lineId]);
     assert.equal(
       await client.readContract({
         address: token,
