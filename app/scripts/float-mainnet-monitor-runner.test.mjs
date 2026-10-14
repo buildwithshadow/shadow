@@ -33,15 +33,50 @@ function fixture() {
   const snapshot = { ok: true, identity: { chainId: "5042002", address: addr(1), runtimeCodeHash: hash(1), usdc: addr(8) }, observedAt: { blockNumber: "100", blockHash: hash(100), timestamp: String(NOW / 1000) }, contract: { address: addr(1), owner: addr(2), pendingOwner: addr(0), openingsPaused: true, spendsPaused: false, effectiveLimits: limits, pendingCapIncreases: [], operators: [{ operator: addr(9), enabled: true, set: [{ allowed: true, blockNumber: "11" }] }], totalSponsorObligations: "100", totalCommittedCapital: "100" }, sponsors: [{ sponsor: addr(3), allowed: true, set: [{ allowed: true, blockNumber: "11" }] }], discovery: { lines: 1, scanned: { fromBlock: "10", toBlock: "100" }, index: null }, lines: [{ ...line, state: "OPEN", availableReserve: "100", principalOutstanding: "0", recoveryAvailable: "0", sponsorClaimed: "0" }], alerts: [{ code: "OPENINGS_PAUSED", severity: "warning" }, { code: "OPERATOR_CHANGED", severity: "warning" }], accounting: { ok: true, balance: "100", checks: ["balanceCoversObligations", "obligationsEqualLines", "committedCapitalEqualsLines", "linesMatchReserveCap"].map((id) => ({ id, status: "PASS" })) }, executionAudit: { fromBlock: "10", toBlock: "100", executions: [] } };
   return { baseline, snapshot };
 }
-function stateFixture() {
+function stateFixture(options = {}) {
   const directory = mkdtempSync(join(tmpdir(), "shadow-runner-"));
   const { baseline, snapshot } = fixture();
   const baselinePath = join(directory, "baseline.json"); const manifestPath = join(directory, "manifest.json");
   writeFileSync(baselinePath, JSON.stringify(baseline)); writeFileSync(manifestPath, JSON.stringify({ ok: true }));
-  const context = loadContext({ baselinePath, manifestPath, stateDir: join(directory, "state") });
+  const context = loadContext({ baselinePath, manifestPath, stateDir: join(directory, "state"), ...options });
   return { context, baseline, snapshot, directory, cleanup: () => rmSync(directory, { recursive: true, force: true }) };
 }
 const codes = (result) => result.alerts.map((entry) => entry.code);
+
+test("explicit service group gets read-only status across atomic replacement and holds, while lock and event journal stay private", async () => {
+  const f = stateFixture({ groupReadableStatus: true });
+  const mode = name => statSync(join(f.context.stateDir, name + '.json')).mode & 0o777;
+  const previousUmask = process.umask(0o077);
+  try {
+    for (let i = 0; i < 2; i++) {
+      assert.equal((await runMonitorOnce(f.context, { now: () => NOW + i, afterSnapshotPublished: async () => {
+        assert.equal(mode('publication'), 0o600);
+      }, collect: async () => {
+        assert.equal(statSync(join(f.context.stateDir, 'runner.lock')).mode & 0o777, 0o600);
+        return f.snapshot;
+      } })).ok, true);
+      assert.equal(mode('heartbeat'), 0o640); assert.equal(mode('snapshot'), 0o640);
+      assert.equal(mode('events'), 0o600);
+    }
+    const failure = await runMonitorOnce(f.context, { now: () => NOW + 2, collect: async () => { throw Error('RPC unavailable'); } });
+    assert.equal(failure.hold, true); assert.equal(mode('hold'), 0o640);
+    assert.equal(mode('heartbeat'), 0o640); assert.equal(mode('events'), 0o600);
+    const recovery = await runMonitorOnce(f.context, { now: () => NOW + 3, collect: async () => f.snapshot });
+    assert.equal(recovery.hold, true);
+    assert.equal(acknowledgeHold(f.context, recovery.incidentId, NOW + 3).ok, true);
+    assert.equal(mode('heartbeat'), 0o640);
+    assert.equal(heartbeatStatus(f.context, NOW + 3).ok, true);
+  } finally { process.umask(previousUmask); f.cleanup(); }
+});
+
+test("group status sharing rejects ambiguous configuration and the default stays private", async () => {
+  const f = stateFixture();
+  try {
+    for (const value of ['true', 'false', 1, null]) assert.throws(() => loadContext({ baselinePath: join(f.directory, 'baseline.json'), manifestPath: join(f.directory, 'manifest.json'), stateDir: f.context.stateDir, groupReadableStatus: value }), /boolean/);
+    await runMonitorOnce(f.context, { now: () => NOW, collect: async () => f.snapshot });
+    for (const name of ['heartbeat', 'snapshot', 'events']) assert.equal(statSync(join(f.context.stateDir, name + '.json')).mode & 0o777, 0o600);
+  } finally { f.cleanup(); }
+});
 
 test("minute cadence includes collection time and keeps retained observations fresh across slow scans", async () => {
   const f = stateFixture(); const stop = new AbortController();

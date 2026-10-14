@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { closeSync, existsSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
+import { closeSync, existsSync, fchmodSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
@@ -14,9 +14,12 @@ import { validateConfiguredHistory } from "./float-mainnet-approved-history.mjs"
 
 const MONITOR = fileURLToPath(new URL("./float-mainnet-monitor.mjs", import.meta.url));
 const alert = (code, detail) => ({ code, severity: "critical", detail });
-function atomicJson(path, value) {
+function atomicJson(path, value, mode = 0o600) {
   const temporary = `${path}.${randomUUID()}.tmp`;
   const fd = openSync(temporary, "wx", 0o600);
+  // Only explicitly selected public observation files may be shared with a
+  // read-only service group. Apply before publication, including under 0077.
+  try { fchmodSync(fd, mode); } catch (error) { closeSync(fd); rmSync(temporary, { force: true }); throw error; }
   try { writeFileSync(fd, `${canonicalJson(value)}\n`); fsyncSync(fd); } finally { closeSync(fd); }
   try { renameSync(temporary, path); const directory = openSync(dirname(path), "r"); try { fsyncSync(directory); } finally { closeSync(directory); } }
   finally { rmSync(temporary, { force: true }); }
@@ -31,14 +34,15 @@ function acquire(directory) {
   try { writeFileSync(fd, canonicalJson({ pid: process.pid, startedAt: new Date().toISOString() })); fsyncSync(fd); } finally { closeSync(fd); }
   return () => rmSync(path);
 }
-export function loadContext({ baselinePath, manifestPath, stateDir, indexPath }) {
+export function loadContext({ baselinePath, manifestPath, stateDir, indexPath, groupReadableStatus = false }) {
+  if (typeof groupReadableStatus !== "boolean") throw new Error("groupReadableStatus must be a boolean");
   const baseline = validateBaseline(readJson(baselinePath));
   const rawManifest = readFileSync(manifestPath);
   const manifest = JSON.parse(rawManifest);
   if (baseline.schemaVersion === 2 && (manifest.publicRegistration !== true || manifest.repaymentBindingVersion !== 2)) throw new Error("Public observation requires an explicitly bound public repayment deployment manifest");
   if (manifest.ok !== true) throw new Error("manifest must have ok:true");
   validateConfiguredHistory(baseline, manifestPath);
-  return { baseline, baselineHash: digestJson(baseline), manifestHash: createHash("sha256").update(rawManifest).digest("hex"), manifestPath: resolve(manifestPath), stateDir: resolve(stateDir), indexPath: indexPath ? resolve(indexPath) : undefined };
+  return { baseline, baselineHash: digestJson(baseline), manifestHash: createHash("sha256").update(rawManifest).digest("hex"), manifestPath: resolve(manifestPath), stateDir: resolve(stateDir), indexPath: indexPath ? resolve(indexPath) : undefined, groupReadableStatus };
 }
 function identity(context) {
   const { baseline, baselineHash, manifestHash } = context;
@@ -46,6 +50,11 @@ function identity(context) {
     address: baseline.identity.address, runtimeCodeHash: baseline.identity.runtimeCodeHash, baselineHash, manifestHash };
 }
 const paths = (context) => Object.fromEntries(["heartbeat", "snapshot", "hold", "events"].map((name) => [name, resolve(context.stateDir, `${name}.json`)]));
+function atomicStatusJson(context, path, value) {
+  const file = paths(context);
+  if (![file.heartbeat, file.snapshot, file.hold].includes(path)) throw new Error("Not a shareable monitor observation file");
+  atomicJson(path, value, context.groupReadableStatus === true ? 0o640 : 0o600);
+}
 function event(context, record) {
   // Bounded local journal; no webhooks, email, signing keys or scheduler install.
   const path = paths(context).events;
@@ -55,7 +64,7 @@ function event(context, record) {
 }
 function latch(context, alerts, nowMs) {
   const path = paths(context).hold;
-  if (!existsSync(path)) atomicJson(path, { incidentId: randomUUID(), createdAt: new Date(nowMs).toISOString(), baselineHash: context.baselineHash, alerts });
+  if (!existsSync(path)) atomicStatusJson(context, path, { incidentId: randomUUID(), createdAt: new Date(nowMs).toISOString(), baselineHash: context.baselineHash, alerts });
   return readJson(path);
 }
 
@@ -197,7 +206,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     const priorFailureCodes = recoveredFailureCodes ?? (previous?.status === 'checking' ? previous.previousFailureCodes : previous?.alerts?.map(entry => entry?.code));
     const previousFailureCodes = retainedSnapshotHash === null && Array.isArray(priorFailureCodes) &&
       priorFailureCodes.includes('RPC_CHECK_FAILED') && priorFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code)) ? priorFailureCodes : null;
-    atomicJson(file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash, previousFailureCodes, previousPublicationHash });
+    atomicStatusJson(context, file.heartbeat, { ...common, previousSnapshotHash: retainedSnapshotHash, previousFailureCodes, previousPublicationHash });
     await afterCheckingPublished();
     // Publish the recovered binding before removing its old marker: a
     // separately scheduled notifier can sample either side of this write.
@@ -220,7 +229,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
       snapshotHash: snapshot ? digestJson(snapshot) : retainedSnapshotHash,
       alertCodes: result.alerts.map(entry => entry.code) });
     if (snapshot) {
-      atomicJson(file.snapshot, snapshot);
+      atomicStatusJson(context, file.snapshot, snapshot);
       await afterSnapshotPublished();
     }
     if (result.hold) { latch(context, result.alerts, completed); await afterHoldLatched(); }
@@ -230,7 +239,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
       status: result.ok && !incident ? "healthy" : "hold", ...(result.notices?.length ? {notices: result.notices} : {}), checks: { snapshotHealthy: result.ok },
       incidentId: incident?.incidentId ?? null, alerts: [...result.alerts, ...(incident && result.ok ? [alert("HOLD_LATCHED", `incident ${incident.incidentId} requires local acknowledgement after recovery`)] : [])] };
     event(context, { runId: heartbeat.runId, completedAt: heartbeat.completedAt, ok: heartbeat.ok, hold: heartbeat.hold, baselineHash: context.baselineHash, observedAt: heartbeat.observedAt, alerts: heartbeat.alerts });
-    atomicJson(file.heartbeat, heartbeat);
+    atomicStatusJson(context, file.heartbeat, heartbeat);
     rmSync(publication, { force: true });
     return heartbeat;
   } finally { release(); }
@@ -246,7 +255,7 @@ export function acknowledgeHold(context, incidentId, nowMs = Date.now()) {
     if (hold.incidentId !== incidentId || heartbeat.baselineHash !== context.baselineHash || heartbeat.manifestHash !== context.manifestHash || heartbeat.snapshotHash !== digestJson(snapshot) || heartbeat.checks?.snapshotHealthy !== true || !Number.isFinite(completed) || completed > nowMs || completed < Date.parse(heartbeat.startedAt) || !Number.isFinite(age) || age < 0 || age > context.baseline.policy.maxHeartbeatAgeMs || !evaluateSnapshot(context.baseline, snapshot, nowMs).ok) throw new Error("acknowledgement requires the exact incident and a fresh complete healthy sample for this baseline");
     event(context, { acknowledgedAt: new Date(nowMs).toISOString(), incidentId, baselineHash: context.baselineHash });
     const acknowledged = { ...heartbeat, ok: true, hold: false, status: "healthy", alerts: [], incidentId: null, acknowledgedAt: new Date(nowMs).toISOString() };
-    atomicJson(file.heartbeat, acknowledged);
+    atomicStatusJson(context, file.heartbeat, acknowledged);
     rmSync(file.hold); // If interrupted before this removal, status still holds.
     return acknowledged;
   } finally { release(); }
@@ -292,9 +301,9 @@ export async function runMonitorLoop(context, {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (!["once", "loop", "status", "acknowledge"].includes(command)) throw new Error("command must be once, loop, status or acknowledge");
-  const { values } = parseArgs({ args, strict: true, allowPositionals: false, options: { baseline: { type: "string" }, manifest: { type: "string" }, "state-dir": { type: "string" }, index: { type: "string" }, "incident-id": { type: "string" } } });
+  const { values } = parseArgs({ args, strict: true, allowPositionals: false, options: { baseline: { type: "string" }, manifest: { type: "string" }, "state-dir": { type: "string" }, index: { type: "string" }, "incident-id": { type: "string" }, "group-readable-status": { type: "boolean", default: false } } });
   if (!values.baseline || !values.manifest || !values["state-dir"]) throw new Error("--baseline, --manifest and --state-dir required");
-  const context = loadContext({ baselinePath: values.baseline, manifestPath: values.manifest, stateDir: values["state-dir"], indexPath: values.index });
+  const context = loadContext({ baselinePath: values.baseline, manifestPath: values.manifest, stateDir: values["state-dir"], indexPath: values.index, groupReadableStatus: values["group-readable-status"] });
   if (command === "status") return heartbeatStatus(context);
   if (command === "acknowledge") return acknowledgeHold(context, values["incident-id"]);
   if (command === "once") return runMonitorOnce(context);

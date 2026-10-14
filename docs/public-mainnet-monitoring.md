@@ -27,3 +27,21 @@ failures and recovery; scoped credit notices are available in the heartbeat.
 The public browser flow executes from the participant wallet. The earlier
 founder Circle execution adapter and its fixed roster spend guard are separate;
 they do not acquire public spending authorization from a healthy heartbeat.
+
+## Separate provider and observer Unix accounts
+
+Monitor status is private to its writer by default. If a separately isolated
+provider must read the observation, explicitly pass `--group-readable-status`
+to every writer command (`once`, `loop` and `acknowledge`). This publishes only
+`heartbeat.json`, `snapshot.json` and `hold.json` with mode `0640`, atomically,
+including under a restrictive `0077` umask. Locks, the event journal and
+interrupted-publication records remain `0600`. The flag does not alter healthy
+status, latch clearing, freshness, canonical checks or provider admission.
+
+Before opting in, create the state directory with mode `0750`, owned by the
+observer and a dedicated service group. Run the observer with that primary
+group and add only the intended provider as a reader. The provider must have
+no group write permission on the directory or files. Directory traversal,
+baseline and manifest read permissions must also be configured explicitly;
+the flag does not change ownership, group membership or directory permissions.
+Keep signing keys and wallet journals outside this group and monitor directory.
