@@ -60,14 +60,16 @@ export async function runBoundedAgent(options) {
       const transport = await createCircleBoundedTestnetPurchaseTransport({ ...common, ...scope });
       const purchaseExecutor = createCircleGuardedTestnetPurchaser({ client, circle: transport, journal,
         config: { ...config, maxNetworkFee: GUARDED_TESTNET_PURCHASE_FEE_CAP } });
-      const operations = createBoundedTestnetCircleOperations({ agent, line, state, save, purchaseExecutor, readLine,
+      const makeOperations = executor => createBoundedTestnetCircleOperations({ agent, line, state, save, purchaseExecutor: executor, readLine,
         readAllowance: () => client.readContract({ address: deployment.usdc, abi: erc20Abi, functionName: 'allowance', args: [agent, deployment.address] }),
         makeRepayer: async plan => createCircleGuardedTestnetRepayer({ client, journal, config: { ...config, expectedDraw: plan.draw },
           circle: await createCircleGuardedTestnetCliTransport({ ...common, contract: deployment.address, expectedDraw: plan.draw }) }),
       });
+      const operations = makeOperations(purchaseExecutor);
+      let exclusiveOperations = null;
       const wallet = { chain: candidateFundingChain, getChainId: async () => deployment.chainId, getAddresses: async () => [agent],
-        request: async ({ method, params }) => { await flush(); must(method === 'eth_signTypedData_v4' && same(params[0], agent), 'Unsupported signing request.'); return purchaseExecutor.withSigningGuard(() => transport.signPurchase(params[1], scope)); },
-        sendTransaction: async request => { await flush(); must(same(request.account, agent) && same(request.to, deployment.address) && BigInt(request.value) === 0n, 'Unexpected guarded purchase transaction.'); return (await operations.executePurchase(request.data)).txHash; },
+        request: async ({ method, params }) => { await flush(); must(method === 'eth_signTypedData_v4' && same(params[0], agent), 'Unsupported signing request.'); must(exclusiveOperations, 'Purchase signing requires the active wallet scope.'); return transport.signPurchase(params[1], scope); },
+        sendTransaction: async request => { await flush(); must(same(request.account, agent) && same(request.to, deployment.address) && BigInt(request.value) === 0n, 'Unexpected guarded purchase transaction.'); must(exclusiveOperations, 'Purchase execution requires the active wallet scope.'); return (await exclusiveOperations.executePurchase(request.data)).txHash; },
       };
       const engine = createSelfServicePurchase({ client, wallet, storage, withLock: async (_key, work) => work(),
         fetchImpl: async (...args) => { await flush(); return fetch(...args); },
@@ -76,13 +78,15 @@ export async function runBoundedAgent(options) {
       if (command === 'repay') { const repayment = await operations.repay(); return { ...summary(await readLine()), repayment }; }
       must(command === 'purchase' && options.confirm, 'Explicit purchase confirmation is required.');
       await transport.session();
-      if (!engine.load()) {
-        await purchaseExecutor.withSigningGuard(async () => {});
-        await engine.prepare(line, `arc-wallet:${randomUUID().replaceAll('-', '')}:${getAddress(agent)}`);
-      }
-      await flush();
-      if (['submitted', 'delivered'].includes(engine.load().stage)) return { ...summary(await readLine()), next: 'A purchase is already recorded. Run recover; no second payment was sent.' };
-      await engine.submit();
+      if (['submitted', 'delivered'].includes(engine.load()?.stage)) return { ...summary(await readLine()), next: 'A purchase is already recorded. Run recover; no second payment was sent.' };
+      await purchaseExecutor.withPurchaseOperation(async executor => {
+        exclusiveOperations = makeOperations(executor);
+        try {
+          if (!engine.load()) await engine.prepare(line, `arc-wallet:${randomUUID().replaceAll('-', '')}:${getAddress(agent)}`);
+          await flush();
+          await engine.submit();
+        } finally { exclusiveOperations = null; }
+      });
       const delivery = await engine.recover();
       return { ...summary(await readLine()), paymentStatus: delivery.status, transaction: delivery.record.txHash,
         report: delivery.bytes ? new TextDecoder().decode(delivery.bytes) : undefined };

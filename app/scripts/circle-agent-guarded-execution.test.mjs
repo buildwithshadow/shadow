@@ -64,21 +64,21 @@ test('an unresolved operation on another deployment blocks purchase signing unti
   x.state.lose=true;const prior=await x.adapter.execute(repay);
   const purchase=createCircleGuardedTestnetPurchaser({...x.options,config:{...x.options.config,contract:provider,expectedLineId:digest,maxNetworkFee:'50000000000000000'}});
   let signatures=0;
-  await assert.rejects(()=>purchase.withSigningGuard(async()=>{signatures++;}),/previous Circle operation before signing/);
+  await assert.rejects(()=>purchase.withPurchaseOperation(async()=>{signatures++;}),/previous Circle operation before signing/);
   assert.equal(signatures,0);assert.equal(x.state.sends,1);
   assert.equal((await x.adapter.reconcile(prior.key)).status,'confirmed');
-  await purchase.withSigningGuard(async()=>{signatures++;});
+  await purchase.withPurchaseOperation(async()=>{signatures++;});
   assert.equal(signatures,1);assert.equal(x.state.sends,1);
 });
 test('purchase signing holds the same wallet namespace as execution and never clears orphan barriers',async()=>{
   const x=setup({config:{...config,chainId:5042002,maxNetworkFee:'50000000000000000'}},createCircleGuardedTestnetPurchaser);
   let signatures=0;
-  await x.adapter.withSigningGuard(async()=>{
+  await x.adapter.withPurchaseOperation(async()=>{
     signatures++;await assert.rejects(()=>x.options.journal.withLock('other-operation',async()=>{}));
   });
   const namespace=keccak256((await import('viem')).stringToHex(JSON.stringify({chainId:5042002,agent})));
   x.values.set(`${namespace}:active`,'orphan-original-operation');
-  await assert.rejects(()=>x.adapter.withSigningGuard(async()=>{signatures++;}),/previous Circle operation before signing/);
+  await assert.rejects(()=>x.adapter.withPurchaseOperation(async()=>{signatures++;}),/previous Circle operation before signing/);
   assert.equal(signatures,1);assert.equal(x.values.get(`${namespace}:active`),'orphan-original-operation');
 });
 test('unsettled activation prevents purchase signing without creating another authorization',async()=>{
@@ -87,22 +87,23 @@ test('unsettled activation prevents purchase signing without creating another au
   x.values.set(`${namespace}:activation`,{version:1,chainId:5042002,agent,status:'unknown'});
   x.options.client.getCode=async({address})=>address.toLowerCase()===agent.toLowerCase()?'0x':code;
   let signatures=0;
-  await assert.rejects(()=>x.adapter.withSigningGuard(async()=>{signatures++;}),/activation to finalize/);
+  await assert.rejects(()=>x.adapter.withPurchaseOperation(async()=>{signatures++;}),/activation to finalize/);
   assert.equal(signatures,0);assert.equal(x.state.sends,0);
 });
 test('independent file journals serialize signing for the same wallet across different deployments',async()=>{
   const directory=await realpath(await mkdtemp(join(tmpdir(),'shadow-circle-signing-')));
   try{
-    const first=await createCircleAgentJournal(directory),second=await createCircleAgentJournal(directory);
+    const identityDirectory=join(directory,'identities'),journalDirectory=join(directory,'journal');
+    const first=await createCircleAgentJournal(journalDirectory,{identityDirectory}),second=await createCircleAgentJournal(journalDirectory,{identityDirectory});
     const x=setup({config:{...config,chainId:5042002,maxNetworkFee:'50000000000000000'}},createCircleGuardedTestnetPurchaser);
     const a=createCircleGuardedTestnetPurchaser({...x.options,journal:first});
     const b=createCircleGuardedTestnetPurchaser({...x.options,journal:second,config:{...x.options.config,contract:provider,expectedLineId:digest}});
     let signatures=0;
-    await a.withSigningGuard(async()=>{
-      await assert.rejects(()=>b.withSigningGuard(async()=>{signatures++;}),/locked/);
+    await a.withPurchaseOperation(async()=>{
+      await assert.rejects(()=>b.withPurchaseOperation(async()=>{signatures++;}),/locked/);
     });
     assert.equal(signatures,0);
-    await b.withSigningGuard(async()=>{signatures++;});assert.equal(signatures,1);
+    await b.withPurchaseOperation(async()=>{signatures++;});assert.equal(signatures,1);
   }finally{await rm(directory,{recursive:true,force:true});}
 });
 test('pending Circle transaction ID is journaled before receipt and retained on recovery',async()=>{
@@ -371,6 +372,35 @@ function setupPurchase(configPatch = {}) {
   x.state.receipt.logs=[eventLog('ProviderPaid',{digest,lineId,provider,principal:5000n,dueAt:1000n})];
   return x;
 }
+test('purchase scope retains the wallet lock after signing and acceptance through exact execution',async()=>{
+  const x=setupPurchase();let escaped;
+  await x.adapter.withPurchaseOperation(async scope=>{
+    escaped=scope;
+    for(const stage of ['signed','provider-accepted']) {
+      const competitor=createCircleGuardedTestnetPurchaser({...x.options,config:{...x.options.config,contract:provider,expectedLineId:digest}});
+      await assert.rejects(()=>competitor.withPurchaseOperation(async()=>{throw Error(`unexpected ${stage} authorization`);}));
+    }
+    assert.equal((await scope.execute(purchaseRequest)).status,'confirmed');
+    await assert.rejects(()=>scope.execute(purchaseRequest),/already executed/);
+  });
+  assert.equal(x.state.sends,1);
+  await assert.rejects(()=>escaped.execute(purchaseRequest),/inactive/);
+  assert.equal(x.state.sends,1);
+});
+test('an unawaited scoped execution cannot outlive the wallet lock',async()=>{
+  const x=setupPurchase();let release,start;
+  const started=new Promise(resolve=>{start=resolve;});
+  const resume=new Promise(resolve=>{release=resolve;});
+  const original=x.options.circle.execute;
+  x.options.circle.execute=async request=>{start();await resume;return original(request);};
+  let completed=false;
+  const running=x.adapter.withPurchaseOperation(async scope=>{void scope.execute(purchaseRequest);})
+    .then(()=>{completed=true;});
+  await started;
+  await assert.rejects(()=>x.options.journal.withLock('other-operation',async()=>{}));
+  assert.equal(completed,false);
+  release();await running;assert.equal(completed,true);assert.equal(x.state.sends,1);
+});
 test('guarded testnet purchase recovers one exact user operation after lost confirmation',async()=>{
   const x=setupPurchase();x.state.lose=true;
   const held=await x.adapter.execute(purchaseRequest);assert.equal(held.status,'unknown');

@@ -269,69 +269,86 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       requireThat(walletCode && walletCode !== '0x', 'Wait for the previous Circle activation to finalize before another wallet operation.');
     }
   }
-  async function withSigningGuard(work) {
-    requireThat(purchaseOnly && typeof work === 'function', 'A scoped purchase signing callback is required.');
+  async function withPurchaseOperation(work) {
+    requireThat(purchaseOnly && typeof work === 'function', 'A scoped purchase callback is required.');
     return journal.withLock(namespace, async () => {
       await identity();
       requireThat(!await journal.get(activeKey), 'Reconcile the previous Circle operation before signing another purchase.');
       await requireSettledActivation();
-      return work();
+      let live = true, execution;
+      const scoped = Object.freeze({
+        operationKey: request => { requireThat(live, 'Purchase scope is no longer active.'); return requestKey(request); },
+        execute: async request => {
+          requireThat(live && !execution, 'Purchase scope is inactive or already executed.');
+          execution = executeLocked(request);
+          return execution;
+        },
+      });
+      try {
+        const result = await work(scoped);
+        if (execution) await execution;
+        return result;
+      } finally {
+        live = false;
+        if (execution) await execution.catch(() => {});
+      }
     });
   }
-  async function execute(request) {
+  async function executeLocked(request) {
     decode(request);
     const key = requestKey(request);
-    return journal.withLock(namespace, async () => {
-      await identity();
-      const existing = await journal.get(key);
-      if (existing) {
-        validateGuardedRecord(existing);
-        requireThat(existing.namespace === namespace && hash(existing.request) === existing.requestHash, 'Execution journal was altered.');
-        requireThat(same(existing.request.contractAddress, request.to) && same(existing.request.callData, request.data), 'Operation ID was reused for different calldata.');
-        if (existing.notSubmitted !== true) {
-          const result = existing.result ? await verifyReceipt(existing, existing.txHash) : { status: 'unknown' };
-          return { ...result, key, transactionId: existing.transactionId ?? null };
-        }
-        requireThat(!existing.transactionId && !existing.txHash && !existing.result, 'Contradictory pre-send journal.');
-        // A durable definite pre-send failure permits a fresh explicit attempt.
-        // Re-run all policy and fee checks, and create a new Circle idempotency key.
+    await identity();
+    const existing = await journal.get(key);
+    if (existing) {
+      validateGuardedRecord(existing);
+      requireThat(existing.namespace === namespace && hash(existing.request) === existing.requestHash, 'Execution journal was altered.');
+      requireThat(same(existing.request.contractAddress, request.to) && same(existing.request.callData, request.data), 'Operation ID was reused for different calldata.');
+      if (existing.notSubmitted !== true) {
+        const result = existing.result ? await verifyReceipt(existing, existing.txHash) : { status: 'unknown' };
+        return { ...result, key, transactionId: existing.transactionId ?? null };
       }
-      const active = await journal.get(activeKey);
-      requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
-      requireThat(!active || existing, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
-      await requireSettledActivation();
-      const expected = await prepare(request);
-      const payload = envelope(request, randomUUID());
-      const record = { version: 1, namespace, operationId: request.operationId, request: payload, requestHash: hash(payload), expected, createdAt: new Date().toISOString() };
-      try {
-        // Estimate is read only. Preserve definite pre-send failures with the
-        // exact original request so runner recovery never relies on absence.
-        const estimate = await circle.estimate(payload);
-        requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
-        requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, `Estimated fee exceeds execution budget. Quote: ${estimate.networkFee} USDC; cap: ${formatUnits(feeCap, 18)} USDC.`);
-        // Refresh policy after the remote estimate. No spend request if conditions changed.
-        await prepare(request);
-      } catch (error) {
+      requireThat(!existing.transactionId && !existing.txHash && !existing.result, 'Contradictory pre-send journal.');
+      // A durable definite pre-send failure permits a fresh explicit attempt.
+      // Re-run all policy and fee checks, and create a new Circle idempotency key.
+    }
+    const active = await journal.get(activeKey);
+    requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
+    requireThat(!active || existing, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
+    await requireSettledActivation();
+    const expected = await prepare(request);
+    const payload = envelope(request, randomUUID());
+    const record = { version: 1, namespace, operationId: request.operationId, request: payload, requestHash: hash(payload), expected, createdAt: new Date().toISOString() };
+    try {
+      // Estimate is read only. Preserve definite pre-send failures with the
+      // exact original request so runner recovery never relies on absence.
+      const estimate = await circle.estimate(payload);
+      requireThat(typeof estimate.networkFee === 'string' && /^\d+(\.\d{1,18})?$/.test(estimate.networkFee), 'Invalid Circle fee estimate.');
+      requireThat(parseUnits(estimate.networkFee, 18) <= feeCap, `Estimated fee exceeds execution budget. Quote: ${estimate.networkFee} USDC; cap: ${formatUnits(feeCap, 18)} USDC.`);
+      // Refresh policy after the remote estimate. No spend request if conditions changed.
+      await prepare(request);
+    } catch (error) {
+      record.notSubmitted = true;
+      await journal.put(key, record);
+      throw error;
+    }
+    // Save the barrier first. A crash between these two writes fails closed.
+    await journal.put(activeKey, key);
+    await journal.put(key, record); // A crash/timeout from here never permits automatic resubmission.
+    let response;
+    try { response = await circle.execute(payload); }
+    catch (error) {
+      if (error?.beforeSubmission === true) {
         record.notSubmitted = true;
         await journal.put(key, record);
-        throw error;
+        if (await journal.get(activeKey) === key) await journal.put(activeKey, null);
+        return { status: 'not-submitted', key };
       }
-      // Save the barrier first. A crash between these two writes fails closed.
-      await journal.put(activeKey, key);
-      await journal.put(key, record); // A crash/timeout from here never permits automatic resubmission.
-      let response;
-      try { response = await circle.execute(payload); }
-      catch (error) {
-        if (error?.beforeSubmission === true) {
-          record.notSubmitted = true;
-          await journal.put(key, record);
-          if (await journal.get(activeKey) === key) await journal.put(activeKey, null);
-          return { status: 'not-submitted', key };
-        }
-        return { status: 'unknown', key, transactionId: null };
-      }
-      return observe(key, record, response);
-    });
+      return { status: 'unknown', key, transactionId: null };
+    }
+    return observe(key, record, response);
+  }
+  async function execute(request) {
+    return journal.withLock(namespace, () => executeLocked(request));
   }
   async function reconcile(key) {
     return journal.withLock(namespace, async () => {
@@ -365,5 +382,5 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       return observe(key, record, response);
     });
   }
-  return { execute, reconcile, operationKey: requestKey, withSigningGuard };
+  return { execute, reconcile, operationKey: requestKey, withPurchaseOperation };
 }
