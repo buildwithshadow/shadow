@@ -25,3 +25,9 @@ Expiry closure evidence records `expiryCaller` separately from the sponsor recip
 The provider can explicitly select `PROVIDER_ADMISSION_MODE=testnet-monitor` for a bounded deployment on Arc testnet (5042002). This requires a fixed schema 1 monitor baseline, a version-specific manifest with kind `shadow-public-bounded-testnet-release`, contract name `ShadowFloatMainnetPublicBounded`, public registration, repayment binding version 2 and the original seven-day lifetime bound. Pin the exact participants, lines, limits and pause state in that baseline before enabling acceptance.
 
 The provider still requires a fresh healthy heartbeat, no unresolved hold, a canonical observation block and the exact deployed runtime. Changed files or monitor observations fail closed. Existing paid-result recovery is independent of new-payment admission. This mode cannot satisfy the public mainnet monitor policy or select unmonitored signing by fallback.
+
+## Circle testnet runner
+
+`app/scripts/shadow-circle-bounded-testnet.mjs` is a separate runner for the deployment pinned in `app/boundedTestnetDeployment.mjs`. It retains the existing wallet journal and verified Circle runtime. `doctor`, `inspect` and `recover` send no transactions. Only `purchase --confirm` and `repay --confirm` can sign or send, for exactly 0.005 test USDC on the reviewed line. Repayment remains tied to the original draw, and an uncertain request must be reconciled before another operation.
+
+Use the original `--state` directory and the isolated approved `--runtime` installation. Do not delete state or create a replacement journal to clear an unresolved request. The sponsor registers and funds the line separately. The provider must have a healthy, explicitly approved bounded testnet monitor phase before accepting a new purchase. This runner does not update the public website, mainnet controls or older contract runners.
