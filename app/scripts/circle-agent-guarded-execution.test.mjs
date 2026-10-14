@@ -59,6 +59,52 @@ test('lost Circle response survives adapter recreation and recovers without rese
   await assert.rejects(()=>resumed.execute({...repay,operationId:'repay:other'}),/previous Circle operation/);
   assert.equal((await resumed.reconcile(first.key)).status,'confirmed');assert.equal(state.sends,1);
 });
+test('an unresolved operation on another deployment blocks purchase signing until its own adapter reconciles it',async()=>{
+  const x=setup({config:{...config,chainId:5042002,maxNetworkFee:'30000000000000000'}},createCircleGuardedTestnetRepayer);
+  x.state.lose=true;const prior=await x.adapter.execute(repay);
+  const purchase=createCircleGuardedTestnetPurchaser({...x.options,config:{...x.options.config,contract:provider,expectedLineId:digest,maxNetworkFee:'50000000000000000'}});
+  let signatures=0;
+  await assert.rejects(()=>purchase.withSigningGuard(async()=>{signatures++;}),/previous Circle operation before signing/);
+  assert.equal(signatures,0);assert.equal(x.state.sends,1);
+  assert.equal((await x.adapter.reconcile(prior.key)).status,'confirmed');
+  await purchase.withSigningGuard(async()=>{signatures++;});
+  assert.equal(signatures,1);assert.equal(x.state.sends,1);
+});
+test('purchase signing holds the same wallet namespace as execution and never clears orphan barriers',async()=>{
+  const x=setup({config:{...config,chainId:5042002,maxNetworkFee:'50000000000000000'}},createCircleGuardedTestnetPurchaser);
+  let signatures=0;
+  await x.adapter.withSigningGuard(async()=>{
+    signatures++;await assert.rejects(()=>x.options.journal.withLock('other-operation',async()=>{}));
+  });
+  const namespace=keccak256((await import('viem')).stringToHex(JSON.stringify({chainId:5042002,agent})));
+  x.values.set(`${namespace}:active`,'orphan-original-operation');
+  await assert.rejects(()=>x.adapter.withSigningGuard(async()=>{signatures++;}),/previous Circle operation before signing/);
+  assert.equal(signatures,1);assert.equal(x.values.get(`${namespace}:active`),'orphan-original-operation');
+});
+test('unsettled activation prevents purchase signing without creating another authorization',async()=>{
+  const x=setup({config:{...config,chainId:5042002,maxNetworkFee:'50000000000000000'}},createCircleGuardedTestnetPurchaser);
+  const namespace=keccak256((await import('viem')).stringToHex(JSON.stringify({chainId:5042002,agent})));
+  x.values.set(`${namespace}:activation`,{version:1,chainId:5042002,agent,status:'unknown'});
+  x.options.client.getCode=async({address})=>address.toLowerCase()===agent.toLowerCase()?'0x':code;
+  let signatures=0;
+  await assert.rejects(()=>x.adapter.withSigningGuard(async()=>{signatures++;}),/activation to finalize/);
+  assert.equal(signatures,0);assert.equal(x.state.sends,0);
+});
+test('independent file journals serialize signing for the same wallet across different deployments',async()=>{
+  const directory=await realpath(await mkdtemp(join(tmpdir(),'shadow-circle-signing-')));
+  try{
+    const first=await createCircleAgentJournal(directory),second=await createCircleAgentJournal(directory);
+    const x=setup({config:{...config,chainId:5042002,maxNetworkFee:'50000000000000000'}},createCircleGuardedTestnetPurchaser);
+    const a=createCircleGuardedTestnetPurchaser({...x.options,journal:first});
+    const b=createCircleGuardedTestnetPurchaser({...x.options,journal:second,config:{...x.options.config,contract:provider,expectedLineId:digest}});
+    let signatures=0;
+    await a.withSigningGuard(async()=>{
+      await assert.rejects(()=>b.withSigningGuard(async()=>{signatures++;}),/locked/);
+    });
+    assert.equal(signatures,0);
+    await b.withSigningGuard(async()=>{signatures++;});assert.equal(signatures,1);
+  }finally{await rm(directory,{recursive:true,force:true});}
+});
 test('pending Circle transaction ID is journaled before receipt and retained on recovery',async()=>{
   const {adapter,state}=setup();state.pending=true;
   const first=await adapter.execute(repay);assert.equal(first.status,'unknown');assert.equal(first.transactionId,'circle-tx-1');

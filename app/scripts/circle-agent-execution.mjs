@@ -259,6 +259,25 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     requireThat(typeof request.operationId === 'string' && /^[a-zA-Z0-9:_-]{1,128}$/.test(request.operationId), 'A stable logical operation ID is required.');
     return hash({ namespace, operationId: request.operationId });
   };
+  async function requireSettledActivation() {
+    const activation = await journal.get(`${namespace}:activation`);
+    if (!activation) return;
+    requireThat(activation.version === 1 && activation.chainId === CHAIN && activation.agent === agent
+      && ['unknown', 'not-submitted'].includes(activation.status), 'Activation journal identity or status mismatch.');
+    if (activation.status === 'unknown') {
+      const walletCode = await client.getCode({ address: agent, blockTag: 'finalized' });
+      requireThat(walletCode && walletCode !== '0x', 'Wait for the previous Circle activation to finalize before another wallet operation.');
+    }
+  }
+  async function withSigningGuard(work) {
+    requireThat(purchaseOnly && typeof work === 'function', 'A scoped purchase signing callback is required.');
+    return journal.withLock(namespace, async () => {
+      await identity();
+      requireThat(!await journal.get(activeKey), 'Reconcile the previous Circle operation before signing another purchase.');
+      await requireSettledActivation();
+      return work();
+    });
+  }
   async function execute(request) {
     decode(request);
     const key = requestKey(request);
@@ -280,15 +299,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const active = await journal.get(activeKey);
       requireThat(!active || active === key, 'Reconcile the previous Circle operation first.');
       requireThat(!active || existing, 'Execution barrier exists without its record. Inspect the journal; do not resend.');
-      const activation = await journal.get(`${namespace}:activation`);
-      if (activation) {
-        requireThat(activation.version === 1 && activation.chainId === CHAIN && activation.agent === agent
-          && ['unknown', 'not-submitted'].includes(activation.status), 'Activation journal identity or status mismatch.');
-        if (activation.status === 'unknown') {
-          const walletCode = await client.getCode({ address: agent, blockTag: 'finalized' });
-          requireThat(walletCode && walletCode !== '0x', 'Wait for the previous Circle activation to finalize before another wallet operation.');
-        }
-      }
+      await requireSettledActivation();
       const expected = await prepare(request);
       const payload = envelope(request, randomUUID());
       const record = { version: 1, namespace, operationId: request.operationId, request: payload, requestHash: hash(payload), expected, createdAt: new Date().toISOString() };
@@ -354,5 +365,5 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       return observe(key, record, response);
     });
   }
-  return { execute, reconcile, operationKey: requestKey };
+  return { execute, reconcile, operationKey: requestKey, withSigningGuard };
 }

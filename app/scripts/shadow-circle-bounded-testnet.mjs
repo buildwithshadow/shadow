@@ -66,7 +66,7 @@ export async function runBoundedAgent(options) {
           circle: await createCircleGuardedTestnetCliTransport({ ...common, contract: deployment.address, expectedDraw: plan.draw }) }),
       });
       const wallet = { chain: candidateFundingChain, getChainId: async () => deployment.chainId, getAddresses: async () => [agent],
-        request: async ({ method, params }) => { await flush(); must(method === 'eth_signTypedData_v4' && same(params[0], agent), 'Unsupported signing request.'); return transport.signPurchase(params[1], scope); },
+        request: async ({ method, params }) => { await flush(); must(method === 'eth_signTypedData_v4' && same(params[0], agent), 'Unsupported signing request.'); return purchaseExecutor.withSigningGuard(() => transport.signPurchase(params[1], scope)); },
         sendTransaction: async request => { await flush(); must(same(request.account, agent) && same(request.to, deployment.address) && BigInt(request.value) === 0n, 'Unexpected guarded purchase transaction.'); return (await operations.executePurchase(request.data)).txHash; },
       };
       const engine = createSelfServicePurchase({ client, wallet, storage, withLock: async (_key, work) => work(),
@@ -76,7 +76,10 @@ export async function runBoundedAgent(options) {
       if (command === 'repay') { const repayment = await operations.repay(); return { ...summary(await readLine()), repayment }; }
       must(command === 'purchase' && options.confirm, 'Explicit purchase confirmation is required.');
       await transport.session();
-      if (!engine.load()) await engine.prepare(line, `arc-wallet:${randomUUID().replaceAll('-', '')}:${getAddress(agent)}`);
+      if (!engine.load()) {
+        await purchaseExecutor.withSigningGuard(async () => {});
+        await engine.prepare(line, `arc-wallet:${randomUUID().replaceAll('-', '')}:${getAddress(agent)}`);
+      }
       await flush();
       if (['submitted', 'delivered'].includes(engine.load().stage)) return { ...summary(await readLine()), next: 'A purchase is already recorded. Run recover; no second payment was sent.' };
       await engine.submit();
