@@ -5,9 +5,11 @@ import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {createPublicClient,createWalletClient,decodeFunctionData,defineChain,http,keccak256,stringToHex,erc20Abi} from 'viem';
 import {account,startAnvil,runTool,e2eSkip} from './float-mainnet-e2e.mjs';
+import {assembleBundle,evidenceMarkdown} from './float-mainnet-evidence.mjs';
+import {expiryClosureProblems} from './float-mainnet-verify.mjs';
 import {eip712Domain,SPEND_INTENT_TYPES} from './float-mainnet-config.mjs';
 
-test('repayment CLI binds to a draw and refuses stale or implicit generic consent', {skip:e2eSkip,timeout:60000}, async t=> {
+for (const contractName of ['ShadowFloatMainnetGuarded','ShadowFloatMainnetPublicBounded']) test(`${contractName}: repayment CLI binds to a draw and refuses stale or implicit generic consent`, {skip:e2eSkip,timeout:60000}, async t=> {
  const node=await startAnvil(19781);t.after(()=>node.stop());
  const chain=defineChain({id:5042002,name:'isolated local',nativeCurrency:{name:'test',symbol:'test',decimals:18},rpcUrls:{default:{http:[node.rpc]}}});
  const c=createPublicClient({chain,transport:http(node.rpc,{retryCount:0})});
@@ -18,12 +20,12 @@ test('repayment CLI binds to a draw and refuses stale or implicit generic consen
  async function write(who,address,abi,functionName,args){const hash=await wallet(who).writeContract({address,abi,functionName,args});assert.equal((await c.waitForTransactionReceipt({hash})).status,'success');}
  const usdc=await deploy('MockAsset',['test USDC','USDC',6]);
  const limits={protocolReserve:5000000n,lineReserve:1000000n,lineSpend:2000000n,perSpend:500000n,dailySpend:1000000n};
- const target=await deploy('ShadowFloatMainnetGuarded',[usdc,5042002n,limits,limits,3600n,86400n,172800n]);
+ const target=await deploy(contractName,[usdc,5042002n,limits,limits,3600n,86400n,172800n]);
  const deployBlock=await c.getBlockNumber({cacheTime:0});
  const evidenceDir=mkdtempSync(join(tmpdir(),'guarded-monitor-'));t.after(()=>rmSync(evidenceDir,{recursive:true,force:true}));
  const manifest=join(evidenceDir,'manifest.json');
  writeFileSync(manifest,JSON.stringify({ok:true,chainId:'5042002',contract:{address:target},deployment:{blockNumber:deployBlock.toString()},bytecode:{onchainRuntimeKeccak256:keccak256(await c.getCode({address:target}))}}));
- const abi=artifact('ShadowFloatMainnetGuarded').abi;
+ const abi=artifact(contractName).abi;
  const read=(functionName,args=[])=>c.readContract({address:target,abi,functionName,args});
  for(const who of [sponsor,agent]){await write(owner,usdc,artifact('MockAsset').abi,'mint',[who.address,1000000n]);await write(who,usdc,erc20Abi,'approve',[target,100000n]);}
  for(const flag of ['setOpeningsPaused','setSpendsPaused'])await write(owner,target,abi,flag,[false]);
@@ -56,4 +58,37 @@ test('repayment CLI binds to a draw and refuses stale or implicit generic consen
  await draw(2n);
  const stale=await runTool('repay',[...flags,'--expected-draw',first],env);assert.notEqual(stale.status,0);assert.match(JSON.stringify(stale.json),/not the current draw/);
  assert.equal((await read('getLine',[id])).principalOutstanding,50000n);
+ if (contractName === 'ShadowFloatMainnetPublicBounded') {
+   const draw = await read('currentDrawDigest',[id]);
+   await write(agent,target,abi,'repayForDraw',[id,draw,50000n]);
+   const expiry=(await read('getLine',[id])).expiry;
+   await c.request({method:'evm_setNextBlockTimestamp',params:[Number(expiry+1n)]});
+   await c.request({method:'evm_mine',params:[]});
+   await write(owner,target,abi,'closeExpiredLine',[id]);
+   const expiredSnapshot=await runTool('monitor',['snapshot','--manifest',manifest],env);
+   assert.equal(expiredSnapshot.status,0,JSON.stringify(expiredSnapshot.json));
+   assert.equal(expiredSnapshot.json.lines.find(line=>line.lineId===id).state,'CLOSED');
+   assert.equal(expiredSnapshot.json.contract.totalCommittedCapital,'0');
+   assert.equal(expiredSnapshot.json.contract.totalSponsorObligations,'0');
+   assert(expiredSnapshot.json.accounting.checks.every(check=>check.status==='PASS'));
+   const expiredIndexed=await runTool('indexer',['index','--manifest',manifest,'--out',indexPath],env);
+   assert.equal(expiredIndexed.status,0,JSON.stringify(expiredIndexed.json));
+   const exits=JSON.parse(readFileSync(indexPath)).events.filter(event=>['LineClosed','ExpiredLineClosed'].includes(event.event));
+   assert.deepEqual(exits.map(event=>event.event),['LineClosed','ExpiredLineClosed']);
+   assert.equal(exits[0].args.amount,'100000');
+   assert.equal(exits[1].args.amount,'100000');
+   assert.equal(exits[1].args.caller,owner.address);
+   assert.equal(exits[1].args.sponsor,sponsor.address);
+   assert.equal(exits[0].transactionHash,exits[1].transactionHash);
+   const recorded=JSON.parse(readFileSync(indexPath)).events;
+   const observed=await c.getBlock();
+   const {bundle}=assembleBundle({deployment:{chainId:'5042002',address:target,deployBlock:deployBlock.toString(),runtimeKeccak256:keccak256(await c.getCode({address:target})),sourceCommit:'0'.repeat(40)},observedAt:{blockNumber:observed.number.toString(),blockHash:observed.hash},lineId:id,events:recorded});
+   assert.equal(bundle.exit.expiryCaller,owner.address);
+   assert.match(evidenceMarkdown(bundle,recorded),new RegExp(`expired line closed by ${owner.address}`));
+   const canonical=exits.map(event=>({...event,eventName:event.event}));
+   assert.deepEqual(expiryClosureProblems(bundle.exit,bundle.line,canonical),[]);
+   assert.match(expiryClosureProblems({...bundle.exit,expiryCaller:sponsor.address},bundle.line,canonical).join(' '),/caller differs/);
+
+ }
+
 });

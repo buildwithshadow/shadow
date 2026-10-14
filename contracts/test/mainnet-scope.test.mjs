@@ -5,7 +5,12 @@ import { fileURLToPath } from "node:url";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const contractsRoot = resolve(here, "..");
-for (const contractName of process.argv.includes("--guarded") ? ["ShadowFloatMainnet", "ShadowFloatMainnetGuarded"] : ["ShadowFloatMainnet"]) {
+const contractNames = process.argv.includes("--public-bounded")
+  ? ["ShadowFloatMainnetPublicBounded"]
+  : process.argv.includes("--guarded")
+    ? ["ShadowFloatMainnet", "ShadowFloatMainnetGuarded"]
+    : ["ShadowFloatMainnet"];
+for (const contractName of contractNames) {
 const artifactPath = resolve(
   contractsRoot,
   `out/${contractName}.sol/${contractName}.json`,
@@ -56,7 +61,7 @@ console.log(
   `${contractName} scope gate PASS: ${runtimeBytes} runtime bytes, ${exposedNames.length} ABI/event names`,
 );
 
-if (contractName === "ShadowFloatMainnetGuarded") {
+if (contractName === "ShadowFloatMainnetGuarded" || contractName === "ShadowFloatMainnetPublicBounded") {
   assert.ok(!exposedNames.includes("repay"), "unguarded repayment selector exists");
   assert.ok(exposedNames.includes("repayfordraw"), "guarded repayment missing");
 }

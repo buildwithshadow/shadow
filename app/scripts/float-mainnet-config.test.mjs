@@ -42,6 +42,14 @@ test("canonical log decoding covers the compiled guarded events without changing
   assert.throws(() => decodeEventLog({ abi: floatEventAbi, topics: ["0x" + "ff".repeat(32)], data: "0x" }), /not found on ABI/);
 });
 
+test("bounded expiry events are known without relaxing unknown event rejection", () => {
+  const bounded = JSON.parse(readFileSync(new URL("../../contracts/out/ShadowFloatMainnetPublicBounded.sol/ShadowFloatMainnetPublicBounded.json", import.meta.url))).abi;
+  const shape = event => ({ name: event.name, anonymous: Boolean(event.anonymous), inputs: event.inputs.map(({name,type,indexed}) => ({name,type,indexed:Boolean(indexed)})) });
+  for (const event of bounded.filter(item => item.type === "event")) assert.deepEqual(shape(floatEventAbi.find(item => item.name === event.name)), shape(event));
+  assert.equal(floatEventAbi.filter(item => item.name === "ExpiredLineClosed").length, 1);
+  assert.throws(() => decodeEventLog({abi:floatEventAbi,topics:["0x" + "ff".repeat(32)],data:"0x"}), /not found on ABI/);
+});
+
 test("the EIP-712 SpendIntent type string is the contract's typehash preimage", () => {
   const preimage = source.match(/SPEND_INTENT_TYPEHASH = keccak256\(\s*"([^"]+)"/)[1];
   assert.equal(SPEND_INTENT_TYPE_STRING, preimage);

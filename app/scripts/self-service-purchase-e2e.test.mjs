@@ -20,10 +20,11 @@ import { createProviderServer } from "../../examples/float-mainnet-provider-serv
 import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
 import { recoverOriginalPurchase } from '../src/purchaseRecovery.mjs';
 
-for (const mainnet of [false,true]) for (const fault of ["wallet-response", "delivery-response", "prepared-marker", "unprepared-marker", "readiness-hold"]) test(
-  `new ${mainnet?"guarded mainnet":"testnet"} sponsor: ${fault} after payment retains exact recovery behavior`,
+for (const variant of ["testnet", "guarded", "public-bounded"]) for (const fault of ["wallet-response", "delivery-response", "prepared-marker", "unprepared-marker", "readiness-hold"]) test(
+  `new ${variant} sponsor: ${fault} after payment retains exact recovery behavior`,
   { skip: e2eSkip, timeout: 120000 },
   async (t) => {
+    const mainnet = variant !== "testnet", bounded = variant === "public-bounded";
     const chainId=mainnet?5042:5042002,price=mainnet?5000n:50000n;
     const anvil = await startAnvil(18731,[],BigInt(chainId));
     const dir = mkdtempSync(join(tmpdir(), "shadow-public-"));
@@ -56,7 +57,7 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
           "utf8",
         ),
       );
-    const compiled = artifact(mainnet?"ShadowFloatMainnetGuarded":"ShadowFloatPublicTestnet"),
+    const compiled = artifact(bounded?"ShadowFloatMainnetPublicBounded":mainnet?"ShadowFloatMainnetGuarded":"ShadowFloatPublicTestnet"),
       tokenArtifact = artifact("MockAsset");
     const mine = async (hash) => {
       const r = await client.waitForTransactionReceipt({ hash });
@@ -107,9 +108,10 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     ]);
     // No owner allowlisting or API enrollment step.
     if(mainnet){
-      await write(owner,contract,compiled.abi,'setSponsorAllowed',[sponsor.address,true]);
       await write(owner,contract,compiled.abi,'setOpeningsPaused',[false]);
       await write(owner,contract,compiled.abi,'setSpendsPaused',[false]);
+      if (bounded) await write(sponsor,contract,compiled.abi,'registerSponsor');
+      else await write(owner,contract,compiled.abi,'setSponsorAllowed',[sponsor.address,true]);
     }else await write(sponsor, contract, compiled.abi, "registerSponsor");
     await write(sponsor, token, erc20Abi, "approve", [contract, 100000n]);
     const now = (await client.getBlock()).timestamp,
@@ -282,7 +284,13 @@ for (const mainnet of [false,true]) for (const fault of ["wallet-response", "del
     await write(agent, token, erc20Abi, "approve", [contract, price]);
     if(mainnet){const draw=await read('currentDrawDigest',[lineId]);await write(agent,contract,compiled.abi,'repayForDraw',[lineId,draw,price]);}
     else await write(agent,contract,compiled.abi,'repay',[lineId,price]);
-    await write(sponsor, contract, compiled.abi, "closeLine", [lineId]);
+    if (bounded) {
+      const expiry = (await read("lines", [lineId])).expiry;
+      await client.request({method:"evm_setNextBlockTimestamp", params:[Number(expiry + 1n)]});
+      await client.request({method:"evm_mine", params:[]});
+      // A caller other than the sponsor releases only the sponsor's reserve.
+      await write(owner, contract, compiled.abi, "closeExpiredLine", [lineId]);
+    } else await write(sponsor, contract, compiled.abi, "closeLine", [lineId]);
     assert.equal(
       await client.readContract({
         address: token,

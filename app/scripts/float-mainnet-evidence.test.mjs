@@ -233,6 +233,21 @@ describe("evidence assembly from indexed events and participant files", () => {
     );
   });
 
+  test("permissionless expiry closure preserves the caller and distinguishes the sponsor recipient", () => {
+    const ev = timeline();
+    const close = ev("LineClosed", {lineId:LINE,sponsor:sponsor.address,amount:"1000000"}, otherAgent.address);
+    const expiry = {...close,event:"ExpiredLineClosed",logIndex:1,args:{lineId:LINE,caller:otherAgent.address,sponsor:sponsor.address,amount:"1000000"}};
+    const initial = opened(timeline());
+    initial.blockNumber = "99";
+    const result = assemble([initial,close,expiry]);
+    assert.equal(result.bundle.exit.expiryCaller,otherAgent.address);
+    const markdown=evidenceMarkdown(result.bundle,[initial,close,expiry]);
+    assert.match(markdown,new RegExp(`expired line closed by ${otherAgent.address}`));
+    assert.doesNotMatch(markdown,/sponsor closed the line/);
+    assert.throws(()=>assemble([initial,close,expiry,expiry]),/unique preceding LineClosed/);
+    assert.throws(()=>assemble([initial,close,{...expiry,args:{...expiry.args,amount:"999999"}}]),/matching|match/);
+  });
+
   test("a closed line exits with close; a line with several defaulted claims is refused, since schema 1 records one exit", () => {
     let ev = timeline();
     const closedEvents = [opened(ev), providerPaid(ev, hash("a")), repaid(ev, "1000000", "0"), ev("LineClosed", { lineId: LINE, sponsor: sponsor.address, amount: "1000000" }, sponsor.address)];

@@ -26,11 +26,14 @@ import { arcRpcUrlForChain } from "../arcTestnetNetwork.mjs";
 // Guarded repayment emits this companion event alongside Repaid. Keep the
 // legacy callable ABI intact while allowing canonical monitor/indexer scans
 // to decode the guarded log. It is evidence of draw attribution, not another
-// repayment to add to accounting totals. Unknown event signatures still fail.
+// repayment to add to accounting totals. ExpiredLineClosed attributes the
+// existing LineClosed reserve return; it is not a second transfer. Unknown
+// event signatures still fail.
 export const floatAbi = JSON.parse(readFileSync(new URL("./float-mainnet-abi.json", import.meta.url), "utf8"));
 export const floatEventAbi = [
   ...floatAbi.filter(item => item.type === "event"),
   parseAbiItem("event DrawRepaid(bytes32 indexed lineId, bytes32 indexed drawDigest, address indexed payer, uint256 amount, uint256 principalRemaining)"),
+  parseAbiItem("event ExpiredLineClosed(bytes32 indexed lineId, address indexed caller, address indexed sponsor, uint256 amount)"),
 ];
 
 export const DOMAIN_NAME = "ShadowFloatMainnet";
