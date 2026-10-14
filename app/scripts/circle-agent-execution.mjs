@@ -278,9 +278,12 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       let live = true, execution;
       const scoped = Object.freeze({
         operationKey: request => { requireThat(live, 'Purchase scope is no longer active.'); return requestKey(request); },
-        execute: async request => {
+        execute: request => {
           requireThat(live && !execution, 'Purchase scope is inactive or already executed.');
           execution = executeLocked(request);
+          // Attach immediately: the callback may do more work before the guard
+          // awaits this same promise. Its error is still propagated below.
+          void execution.catch(() => {});
           return execution;
         },
       });

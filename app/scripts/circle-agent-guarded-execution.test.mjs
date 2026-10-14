@@ -381,10 +381,10 @@ test('purchase scope retains the wallet lock after signing and acceptance throug
       await assert.rejects(()=>competitor.withPurchaseOperation(async()=>{throw Error(`unexpected ${stage} authorization`);}));
     }
     assert.equal((await scope.execute(purchaseRequest)).status,'confirmed');
-    await assert.rejects(()=>scope.execute(purchaseRequest),/already executed/);
+    assert.throws(()=>scope.execute(purchaseRequest),/already executed/);
   });
   assert.equal(x.state.sends,1);
-  await assert.rejects(()=>escaped.execute(purchaseRequest),/inactive/);
+  assert.throws(()=>escaped.execute(purchaseRequest),/inactive/);
   assert.equal(x.state.sends,1);
 });
 test('an unawaited scoped execution cannot outlive the wallet lock',async()=>{
@@ -400,6 +400,15 @@ test('an unawaited scoped execution cannot outlive the wallet lock',async()=>{
   await assert.rejects(()=>x.options.journal.withLock('other-operation',async()=>{}));
   assert.equal(completed,false);
   release();await running;assert.equal(completed,true);assert.equal(x.state.sends,1);
+});
+test('an unawaited scoped failure is handled immediately and propagated after the callback',async()=>{
+  const x=setupPurchase();x.state.fee='0.051';
+  await assert.rejects(()=>x.adapter.withPurchaseOperation(async scope=>{
+    void scope.execute(purchaseRequest);
+    await new Promise(resolve=>setTimeout(resolve,20));
+  }),/fee exceeds execution budget/);
+  assert.equal(x.state.sends,0);
+  await x.options.journal.withLock('later-operation',async()=>{});
 });
 test('guarded testnet purchase recovers one exact user operation after lost confirmation',async()=>{
   const x=setupPurchase();x.state.lose=true;
