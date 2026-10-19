@@ -11,7 +11,16 @@ export function maintenanceReport({ baseline, events, nowMs = Date.now() }) {
   const baselineHash = digestJson(b);
   if (!Number.isSafeInteger(nowMs) || nowMs < 0 || !Array.isArray(events) || events.length > 200)
     throw new Error('Invalid clock or bounded event journal');
-  const rows = events.filter(e => e?.baselineHash === baselineHash).slice(-20);
+  const rows = events.filter(e => {
+    if (e?.baselineHash !== baselineHash) return false;
+    // The runner also journals hold acknowledgements. They are not scans and
+    // must not consume the twenty-cycle window or erase earlier failures.
+    if (Object.keys(e).sort().join(',') === 'acknowledgedAt,baselineHash,incidentId' &&
+        typeof e.acknowledgedAt === 'string' && Number.isFinite(Date.parse(e.acknowledgedAt)) &&
+        Date.parse(e.acknowledgedAt) <= nowMs && typeof e.incidentId === 'string' &&
+        /^[0-9a-f-]{36}$/.test(e.incidentId)) return false;
+    return true; // Unknown or malformed matching records fail validation below.
+  }).slice(-20);
   const seen = new Set();
   let previous = -1;
   const durations = [];

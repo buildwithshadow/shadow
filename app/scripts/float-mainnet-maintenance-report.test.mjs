@@ -61,6 +61,17 @@ test('rejects malformed or oversized journals and invalid clocks', () => {
   assert.throws(()=>report({})); assert.throws(()=>report(Array(201).fill(row(3))));
   assert.throws(()=>maintenanceReport({baseline,events:[],nowMs:NaN}));
 });
+test('hold acknowledgements do not count as cycles or hide recent failures', () => {
+  const acknowledgement = { baselineHash:digestJson(baseline), acknowledgedAt:new Date(nowMs).toISOString(),
+    incidentId:'12345678-1234-4234-8234-123456789abc' };
+  const events=[{...row(1),ok:false,hold:true},row(2),row(3),acknowledgement];
+  const r=report(events);
+  assert.equal(r.samples,3); assert.equal(r.timingSamples,3);
+  assert.equal(r.failedCycles,1); assert.equal(r.status,'investigate');
+  assert.equal(report([row(1),row(2),row(3),acknowledgement]).status,'no-pressure-observed');
+  assert.equal(report([acknowledgement]).status,'investigate');
+  assert.throws(()=>report([{...acknowledgement,runId:'malformed'}]));
+});
 
 test('accepts a fixed testnet baseline without applying public mainnet admission', () => {
   const {publicAdmission,...fixed}=baseline;
