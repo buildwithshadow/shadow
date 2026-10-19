@@ -430,3 +430,23 @@ test("monitor scan batching is optional and never inherits an unsafe range", () 
   assert.equal(Object.hasOwn(monitorReadEnvironment("http://localhost","5042002",{}),"SHADOW_RPC_LOG_CHUNK_BLOCKS"),false);
   for(const size of ['','4999','10001','1e4'])assert.throws(()=>monitorReadEnvironment("http://localhost","5042002",{SHADOW_RPC_LOG_CHUNK_BLOCKS:size}),/between 5000 and 10000/);
 });
+
+
+test("journal preserves measured start and end for successful and failed cycles", async () => {
+  const f = stateFixture();
+  try {
+    let clock = NOW;
+    await runMonitorOnce(f.context, { now: () => clock, collect: async () => {
+      clock += 4000; return f.snapshot;
+    } });
+    let rows = JSON.parse(readFileSync(join(f.context.stateDir, 'events.json'), 'utf8'));
+    assert.equal(Date.parse(rows[0].completedAt) - Date.parse(rows[0].startedAt), 4000);
+    clock = NOW + 5000;
+    await runMonitorOnce(f.context, { now: () => clock, collect: async () => {
+      clock += 1000; throw new Error('RPC unavailable');
+    } });
+    rows = JSON.parse(readFileSync(join(f.context.stateDir, 'events.json'), 'utf8'));
+    assert.equal(rows[1].ok, false);
+    assert.equal(Date.parse(rows[1].completedAt) - Date.parse(rows[1].startedAt), 1000);
+  } finally { f.cleanup(); }
+});

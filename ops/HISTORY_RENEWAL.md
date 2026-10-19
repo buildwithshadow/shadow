@@ -4,6 +4,17 @@ An approved immutable history prefix keeps canonical suffix scans within the mon
 
 Check scan duration and prefix age during routine operations. Prepare renewal before scans approach the configured deadline. Keep the existing deadline, full deployment range, execution audit and fail closed behavior unchanged.
 
+The runner now records start time in its existing bounded event journal. Inspect the last twenty cycles for the selected baseline with:
+
+```sh
+node app/scripts/float-mainnet-maintenance-report.mjs \
+  --baseline /protected/baseline.json --events /monitor-state/events.json
+```
+
+This offline advisory recommends maintenance when any observed cycle consumes at least 75 percent of the approved timeout. Failed or held cycles and stale journals require investigation. Older records without start times are not fabricated into timing samples; at least three timed cycles are needed before reporting no observed pressure. Exit 0 means no pressure observed, 2 means attention or more evidence is needed, and 1 means invalid input or command failure. It neither measures current service health nor predicts when history growth will cause failure. RPC latency and other checks can also cause slow scans.
+
+The report does not send notifications, change admission, approve history, or clear a hold. Keep scheduled advisory reporting separate from the payment gate. After deploying the runner update, wait for three completed cycles before using its timing output. A single healthy cycle does not establish sustainable capacity.
+
 1. Produce two complete captures with `app/scripts/float-mainnet-history-capture.mjs`, using separately operated RPC backends and distinct output files. Preserve each capture command, time, successful exit status and source identity privately. Never interpret an RPC failure as an empty log range.
 2. Compare both captures against the currently protected prefix and its externally approved digest:
 
