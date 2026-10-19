@@ -4,6 +4,11 @@ import { pathToFileURL } from 'node:url';
 import { digestJson } from './float-mainnet-monitor-policy.mjs';
 import { validateBaseline } from './float-mainnet-monitor-public-policy.mjs';
 
+const canonicalTime = value => typeof value === 'string' && Number.isFinite(Date.parse(value)) &&
+  new Date(Date.parse(value)).toISOString() === value;
+const uuid = value => typeof value === 'string' &&
+  /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+
 // Advisory telemetry only. This never authorizes a payment, approves history,
 // changes a baseline, or acknowledges an incident. Failed cycles are retained.
 export function maintenanceReport({ baseline, events, nowMs = Date.now() }) {
@@ -16,9 +21,8 @@ export function maintenanceReport({ baseline, events, nowMs = Date.now() }) {
     // The runner also journals hold acknowledgements. They are not scans and
     // must not consume the twenty-cycle window or erase earlier failures.
     if (Object.keys(e).sort().join(',') === 'acknowledgedAt,baselineHash,incidentId' &&
-        typeof e.acknowledgedAt === 'string' && Number.isFinite(Date.parse(e.acknowledgedAt)) &&
-        Date.parse(e.acknowledgedAt) <= nowMs && typeof e.incidentId === 'string' &&
-        /^[0-9a-f-]{36}$/.test(e.incidentId)) return false;
+        canonicalTime(e.acknowledgedAt) && Date.parse(e.acknowledgedAt) >= 0 &&
+        Date.parse(e.acknowledgedAt) <= nowMs && uuid(e.incidentId)) return false;
     return true; // Unknown or malformed matching records fail validation below.
   }).slice(-20);
   const seen = new Set();
@@ -26,15 +30,14 @@ export function maintenanceReport({ baseline, events, nowMs = Date.now() }) {
   const durations = [];
   for (const row of rows) {
     const end = Date.parse(row.completedAt);
-    if (typeof row.runId !== 'string' || !row.runId || seen.has(row.runId) ||
-        typeof row.completedAt !== 'string' || !Number.isFinite(end) ||
+    if (!uuid(row.runId) || seen.has(row.runId) || !canonicalTime(row.completedAt) ||
         end < previous || end > nowMs || typeof row.ok !== 'boolean' || typeof row.hold !== 'boolean')
       throw new Error('Invalid, duplicated, future or unordered journal sample');
     seen.add(row.runId); previous = end;
     // Older journal entries did not record start time. Do not fabricate it.
     if (row.startedAt !== undefined) {
       const start = Date.parse(row.startedAt);
-      if (typeof row.startedAt !== 'string' || !Number.isFinite(start) || start > end || start < 0)
+      if (!canonicalTime(row.startedAt) || start > end || start < 0)
         throw new Error('Invalid journal start time');
       durations.push(end - start);
     }

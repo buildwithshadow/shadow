@@ -15,7 +15,7 @@ const baseline = validateBaseline({ schemaVersion: 2,
     maxBlockAgeSeconds:120, maxIndexLagSeconds:120, warnBeforeSeconds:3600, requireIndex:false },
   publicAdmission:{ minimumRepaymentWindow:'3600', maximumRepaymentWindow:'86400' },
 });
-const row = (i, duration = 20000) => ({ runId:`run${i}`, baselineHash:digestJson(baseline),
+const row = (i, duration = 20000) => ({ runId:`00000000-0000-4000-8000-${String(100+i).padStart(12,'0')}`, baselineHash:digestJson(baseline),
   startedAt:new Date(nowMs - (3-i)*60000-duration).toISOString(),
   completedAt:new Date(nowMs - (3-i)*60000).toISOString(), ok:true, hold:false });
 const report = events => maintenanceReport({baseline,events,nowMs});
@@ -71,6 +71,22 @@ test('hold acknowledgements do not count as cycles or hide recent failures', () 
   assert.equal(report([row(1),row(2),row(3),acknowledgement]).status,'no-pressure-observed');
   assert.equal(report([acknowledgement]).status,'investigate');
   assert.throws(()=>report([{...acknowledgement,runId:'malformed'}]));
+});
+test('corrupted acknowledgement values cannot be filtered out of healthy samples', () => {
+  const good = { baselineHash:digestJson(baseline), acknowledgedAt:new Date(nowMs).toISOString(),
+    incidentId:'12345678-1234-4234-8234-123456789abc' };
+  for (const bad of [
+    {...good,acknowledgedAt:'2026-01-01'}, {...good,incidentId:'-'.repeat(36)},
+    {...good,acknowledgedAt:new Date(nowMs+1).toISOString()},
+    {...good,incidentId:'12345678-1234-1234-8234-123456789abc'},
+    {...good,acknowledgedAt:'invalid'},
+  ]) assert.throws(()=>report([row(1),row(2),row(3),bad]));
+});
+test('cycle IDs and timestamps must use the runner canonical format', () => {
+  for (const bad of [
+    {...row(3),runId:'not-a-run'}, {...row(3),completedAt:'2026-01-01'},
+    {...row(3),startedAt:'2026-01-01'},
+  ]) assert.throws(()=>report([row(1),row(2),bad]));
 });
 
 test('accepts a fixed testnet baseline without applying public mainnet admission', () => {
