@@ -238,7 +238,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
       snapshotHash: snapshot ? digestJson(snapshot) : retainedSnapshotHash, ok: result.ok && !incident, hold: result.hold || !!incident,
       status: result.ok && !incident ? "healthy" : "hold", ...(result.notices?.length ? {notices: result.notices} : {}), checks: { snapshotHealthy: result.ok },
       incidentId: incident?.incidentId ?? null, alerts: [...result.alerts, ...(incident && result.ok ? [alert("HOLD_LATCHED", `incident ${incident.incidentId} requires local acknowledgement after recovery`)] : [])] };
-    event(context, { runId: heartbeat.runId, completedAt: heartbeat.completedAt, ok: heartbeat.ok, hold: heartbeat.hold, baselineHash: context.baselineHash, observedAt: heartbeat.observedAt, alerts: heartbeat.alerts });
+    event(context, { runId: heartbeat.runId, startedAt: heartbeat.startedAt, completedAt: heartbeat.completedAt, ok: heartbeat.ok, hold: heartbeat.hold, baselineHash: context.baselineHash, observedAt: heartbeat.observedAt, alerts: heartbeat.alerts });
     atomicStatusJson(context, file.heartbeat, heartbeat);
     rmSync(publication, { force: true });
     return heartbeat;
