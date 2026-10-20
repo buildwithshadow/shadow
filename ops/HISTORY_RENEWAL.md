@@ -29,6 +29,18 @@ node app/scripts/float-mainnet-history-renewal.mjs \
 
 3. A passing comparison is **not approval**. It checks identity, preservation of all previous events, agreement throughout the overlapping range and overlapping event block hashes. It recommends only the older capture, never an uncorroborated newer tail. Identical files do not prove independent sources. Two backends can omit the same event. The operator must review complete capture provenance and independently verify the selected finalized canonical anchor before approving its digest.
 4. Install reviewed bytes and the new digest in the protected configuration as a separate maintenance action. Preserve the old version and journal. Do not grant the monitor write access to protected history or baseline files. Keep policy, executor audit start, identity and limits unchanged.
+
+To avoid hand editing the binding, prepare an offline draft:
+
+```sh
+node app/scripts/float-mainnet-history-plan.mjs \
+  --baseline /protected/baseline.json --manifest /protected/deployment.manifest.json \
+  --first /private/first-capture.json --second /private/second-capture.json \
+  --destination /protected/history/new-immutable-history.json
+```
+
+This reads the currently approved file named by the baseline, checks its digest and anchor, compares both captures, and prints a candidate baseline changing only `approvedHistory`. It identifies the selected capture and expected current normalized baseline hash. It does not write files or approve anything. The destination must be a new canonical absolute path; before installation, the operator must also reject an existing destination or filesystem alias and recheck the current baseline hash. Provenance and anchor review are still required. Never pass this output directly to unattended installation.
+
 5. Run a complete monitor check. If an incident was already latched, acknowledge its exact ID using the existing runner only after a fresh healthy sample. Never delete a hold manually. Restart dependent services when their baseline binding changes. Verify subsequent automatic scans and retain their records.
 
 The comparison command reads local files and prints an unapproved report. It sends no RPC requests or transactions, installs no configuration, and clears no hold. It makes renewal review repeatable; it does not automate protected approval or eliminate the need for future renewal. A fully automatic incremental scanner requires separate security review of its trust and persistence model.
