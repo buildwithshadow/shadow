@@ -39,7 +39,6 @@ export function createCycleSummary(deployment: CandidateDeployment, line: Candid
       transactionHash: check.transactionHash, checkedAt: check.checkedAt });
   }
   const reports = [...unique.values()];
-  const checkedPrincipal = reports.reduce((sum, report) => sum + BigInt(report.principal), 0n);
   const spent = line.cumulativePrincipalPaid;
   const repaid = spent - line.principalOutstanding;
   const money = (value: bigint) => `${formatUnits(value, 6)} ${deployment.chainId === 5042 ? 'USDC' : 'test USDC'}`;
@@ -47,7 +46,7 @@ export function createCycleSummary(deployment: CandidateDeployment, line: Candid
     { title: 'Funding', state: 'observed', detail: `Line opened with ${money(line.reserveCap)} of reserve.` },
     { title: 'Purchases', state: spent > 0n ? 'observed' : 'none', detail: spent > 0n ? `${money(spent)} paid to providers in total.` : 'No purchase recorded in this line state.' },
     { title: 'Delivery', state: reports.length ? 'checked' : 'unknown', detail: reports.length
-      ? `${reports.length} report receipt${reports.length === 1 ? '' : 's'} rechecked during this visit. ${checkedPrincipal === spent && spent > 0n ? 'The checked amounts match total purchases.' : 'Delivery coverage is incomplete or differs from this snapshot.'}`
+      ? `${reports.length} report receipt${reports.length === 1 ? '' : 's'} rechecked during this visit. These checks do not establish full delivery coverage or share the balance snapshot time.`
       : 'Not checked in this visit. Open or recover the original report in service records.' },
     { title: 'Repayment', state: spent === 0n ? 'none' : line.principalOutstanding > 0n ? 'pending' : 'observed', detail: spent === 0n
       ? 'No purchase debt to repay.' : `${money(repaid)} of principal repaid; ${money(line.principalOutstanding)} still owed.` },
@@ -67,6 +66,7 @@ export function createCycleSummary(deployment: CandidateDeployment, line: Candid
     amountUnit: 'USDC base units, 6 decimals',
     repaymentBasis: 'Principal repaid is derived from cumulative principal paid minus principal outstanding. Payers and transaction dates are not established by this calculation.',
     reclaimAmount: null,
+    deliveryCoverage: 'not-established',
     missingEvidence: ['Funding, repayment and reclaim transaction receipts are not included.', 'A closed line does not establish a reclaim amount.', 'Report checks describe a check during this visit; the exported file does not independently reverify those receipts.'],
     reports, stages,
   };

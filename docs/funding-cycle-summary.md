@@ -14,8 +14,8 @@ Delivery is separate. A report appears as rechecked only after the purchase engi
 successfully verifies its original payment and signed result during the current
 visit, through recovery, reopening saved history or importing a report receipt.
 Records from another network, contract, runtime, line, sponsor or agent are
-excluded. Repeated checks of the same digest count once. Amount coverage is
-descriptive, not proof that all deliveries remain valid at the snapshot block.
+excluded. Repeated checks of the same digest count once. The tracker does not compare checked amounts with the line snapshot or claim
+complete delivery coverage: a report check may be newer than that snapshot.
 
 **Download cycle summary** saves an allowlisted JSON state summary. It contains
 the deployment identity, observation block and timestamp, line amounts, visit

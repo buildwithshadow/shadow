@@ -32,11 +32,15 @@ test('wrong network, deployment, runtime, line, sponsor and agent reports are ex
 test('one rechecked report is deduplicated and cannot cover two draws', () => {
   const summary = createCycleSummary(deployment, { ...line, cumulativePrincipalPaid: 10000n }, [report, report]);
   assert.equal(summary.reports.length, 1);
-  assert.match(summary.stages[2].detail, /coverage is incomplete/);
+  assert.match(summary.stages[2].detail, /do not establish full delivery coverage/);
 });
-test('matching amounts describe visit checks, never independent delivery proof', () => {
+test('a newly checked draw with the same amount as a stale earlier snapshot cannot claim coverage', () => {
   const summary = createCycleSummary(deployment, line, [report]);
-  assert.match(summary.stages[2].detail, /checked amounts match/);
+  assert.equal(summary.deliveryCoverage, 'not-established');
+  assert.match(summary.stages[2].detail, /do not establish full delivery coverage/);
+  assert.ok(!summary.stages[2].detail.includes('match total'));
+  // The equal principal could be a different purchase after this observed block.
+  assert.equal(summary.observedBlock, '100');
   assert.match(summary.scope, /Not a complete transaction history/);
   assert.ok(summary.missingEvidence.some(value => value.includes('does not independently reverify')));
 });
