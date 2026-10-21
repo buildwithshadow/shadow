@@ -157,6 +157,19 @@ Those placeholders must be replaced with the verified record. Keep the file and 
 
 The runner validates the file when loading context and again before collection. Status and spend consumers therefore reject missing, altered or mismatched history. The snapshot must report the exact prefix binding selected by the baseline; supplying a different prefix directly to the snapshot CLI cannot authorize spending. Corruption, reorgs, incomplete suffix reads and unexpected identity changes fail closed. Existing incidents remain latched and historical evidence is retained.
 
-Replacing a prefix requires a declared maintainer transition and another complete canonical capture from the original deployment, with old records preserved and common historical events compared. It is not an automatic cache update or a budget reset. A root administrator who can rewrite the protected baseline and executable code remains trusted under the existing host control model; this mechanism does not defend against malicious root access.
+Replacing a prefix requires a declared maintainer transition, with old records preserved and common historical events compared. A complete canonical capture from the original deployment remains available. Once an initial prefix is already approved, the read only extension command can instead preserve its exact protected events and scan every new block through a newer finalized anchor:
+
+```sh
+node app/scripts/float-mainnet-history-extension.mjs \
+  --manifest /private/release.manifest.json \
+  --baseline /private/protected-baseline.json \
+  --out /private/unapproved-extension.json
+```
+
+Run it separately against independent RPC providers. It verifies the existing binding, the old anchor before and after the suffix scan, every new event block, the runtime at the finalized new anchor and that anchor again after collection. A failed range aborts the capture. The CLI refuses an output collision or a changed baseline. It does not write partial results, update the baseline, install history or acknowledge incidents.
+
+Its provenance explicitly says that the old prefix was reused. Two such captures corroborate only the new suffix; they are not two independent rescans of the original history. They cannot establish initial prefix provenance or repair an untrusted existing prefix. For that, use the original full capture command. Compare extension captures with the renewal comparison/planning commands, inspect their provenance, and verify their finalized canonical anchor before approving the new binding. Preserve the old digest and installation evidence. The maintainer must still inspect the exact baseline before installation, run a fresh complete monitor check and acknowledge the actual incident through the runner. No approval is inferred from capture agreement.
+
+This is not an automatic cache update or a budget reset. A root administrator who can rewrite the protected baseline and executable code remains trusted under the existing host control model; this mechanism does not defend against malicious root access.
 
 No timing, block freshness, role, spending or onchain controls are relaxed by this option. Measure the resulting complete snapshot before using it. Independent provider checks and qualified human security review remain separate requirements.
