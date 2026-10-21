@@ -67,7 +67,7 @@ export function createCycleSummary(deployment: CandidateDeployment, line: Candid
     amountUnit: 'USDC base units, 6 decimals',
     repaymentBasis: 'Principal repaid is derived from cumulative principal paid minus principal outstanding. Payers and transaction dates are not established by this calculation.',
     reclaimAmount: null,
-    missingEvidence: ['Funding, repayment and reclaim transaction receipts are not included.', 'A closed line does not establish a reclaim amount.', 'Report checks describe a check during this visit; the exported file does not independently reverify those receipts.', 'Participant independence, customer demand and willingness to pay are not established.'],
+    missingEvidence: ['Funding, repayment and reclaim transaction receipts are not included.', 'A closed line does not establish a reclaim amount.', 'Report checks describe a check during this visit; the exported file does not independently reverify those receipts.'],
     reports, stages,
   };
 }

@@ -1,7 +1,24 @@
-import { useId, useState } from 'react';
+import { useCallback, useId, useRef, useState } from 'react';
 import type { CandidateDeployment, CandidateLine } from './candidateFunding';
 import { createCycleSummary, type CycleReportCheck } from './lineLifecycle';
 import './lineLifecycle.css';
+
+// Switching wallets hides the previous visit immediately. Do not clear in a
+// parent effect: a child can publish a verified cached recovery in its own
+// effect before that parent effect runs, losing the new check on route return.
+export function useCycleReportChecks(context: string) {
+  const active = useRef({context, generation: 0});
+  if (active.current.context !== context) active.current = {context, generation: active.current.generation + 1};
+  const generation = active.current.generation;
+  const [saved, setSaved] = useState<{context: string; generation: number; reports: CycleReportCheck[]}>({context, generation, reports: []});
+  const deliveryChecked = useCallback((check: CycleReportCheck) => {
+    if (active.current.context !== context || active.current.generation !== generation) return;
+    setSaved(previous => ({context, generation, reports: [
+      ...(previous.context === context && previous.generation === generation ? previous.reports : []).filter(item => item.digest.toLowerCase() !== check.digest.toLowerCase()), check,
+    ].slice(-100)}));
+  }, [context, generation]);
+  return { reports: saved.context === context && saved.generation === generation ? saved.reports : [], deliveryChecked };
+}
 
 export function LineLifecycle({ deployment, line, reports = [], busy = false }: {
   deployment: CandidateDeployment; line: CandidateLine; reports?: readonly CycleReportCheck[]; busy?: boolean;

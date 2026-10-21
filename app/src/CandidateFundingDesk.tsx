@@ -1,5 +1,4 @@
-import { LineLifecycle } from './FundingCycleTracker';
-import type { CycleReportCheck } from './lineLifecycle';
+import { LineLifecycle, useCycleReportChecks } from './FundingCycleTracker';
 import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -107,11 +106,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
   const [lineInputError, setLineInputError] = useState("");
   const [line, setLine] = useState<CandidateLine | null>(null);
-  const [cycleReports, setCycleReports] = useState<CycleReportCheck[]>([]);
-  useEffect(() => setCycleReports([]), [account, chainId, deployment]);
-  const deliveryChecked = useCallback((check: CycleReportCheck) => {
-    setCycleReports(previous => [...previous.filter(item => item.digest.toLowerCase() !== check.digest.toLowerCase()), check].slice(-100));
-  }, []);
+  const { reports: cycleReports, deliveryChecked } = useCycleReportChecks(
+    `${account}:${chainId}:${deployment.chainId}:${deployment.address}:${deployment.runtimeHash}`);
   const [discoveredLines, setDiscoveredLines] = useState<CandidateLine[]>([]);
   const [lineDiscoveryStatus, setLineDiscoveryStatus] = useState<"idle" | "loading" | "ready" | "empty" | "partial" | "failed">("idle");
   const [lineDiscoveryProgress, setLineDiscoveryProgress] = useState<AgentLineDiscoveryProgress | null>(null);
