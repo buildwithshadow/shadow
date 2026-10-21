@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCycleSummary } from '../src/lineLifecycle.ts';
+import { checkedCycleReport, createCycleSummary } from '../src/lineLifecycle.ts';
 import { deployment, line, report } from './line-lifecycle-fixture.ts';
 
 test('a closed unused line does not become a completed purchase or repaid loan', () => {
@@ -52,4 +52,13 @@ test('export allowlists data and excludes signatures and arbitrary credentials',
 });
 test('inconsistent debt does not produce a misleading negative repayment', () => {
   assert.throws(() => createCycleSummary(deployment, {...line, principalOutstanding:5001n}), /inconsistent/);
+});
+test('a replaced or edited local transaction hash cannot become payment evidence', () => {
+  const localHash = `0x${'ab'.repeat(32)}`;
+  const checked = checkedCycleReport(deployment, {stage:'delivered',txHash:localHash,intent:{digest:report.digest,typedData:{message:{lineId:line.lineId,sponsor:line.sponsor,agent:line.agent,principal:'5000'}}}} as any);
+  assert.equal(checked.transactionHash, null);
+  // Even a caller supplying the former field cannot bypass the export rule.
+  const summary = createCycleSummary(deployment, line, [{...report,transactionHash:localHash} as any]);
+  assert.equal(summary.reports[0].transactionHash, null);
+  assert.ok(!JSON.stringify(summary).includes(localHash));
 });

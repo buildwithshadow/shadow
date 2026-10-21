@@ -22,6 +22,8 @@ the deployment identity, observation block and timestamp, line amounts, visit
 report checks and evidence limitations. It contains no spending signatures,
 provider acceptance credentials, report content or wallet secrets. The summary
 is not accepted as an import or as authority for a financial action.
+The local wallet request hash is also omitted: a replacement transaction may
+have made the payment, and that hash has not been independently verified here.
 
 The export is not a full transaction receipt bundle. It does not establish the
 funding, repayment or reclaim transaction hashes, the amount actually reclaimed,

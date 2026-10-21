@@ -8,14 +8,16 @@ import type { PurchaseRecord } from './selfServicePurchase.mjs';
 export interface CycleReportCheck {
   chainId: number; contract: string; runtimeHash: string; lineId: Hash;
   sponsor: string; agent: string; digest: Hash; principal: string;
-  transactionHash: Hash | null; checkedAt: string;
+  transactionHash: null; checkedAt: string;
 }
 export function checkedCycleReport(deployment: CandidateDeployment, record: PurchaseRecord): CycleReportCheck {
   if (record.stage !== 'delivered') throw new Error('Only a rechecked delivered report can enter the cycle summary.');
   const message = record.intent.typedData.message;
   return { chainId: deployment.chainId, contract: deployment.address, runtimeHash: deployment.runtimeHash,
     lineId: message.lineId, sponsor: message.sponsor, agent: message.agent, digest: record.intent.digest,
-    principal: String(message.principal), transactionHash: record.txHash, checkedAt: new Date().toISOString() };
+    // The wallet request hash may be replaced or edited in browser storage.
+    // Recovery verifies the paid digest and signed result, not this local hash.
+    principal: String(message.principal), transactionHash: null, checkedAt: new Date().toISOString() };
 }
 const same = (a: string, b: string) => a.toLowerCase() === b.toLowerCase();
 const validHash = (value: unknown): value is Hash => typeof value === 'string' && /^0x[0-9a-fA-F]{64}$/.test(value) && !same(value, zeroHash);
@@ -31,12 +33,12 @@ export function createCycleSummary(deployment: CandidateDeployment, line: Candid
     if (check.chainId !== deployment.chainId || !same(check.contract, deployment.address) || !same(check.runtimeHash, deployment.runtimeHash)
         || !same(check.lineId, line.lineId) || !same(check.sponsor, line.sponsor) || !same(check.agent, line.agent)
         || !validHash(check.digest) || !/^\d+$/.test(check.principal) || BigInt(check.principal) <= 0n
-        || !Number.isFinite(Date.parse(check.checkedAt)) || (check.transactionHash !== null && !validHash(check.transactionHash))) continue;
+        || !Number.isFinite(Date.parse(check.checkedAt))) continue;
     // Explicit allowlist: no result content, acceptance, signature or arbitrary
     // caller fields can enter this downloadable summary.
     unique.set(check.digest.toLowerCase(), { chainId: check.chainId, contract: check.contract, runtimeHash: check.runtimeHash,
       lineId: check.lineId, sponsor: check.sponsor, agent: check.agent, digest: check.digest, principal: check.principal,
-      transactionHash: check.transactionHash, checkedAt: check.checkedAt });
+      transactionHash: null, checkedAt: check.checkedAt });
   }
   const reports = [...unique.values()];
   const spent = line.cumulativePrincipalPaid;

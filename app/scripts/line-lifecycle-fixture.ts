@@ -15,4 +15,4 @@ export const line: CandidateLine = {
 };
 export const report: CycleReportCheck = { chainId: 5042, contract: deployment.address, runtimeHash: deployment.runtimeHash,
   lineId: line.lineId, sponsor: line.sponsor, agent: line.agent, digest: `0x${'77'.repeat(32)}`,
-  principal: '5000', transactionHash: `0x${'88'.repeat(32)}`, checkedAt: '2026-10-21T12:00:00Z' };
+  principal: '5000', transactionHash: null, checkedAt: '2026-10-21T12:00:00Z' };
