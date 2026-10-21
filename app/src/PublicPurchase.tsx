@@ -1,3 +1,4 @@
+import { checkedCycleReport, type CycleReportCheck } from './lineLifecycle';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { recoverySession, resetRecoverySession, retainRecoveryTerminal, recoveryWalletBusy, beginRecoveryWalletWork, finishRecoveryWalletWork, subscribeRecoverySettlement } from './purchaseRecoverySession.mjs';
 import { VerifiedServiceReport } from './VerifiedServiceReport';
@@ -9,9 +10,9 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { createSelfServicePurchase, createGuardedMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string; requestKind?: 'arc-wallet' }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, loadedLine = null, active = true }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, onDeliveryChecked, loadedLine = null, active = true }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; loadedLine?: Pick<CandidateLine, 'lineId' | 'stateName'> | null; active?: boolean;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; onDeliveryChecked?: (check: CycleReportCheck) => void; loadedLine?: Pick<CandidateLine, 'lineId' | 'stateName'> | null; active?: boolean;
 }) {
   const closedLine = loadedLine?.stateName === 'CLOSED' && loadedLine.lineId.toLowerCase() === lineId.trim().toLowerCase();
   const mainnet = deployment.chainId === 5042;
@@ -166,8 +167,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         setRecord(recovered.record);
         updateReceipt({ key: `${digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
         if (recovered.status === 'blocked') { setRefusedDigest(digest); setNotice('The contract refused this purchase. No provider payment was made for this intent.'); }
-        else if (recovered.bytes) {
-          try { setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes)); setError(''); setNotice('Payment confirmed and the original service result recovered.'); }
+        else if (recovered.status === 'delivered' && recovered.bytes) {
+          try { setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes)); onDeliveryChecked?.(checkedCycleReport(deployment, recovered.record)); setError(''); setNotice('Payment confirmed and the original service result recovered.'); }
           catch { budget.stopped = true; setError('The verified service result is not readable UTF-8 text. Keep the original purchase.'); }
           void Promise.resolve().then(() => onPurchaseChanged(recovered.record.intent.typedData.message.lineId)).catch(() => { /* receipt remains verified; balances can refresh separately */ });
         } else setNotice('Checking the original payment. Do not submit another purchase while confirmation is unclear.');
@@ -250,7 +251,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
           updateReceipt({ key: `${recovered.record.intent.digest}:${recovered.record.stage}`, status: recovered.status === 'blocked' ? 1 : recovered.status === 'delivered' ? 2 : 0 });
           setNotice(recovered.status === 'delivered' ? 'Payment confirmed and the original service result recovered.' : recovered.status === 'blocked' ? 'The contract refused this purchase. No provider payment was made for this intent.' : 'No confirmed payment found yet. Finish any wallet prompt, then check again. This does not resend a transaction.');
           if (recovered.status === 'blocked') { setRefusedDigest(recovered.record.intent.digest); setReviewing(false); }
-          if (recovered.bytes) setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes));
+          if (recovered.status === 'delivered' && recovered.bytes) { setResult(new TextDecoder('utf-8', { fatal: true }).decode(recovered.bytes)); onDeliveryChecked?.(checkedCycleReport(deployment, recovered.record)); }
         }
       } else {
         const delivered = record?.stage === 'delivered';
@@ -293,7 +294,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     try {
       const recovered = await engine.recoverArchived(digest);
       const text = new TextDecoder('utf-8', {fatal:true}).decode(recovered.bytes);
-      if (isCurrent()) setArchivedResult({record:recovered.record,text});
+      if (isCurrent()) { setArchivedResult({record:recovered.record,text}); onDeliveryChecked?.(checkedCycleReport(deployment, recovered.record)); }
     } catch (cause) { if (isCurrent()) setHistoryError(candidateErrorMessage(cause)); }
     finally { inFlight.current = false; if (revision.current === current) setHistoryBusy(false); finishRecoveryWalletWork(walletWorkKey); }
   }
@@ -321,6 +322,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
         const recovered = await engine.importCompleted(raw,{mayCommit:isCurrent});
         if (isCurrent()) {
           setArchivedResult({record:recovered.record,text:new TextDecoder('utf-8',{fatal:true}).decode(recovered.bytes)});
+          onDeliveryChecked?.(checkedCycleReport(deployment, recovered.record));
           refreshHistory();
           setNotice('Imported report verified and saved in this browser. No payment was sent.');
         }
