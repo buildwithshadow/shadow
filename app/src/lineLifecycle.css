@@ -1,0 +1,13 @@
+.lineLifecycle { margin: 1.5rem 0; padding: 1.25rem; border: 1px solid var(--border-strong, rgba(184,211,255,.18)); border-radius: 12px; background: var(--surface, #0f1d31); }
+.lineLifecycleHead { display: flex; align-items: flex-start; justify-content: space-between; gap: 1rem; flex-wrap: wrap; }
+.lineLifecycle h4 { margin: 0; font-size: 1.1rem; color: #f3f7ff; }
+.lineLifecycle p { color: #aebbd0; line-height: 1.6; }
+.lineLifecycleHead p { margin: .5rem 0 0; }
+.lineLifecycle button { min-height: 44px; max-width: 100%; white-space: normal; }
+.lineLifecycle button:focus-visible { outline: 3px solid #34e5ff; outline-offset: 3px; }
+.lineLifecycle ol { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 180px), 1fr)); gap: 1.25rem; padding: 0; margin: 1.5rem 0; list-style-position: inside; }
+.lineLifecycle li { min-width: 0; color: #aebbd0; overflow-wrap: anywhere; }
+.lineLifecycle li strong { color: #f3f7ff; }
+.lineLifecycle li span { display: block; margin-top: .5rem; line-height: 1.6; font-size: .9rem; }
+.lineLifecycleScope { font-size: .85rem; margin-bottom: 0; }
+@media (max-width: 480px) { .lineLifecycle { padding: 1rem; } .lineLifecycleHead button { width: 100%; } }

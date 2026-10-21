@@ -27,13 +27,13 @@ function fixture(status=2n) {
   const client: any = {getBlock:vi.fn(async()=>({number:123n,timestamp:2000000000n})),readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
-function Host({client, loadedLine = null, lineId = ''}: {client:any; loadedLine?:any; lineId?:string}) {
+function Host({client, loadedLine = null, lineId = '', onDeliveryChecked}: {client:any; loadedLine?:any; lineId?:string; onDeliveryChecked?:(check:any)=>void}) {
   const [busy,setBusy]=useState('');
   return <MemoryRouter initialEntries={['/start/purchase']}>
     <Link to="/other">Leave funding</Link><Link to="/start/purchase">Return to purchase</Link>
     <Routes><Route path="/other" element={<p>Other page</p>}/><Route path="/start/purchase" element={<PublicPurchase
       account={account} correctNetwork deployment={deployment} service={service} client={client} busy={busy} setBusy={setBusy}
-      fundingPending={false} lineId={lineId} loadedLine={loadedLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}}/>}/></Routes>
+      fundingPending={false} lineId={lineId} loadedLine={loadedLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}} onDeliveryChecked={onDeliveryChecked}/>}/></Routes>
   </MemoryRouter>;
 }
 beforeEach(()=>{
@@ -347,4 +347,18 @@ test('a failed second import cannot retain the previous report or its success me
   expect(screen.queryByText('first imported report')).toBeNull();
   expect(screen.queryByText('Imported report verified and saved in this browser. No payment was sent.')).toBeNull();
   expect(f.engine.submit).not.toHaveBeenCalled();expect(f.engine.load()).toBeNull();
+});
+
+test('cycle delivery evidence is published only after the original report is recovered and readable',async()=>{
+  const f=fixture(),checked=vi.fn();render(<Host client={f.client} onDeliveryChecked={checked}/>);
+  await screen.findByText(`original report ${counter}`);
+  expect(checked).toHaveBeenCalledWith(expect.objectContaining({chainId:5042002,contract:deployment.address,digest:f.digest,principal:'50000'}));
+  expect(checked.mock.calls[0][0]).not.toHaveProperty('signature');
+  expect(f.engine.submit).not.toHaveBeenCalled();
+});
+test('failed report recovery cannot publish delivery into the cycle tracker',async()=>{
+  const f=fixture(),checked=vi.fn();f.engine.recover.mockRejectedValue(new Error('Provider receipt signature is invalid.'));
+  render(<Host client={f.client} onDeliveryChecked={checked}/>);
+  await screen.findByText('Provider receipt signature is invalid.');
+  expect(checked).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
 });

@@ -1,3 +1,5 @@
+import { LineLifecycle } from './FundingCycleTracker';
+import type { CycleReportCheck } from './lineLifecycle';
 import { ARC_TESTNET_RPC_URL } from "../arcTestnetNetwork.mjs";
 import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
@@ -105,6 +107,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
   const [lineId, setLineId] = useState(() => new URLSearchParams(window.location.search).get("line") || "");
   const [lineInputError, setLineInputError] = useState("");
   const [line, setLine] = useState<CandidateLine | null>(null);
+  const [cycleReports, setCycleReports] = useState<CycleReportCheck[]>([]);
+  useEffect(() => setCycleReports([]), [account, chainId, deployment]);
+  const deliveryChecked = useCallback((check: CycleReportCheck) => {
+    setCycleReports(previous => [...previous.filter(item => item.digest.toLowerCase() !== check.digest.toLowerCase()), check].slice(-100));
+  }, []);
   const [discoveredLines, setDiscoveredLines] = useState<CandidateLine[]>([]);
   const [lineDiscoveryStatus, setLineDiscoveryStatus] = useState<"idle" | "loading" | "ready" | "empty" | "partial" | "failed">("idle");
   const [lineDiscoveryProgress, setLineDiscoveryProgress] = useState<AgentLineDiscoveryProgress | null>(null);
@@ -857,6 +864,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
           <div><dt>Total purchases</dt><dd>{usdc(line.cumulativePrincipalPaid)} <small>USDC</small></dd></div>
           <div><dt>Remaining total limit</dt><dd>{usdc(remaining)} <small>USDC</small></dd></div>
         </dl>
+        <LineLifecycle deployment={deployment} line={line} reports={cycleReports} busy={Boolean(busy)} />
         <p>{line.stateName === "CLOSED" ? "This line is closed and cannot fund another purchase. Open a new line if you want to provide another budget." : line.stateName === "DEFAULTED" ? "This line is defaulted and cannot fund another purchase." : "Repay a purchase in full before the next one. Repayment restores reserve; it does not reset the total purchase limit."}</p>
         {line.stateName === "DEFAULTED" && <p className="fundingCallout">Repayment supports sponsor recovery. This defaulted line will not reopen. Recoverable funds: {usdc(line.availableReserve + line.recoveryAvailable)} USDC.</p>}
         {line.principalOutstanding > 0n && <p>Repayment due: <strong>{when(line.dueAt)}</strong>. The obligation remains if service delivery is unresolved.</p>}
@@ -884,7 +892,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div>}
     </section>;
   const purchasePanel = service && <div className="fundingSlot" ref={purchaseSlot} hidden={guided ? journeyStep !== 'purchase' : role === "sponsor"}><PublicPurchase active={!guided || journeyStep === 'purchase'} account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} lineId={lineId} onLineIdChange={updateLineId} loadedLine={line} /></div>;
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} onDeliveryChecked={deliveryChecked} lineId={lineId} onLineIdChange={updateLineId} loadedLine={line} /></div>;
   const transactionDialog = <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description" tabIndex={-1}
       onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}
       onKeyDown={(event) => {
