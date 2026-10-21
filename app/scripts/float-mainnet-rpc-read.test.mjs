@@ -9,6 +9,18 @@ const queueOptions = { spacingMs: 0, baseDelayMs: 1, maxDelayMs: 4, random: () =
 const reply = (body, result) => Response.json({ jsonrpc: "2.0", id: body.id, result });
 const failure = (body, message, status = 429) => Response.json({ jsonrpc: "2.0", id: body.id, error: { code: -32005, message } }, { status });
 
+test('canonical block receipts use the bounded read queue without permitting writes', async () => {
+  const methods = [];
+  const client = createPublicClient({ transport: createRpcReadTransport('https://rpc.example', {
+    queueOptions, fetchFn: async (_url, options) => {
+      const body = JSON.parse(options.body); methods.push(body.method); return reply(body, []);
+    },
+  }) });
+  assert.deepEqual(await client.request({ method: 'eth_getBlockReceipts', params: ['0x64'] }), []);
+  await assert.rejects(client.request({ method: 'eth_sendRawTransaction', params: ['0x1234'] }), /refuses/);
+  assert.deepEqual(methods, ['eth_getBlockReceipts']);
+});
+
 test("monitor transport serializes concurrent reads and retries a quota response a bounded number of times", async () => {
   let active = 0;
   let maxActive = 0;

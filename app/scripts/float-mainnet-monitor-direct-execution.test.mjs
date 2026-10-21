@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import {encodeFunctionData,encodeEventTopics,encodeAbiParameters,hashTypedData} from 'viem';
+import {encodeFunctionData,encodeEventTopics,encodeAbiParameters,hashTypedData,TransactionReceiptNotFoundError} from 'viem';
 import {floatAbi,floatEventAbi} from './float-mainnet-config.mjs';
 import {readDirectExecutionAttribution} from './float-mainnet-monitor-direct-execution.mjs';
 const addr=n=>'0x'+n.toString(16).padStart(40,'0'),hash=n=>'0x'+n.toString(16).padStart(64,'0');
@@ -19,3 +19,14 @@ for(const blocked of [false,true])test(`exact direct ${blocked?'refusal':'paymen
 for(const [name,change] of [
  ['wrong caller',f=>f.tx.from=addr(99)],['wrong target',f=>f.tx.to=addr(99)],['native transfer',f=>f.tx.value=1n],['different event digest',f=>f.event.args.digest=hash(99)],['different line',f=>f.event.args.lineId=hash(99)],['reverted receipt',f=>f.receipt.status='reverted'],['different receipt block',f=>f.receipt.blockHash=hash(99)],['different receipt transaction',f=>f.receipt.transactionHash=hash(99)],['missing log',f=>f.receipt.logs=[]],['foreign log',f=>f.receipt.logs[0].address=addr(99)],['duplicate log slot',f=>f.receipt.logs.push(f.receipt.logs[0])],['different payout amount',f=>f.event.args.principal=5001n],['noncanonical calldata',f=>f.tx.input+='00'],['different receipt status',f=>f.client.readContract=async()=>1n]
 ])test(`direct attribution rejects ${name}`,async()=>{const f=fixture();change(f);await assert.rejects(()=>readDirectExecutionAttribution(f.client,f.event,f.tx,f.shadow,'5042'));});
+
+for (const blocked of [false,true]) test(`pruned direct ${blocked?'refusal':'payment'} still verifies the signed intent and exact log`,async()=>{
+ const f=fixture(blocked);
+ Object.assign(f.receipt.logs[0],{blockNumber:f.event.blockNumber,blockHash:f.event.blockHash,transactionHash:f.event.transactionHash,transactionIndex:0,removed:false});
+ f.client.getTransactionReceipt=async()=>{throw new TransactionReceiptNotFoundError({hash:f.event.transactionHash});};
+ f.client.getBlock=async()=>({number:f.event.blockNumber,hash:f.event.blockHash,transactions:[f.event.transactionHash]});
+ f.client.getBlockReceipts=async()=>[f.receipt];
+ const run=()=>readDirectExecutionAttribution(f.client,f.event,f.tx,f.shadow,'5042');
+ assert.equal((await run()).intentVerified,true);
+ f.receipt.logs[0].data='0x'; await assert.rejects(run);
+});

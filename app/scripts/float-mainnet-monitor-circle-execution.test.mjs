@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, hashTypedData, keccak256, parseAbi } from 'viem';
+import { decodeFunctionData, encodeAbiParameters, encodeEventTopics, encodeFunctionData, hashTypedData, keccak256, parseAbi, TransactionReceiptNotFoundError } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
 import { floatAbi, floatEventAbi } from './float-mainnet-config.mjs';
 import { readCircleExecutionAttribution } from './float-mainnet-monitor-circle-execution.mjs';
@@ -52,6 +52,15 @@ function fixture() {
     { ...tx, input: encodeFunctionData({ abi: entryPoint07Abi, functionName: 'handleOps', args: [ops, bundler] }) }, shadow);
   return { op, ops, event, receipt, tx, state, client, boundary, run };
 }
+test('pruned Circle receipt retains operation boundaries and exact payment attribution',async()=>{
+  const f=fixture(),getBlock=f.client.getBlock;
+  for(const log of f.receipt.logs) Object.assign(log,{blockNumber:100n,blockHash,transactionHash:txHash,transactionIndex:0,removed:false});
+  f.client.getTransactionReceipt=async()=>{throw new TransactionReceiptNotFoundError({hash:txHash});};
+  f.client.getBlock=async args=>({...await getBlock(args),transactions:[txHash]});
+  f.client.getBlockReceipts=async()=>[f.receipt];
+  assert.equal((await f.run()).route,'circle-agent-v07');
+  f.receipt.logs.pop(); await assert.rejects(f.run);
+});
 test('exact successful Circle user operation is attributed without relabeling the bundler', async () => {
   const x = fixture(); const proof = await x.run();
   assert.deepEqual(proof, { route: 'circle-agent-v07', sender: bundler, executor: agent, agent,

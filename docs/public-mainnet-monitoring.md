@@ -28,6 +28,15 @@ The public browser flow executes from the participant wallet. The earlier
 founder Circle execution adapter and its fixed roster spend guard are separate;
 they do not acquire public spending authorization from a healthy heartbeat.
 
+If an RPC has pruned its transaction receipt hash index, the observer can read
+the exact receipt from its canonical block with `eth_getBlockReceipts`. This
+fallback applies only to a receipt not found response. It verifies the mined
+block and transaction slot, unique receipt, successful status, every receipt
+log's block binding, and the canonical block again after retrieval. The normal
+signed intent, exact payment log and historical contract status checks still
+apply. RPC outages, missing or ambiguous block receipts and reorgs remain holds.
+No payment outcome is inferred from an absent receipt and no transaction is sent.
+
 ## Separate provider and observer Unix accounts
 
 Monitor status is private to its writer by default. If a separately isolated

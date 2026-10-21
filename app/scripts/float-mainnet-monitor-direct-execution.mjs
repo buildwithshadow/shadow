@@ -1,5 +1,6 @@
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, hashTypedData, zeroAddress } from 'viem';
 import { floatAbi, floatEventAbi } from './float-mainnet-config.mjs';
+import { readExecutionReceipt } from './float-mainnet-monitor-execution-receipt.mjs';
 const same=(a,b)=>typeof a==='string' && typeof b==='string' && a.toLowerCase()===b.toLowerCase();
 const must=(ok,message)=>{if(!ok)throw Error(message);};
 const types={SpendIntent:floatAbi.find(x=>x.type==='function' && x.name==='executeSpend').inputs[0].components.map(({name,type})=>({name,type}))};
@@ -13,7 +14,7 @@ export async function readDirectExecutionAttribution(client,event,tx,shadow,chai
   must(!same(intent.executor,zeroAddress) && same(intent.executor,tx.from) && same(intent.lineId,event.args.lineId),'Direct executor or line differs');
   const digest=hashTypedData({domain:{name:'ShadowFloatMainnet',version:'1',chainId:Number(chainId),verifyingContract:shadow},types,primaryType:'SpendIntent',message:intent});
   must(same(digest,event.args.digest),'Direct intent digest differs');
-  const receipt=await client.getTransactionReceipt({hash:tx.hash});
+  const receipt=await readExecutionReceipt(client,event);
   must(receipt.status==='success' && same(receipt.transactionHash,tx.hash) && receipt.blockNumber===event.blockNumber && same(receipt.blockHash,event.blockHash) && receipt.transactionIndex===event.transactionIndex,'Direct receipt differs from canonical execution');
   const logs=receipt.logs.filter(l=>l.logIndex===event.logIndex);
   must(logs.length===1 && same(logs[0].address,shadow),'Direct payment log is absent or ambiguous');
