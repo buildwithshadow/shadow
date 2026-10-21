@@ -7,7 +7,7 @@ import { createRpcReadQueue, isTransientRpcReadError } from "./rpc-read-queue.mj
 const READ_METHODS = new Set([
   "eth_chainId", "eth_blockNumber", "eth_call", "eth_getCode", "eth_getBalance", "eth_getStorageAt",
   "eth_getBlockByNumber", "eth_getBlockByHash", "eth_getLogs",
-  "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getTransactionCount",
+  "eth_getTransactionByHash", "eth_getTransactionReceipt", "eth_getBlockReceipts", "eth_getTransactionCount",
   "eth_estimateGas", "eth_gasPrice", "eth_feeHistory", "eth_maxPriorityFeePerGas",
 ]);
 

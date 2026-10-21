@@ -1,6 +1,7 @@
 import { decodeEventLog, decodeFunctionData, encodeFunctionData, parseAbi } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
 import { floatAbi, floatEventAbi } from './float-mainnet-config.mjs';
+import { readExecutionReceipt } from './float-mainnet-monitor-execution-receipt.mjs';
 
 const accountAbi = parseAbi(['function execute(address target,uint256 value,bytes data)']);
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -24,7 +25,7 @@ export async function readCircleExecutionAttribution(client, event, tx, shadow) 
     && hash(event.args?.lineId) && Number.isSafeInteger(event.logIndex) && event.logIndex >= 0, 'Circle payment event has no exact log binding.');
   const bundle = canonicalDecode(entryPoint07Abi, tx.input);
   must(bundle.functionName === 'handleOps', 'Unsupported Circle EntryPoint call.');
-  const receipt = await client.getTransactionReceipt({ hash: tx.hash });
+  const receipt = await readExecutionReceipt(client, event);
   must(receipt.status === 'success' && same(receipt.transactionHash, tx.hash)
     && same(receipt.blockHash, event.blockHash) && receipt.blockNumber === event.blockNumber
     && receipt.transactionIndex === event.transactionIndex, 'Circle receipt is not bound to the payment event.');
