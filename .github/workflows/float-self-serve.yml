@@ -265,3 +265,5 @@ jobs:
         run: node contracts/test/mainnet-scope.test.mjs
       - name: Check bounded public candidate scope
         run: node contracts/test/mainnet-scope.test.mjs --public-bounded
+      - name: Check settled public candidate scope
+        run: node contracts/test/mainnet-scope.test.mjs --public-settled
