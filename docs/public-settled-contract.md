@@ -38,3 +38,15 @@ node contracts/test/mainnet-scope.test.mjs --public-settled
 ```
 
 No deployment address is provided by this change. Before use, independently verify the final source and runtime, financial accounting, authority, caps, monitoring, provider admission, browser and Circle client behaviour. Deployment and any existing contract pause changes require authorized wallet signatures. Existing reserves and debts are never moved automatically.
+
+## Monitor selection
+
+A release manifest for this candidate must set `contract.accountingModel` to `"settled-v1"` alongside its verified address, deployment block and runtime hash. Omission preserves legacy accounting for older contracts. An unsupported value is rejected. The settled model cannot be selected without a runtime hash, and a failed read of its defaulted principal ledger never falls back to legacy accounting.
+
+The monitor independently reconciles active committed capacity, sponsor escrow and defaulted unpaid principal. A missing fully drawn defaulted line must still produce a discovery failure even when active committed capacity and escrow are both zero. `ExpiredLineSettled` is an additional attribution event, not a second transfer to count alongside the underlying reserve return.
+
+## Repayment client preparation
+
+With the settled manifest selected, the repayment CLI labels `amountMode` as `maximum`, reports the current `expectedTransfer`, and prepares an allowance for that expected transfer. The calldata remains bound to the original reviewed draw and maximum. Legacy profiles retain their exact amount validation.
+
+`createCircleSettledTestnetRepayer` is an opt-in testnet integration boundary for rehearsal. It pins the runtime, line, draw, amount limit and wallet journal. It verifies the actual clamped repayment against the same draw event, companion repayment event, token transfer and successful user operation. It cannot activate a mainnet deployment. A maximum repayment journal cannot be resumed through the old exact amount adapter.

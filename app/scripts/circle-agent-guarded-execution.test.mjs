@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
-import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor } from './circle-agent-execution.mjs';
+import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor, createCircleSettledTestnetRepayer } from './circle-agent-execution.mjs';
 
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 const agent = `0x${'11'.repeat(20)}`, contract = `0x${'22'.repeat(20)}`, provider = `0x${'33'.repeat(20)}`;
@@ -35,7 +35,7 @@ function setup(overrides = {}, factory = createCircleGuardedRepayer) {
     getChainId: async()=>state.chainId, getCode: async()=>state.code,
     getBlock: async args=>args?.blockTag==='finalized'?{number:state.finalized}:args?.blockNumber?{number:args.blockNumber,hash:state.canonicalHash}:{number:100n},
     getTransaction: async()=>({to:entryPoint07Address,blockHash,input:encodeFunctionData({abi:entryPoint07Abi,functionName:'handleOps',args:[state.duplicateOps?[operation(),operation()]:[operation()],provider]})}),
-    readContract: async({functionName})=>({ getLine:{agent:state.lineAgent,state:state.lineState??2,principalOutstanding:state.outstanding??5000n}, repaymentBindingVersion:2n,currentDrawDigest:state.draw??digest,openingsPaused:true,spendsPaused:true, hashSpendIntent:digest, getUserOpHash:digest, receiptStatus:state.receiptStatus })[functionName],
+    readContract: async({functionName})=>({ getLine:{agent:state.lineAgent,state:state.lineState??2,principalOutstanding:state.outstanding??5000n}, totalDefaultedPrincipal:state.defaultedPrincipal??0n,repaymentBindingVersion:2n,currentDrawDigest:state.draw??digest,openingsPaused:true,spendsPaused:true, hashSpendIntent:digest, getUserOpHash:digest, receiptStatus:state.receiptStatus })[functionName],
     simulateContract: async()=>({result:[state.policy,0]}),
     getTransactionReceipt: async()=>({...state.receipt,blockHash,logs:state.bundleLogs??[before(),...state.receipt.logs,boundary()]}),
   };
@@ -509,4 +509,43 @@ test('read-only quote failure is retained while transport uncertainty stays unre
  const key=x.adapter.operationKey(repay);assert.equal((await x.options.journal.get(key)).notSubmitted,true);
  assert.equal((await createCircleGuardedRepayer(x.options).reconcile(key)).status,'not-submitted');
  assert.equal(x.state.sends,0);
+});
+
+
+function settledRepayerSetup() {
+  return setup({config:{...config,chainId:5042002}},createCircleSettledTestnetRepayer);
+}
+function setActualRepayment(state, amount, remaining=0n, transfer=amount) {
+  state.receipt.logs=[eventLog('Repaid',{lineId,payer:agent,amount,principalRemaining:remaining}),
+    eventLog('DrawRepaid',{lineId,drawDigest:digest,payer:agent,amount,principalRemaining:remaining}),
+    eventLog('Transfer',{from:agent,to:contract,value:transfer},usdc,erc20Abi)];
+}
+test('settled testnet repayment verifies the actual clamped amount and all companion evidence',async()=>{
+  const x=settledRepayerSetup();x.state.outstanding=4999n;setActualRepayment(x.state,4999n);
+  const result=await x.adapter.execute(repay);
+  assert.equal(result.status,'confirmed');assert.equal(result.actualRepaid,'4999');assert.equal(result.principalRemaining,'0');
+  assert.equal(x.state.sends,1);assert.equal((await x.adapter.execute(repay)).actualRepaid,'4999');assert.equal(x.state.sends,1);
+});
+test('settled receipt never accepts zero, above maximum, remaining debt or a mismatched token amount',async()=>{
+  for(const [actual,left,transfer] of [[0n,0n,0n],[5001n,0n,5001n],[4999n,1n,4999n],[4999n,0n,5000n]]) {
+    const x=settledRepayerSetup();setActualRepayment(x.state,actual,left,transfer);
+    await assert.rejects(()=>x.adapter.execute(repay));assert.equal(x.state.sends,1);
+  }
+  const legacy=setup();setActualRepayment(legacy.state,4999n);
+  await assert.rejects(()=>legacy.adapter.execute(repay));assert.equal(legacy.state.sends,1);
+});
+test('settled journal recovery keeps maximum consent and rejects reinterpretation as exact',async()=>{
+  const x=settledRepayerSetup();x.state.lose=true;x.state.outstanding=4999n;setActualRepayment(x.state,4999n);
+  const first=await x.adapter.execute(repay);assert.equal(first.status,'unknown');
+  const legacy=createCircleGuardedTestnetRepayer(x.options);
+  await assert.rejects(()=>legacy.reconcile(first.key),/amount mode changed/);
+  const resumed=createCircleSettledTestnetRepayer(x.options);
+  const recovered=await resumed.reconcile(first.key);assert.equal(recovered.actualRepaid,'4999');assert.equal(x.state.sends,1);
+});
+test('settled testnet entry point rejects mainnet, stale debt, missing ledger and oversized debt before sending',async()=>{
+  assert.throws(()=>createCircleSettledTestnetRepayer({...setup().options,config}),/Only Arc testnet/);
+  for(const outstanding of [0n,5001n]) {const x=settledRepayerSetup();x.state.outstanding=outstanding;await assert.rejects(()=>x.adapter.execute(repay),/reviewed agent debt/);assert.equal(x.state.sends,0);}
+  const x=settledRepayerSetup();const read=x.options.client.readContract;
+  x.options.client.readContract=async r=>r.functionName==='totalDefaultedPrincipal'?undefined:read(r);
+  await assert.rejects(()=>x.adapter.execute(repay),/Settled defaulted debt ledger/);assert.equal(x.state.sends,0);
 });

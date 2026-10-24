@@ -1,3 +1,4 @@
+import { committedCapitalOfLines, defaultedPrincipalOfLines, readAccountingState, accountingModel as validateAccountingModel, SETTLED_ACCOUNTING } from "./float-mainnet-accounting.mjs";
 import { decodeEventLog, decodeFunctionData, erc20Abi, keccak256, zeroAddress } from "viem";
 import { floatAbi, floatEventAbi } from "./float-mainnet-config.mjs";
 import {
@@ -135,6 +136,7 @@ async function check(values, { snapshot = false } = {}) {
       await at("totalSponsorObligations"),
       await at("minimumRepaymentWindow"),
     ];
+  const accountingState = await readAccountingState(connection, pinned.number);
   const pendingCaps = [];
   for (let kind = 0; kind < CAP_KINDS.length; kind++) pendingCaps.push(await at("pendingCaps", [kind]));
   const operatorAddresses = [...new Set(found.operatorSets.map((entry) => entry.args.operator))];
@@ -289,15 +291,19 @@ async function check(values, { snapshot = false } = {}) {
   }
   // DEFAULT_ELIGIBLE needs every line: a DRAWN line missing from the RPC's
   // log scan would raise nothing. The lines found hold totalCommittedCapital
-  // exactly when none is missing (reconcile's committedCapitalEqualsLines); a
-  // missed line that holds nothing is CLOSED or DEFAULTED and raises no alert.
+  // exactly when none is missing (reconcile's committedCapitalEqualsLines).
+  // The settled model also compares retired defaulted principal so a zero
+  // active-capacity line with an unpaid recovery claim cannot disappear.
   if (only === null) {
-    const held = lines.reduce((total, line) => total + line.availableReserve + line.principalOutstanding + line.recoveryAvailable, 0n);
-    if (held !== totalCommittedCapital) {
+    const held = committedCapitalOfLines(lines, accountingState.accountingModel);
+    const missingDefaulted = accountingState.accountingModel === SETTLED_ACCOUNTING && defaultedPrincipalOfLines(lines) !== accountingState.totalDefaultedPrincipal;
+    if (held !== totalCommittedCapital || missingDefaulted) {
       alert(
         "critical",
         "DISCOVERY_INCOMPLETE",
-        `totalCommittedCapital is ${totalCommittedCapital}, but the ${lines.length} line(s) found hold ${held} in availableReserve + principalOutstanding + recoveryAvailable: a line is missing from the canonical log scan, so its alerts (DEFAULT_ELIGIBLE included) cannot be raised, or the totals and the lines have diverged; run check and reconcile with an independent RPC`,
+        accountingState.accountingModel === SETTLED_ACCOUNTING
+          ? `Settled ledger mismatch: committed ${totalCommittedCapital}, discovered active ${held}; defaulted principal ${accountingState.totalDefaultedPrincipal}, discovered ${defaultedPrincipalOfLines(lines)}. Reconcile canonical discovery and both ledgers with an independent RPC.`
+          : `totalCommittedCapital is ${totalCommittedCapital}, but the ${lines.length} line(s) found hold ${held} in availableReserve + principalOutstanding + recoveryAvailable: a line is missing from the canonical log scan, so its alerts (DEFAULT_ELIGIBLE included) cannot be raised, or the totals and the lines have diverged; run check and reconcile with an independent RPC`,
       );
     }
   }
@@ -311,7 +317,7 @@ async function check(values, { snapshot = false } = {}) {
     }
     const usdc = await at("usdc");
     const balance = await connection.client.readContract({ address: usdc, abi: erc20Abi, functionName: "balanceOf", args: [connection.address], blockNumber: pinned.number });
-    const accounting = { balance, ...reconcileState({ balance, totalSponsorObligations, totalCommittedCapital, lines }) };
+    const accounting = { balance, ...reconcileState({ balance, totalSponsorObligations, totalCommittedCapital, lines, ...accountingState }) };
     const runtime = await connection.client.getCode({ address: connection.address, blockNumber: pinned.number });
     if (!runtime || runtime === "0x") throw new Error("candidate code missing at snapshot block");
     const fromBlock = values["executor-from-block"] === undefined ? connection.deployBlock : BigInt(values["executor-from-block"]);
@@ -361,6 +367,7 @@ async function check(values, { snapshot = false } = {}) {
       effectiveLimits,
       totalCommittedCapital,
       totalSponsorObligations,
+      ...(accountingState.accountingModel === SETTLED_ACCOUNTING ? accountingState : {}),
       pendingCapIncreases,
       operators,
     },
@@ -380,6 +387,8 @@ async function check(values, { snapshot = false } = {}) {
 // so, over every line ever opened:
 //   totalSponsorObligations == sum(availableReserve + recoveryAvailable)
 //   totalCommittedCapital   == sum(availableReserve + principalOutstanding + recoveryAvailable)
+// Settled candidates instead count availableReserve + live DRAWN principal,
+// and reconcile defaulted principal independently against its onchain aggregate.
 // A defaulted line's unrepaid principal stays committed after claimDefaulted.
 // CAP-02: each of those USDC movements is an exact transfer of the same amount,
 // so balanceOf(Float) == totalSponsorObligations + any USDC sent to the Float
@@ -429,11 +438,13 @@ export function lineMismatches({ state, reserveCap, availableReserve, principalO
   return mismatches;
 }
 
-export function reconcileState({ balance, totalSponsorObligations, totalCommittedCapital, lines }) {
+export function reconcileState({ balance, totalSponsorObligations, totalCommittedCapital, lines, accountingModel, totalDefaultedPrincipal }) {
+  const model = validateAccountingModel(accountingModel);
+  if (model === SETTLED_ACCOUNTING && (typeof totalDefaultedPrincipal !== "bigint" || totalDefaultedPrincipal < 0n)) throw new Error("Settled reconciliation requires totalDefaultedPrincipal");
   const sum = (field) => lines.reduce((total, line) => total + line[field], 0n);
   const sums = { availableReserve: sum("availableReserve"), principalOutstanding: sum("principalOutstanding"), recoveryAvailable: sum("recoveryAvailable") };
   const obligationsOfLines = sums.availableReserve + sums.recoveryAvailable;
-  const committedOfLines = obligationsOfLines + sums.principalOutstanding;
+  const committedOfLines = committedCapitalOfLines(lines, model);
   const surplus = balance >= totalSponsorObligations ? balance - totalSponsorObligations : 0n;
   const broken = lines.flatMap((line) => {
     const mismatches = lineMismatches(line);
@@ -458,7 +469,9 @@ export function reconcileState({ balance, totalSponsorObligations, totalCommitte
     {
       id: "committedCapitalEqualsLines",
       status: totalCommittedCapital === committedOfLines ? "PASS" : "FAIL",
-      detail: `totalCommittedCapital ${totalCommittedCapital}; sum over ${lines.length} lines of availableReserve + principalOutstanding + recoveryAvailable ${committedOfLines}`,
+      detail: model === SETTLED_ACCOUNTING
+        ? `totalCommittedCapital ${totalCommittedCapital}; active unused reserve plus DRAWN principal ${committedOfLines}`
+        : `totalCommittedCapital ${totalCommittedCapital}; sum over ${lines.length} lines of availableReserve + principalOutstanding + recoveryAvailable ${committedOfLines}`,
     },
     {
       id: "linesMatchReserveCap",
@@ -468,6 +481,9 @@ export function reconcileState({ balance, totalSponsorObligations, totalCommitte
         : `each of the ${lines.length} lines matches its reserveCap for its state`,
     },
   ];
+  if (model === SETTLED_ACCOUNTING) checks.push({ id: "defaultedPrincipalEqualsLines",
+    status: totalDefaultedPrincipal === defaultedPrincipalOfLines(lines) ? "PASS" : "FAIL",
+    detail: `totalDefaultedPrincipal ${totalDefaultedPrincipal}; discovered DEFAULTED principal ${defaultedPrincipalOfLines(lines)}` });
   return { ok: checks.every((entry) => entry.status === "PASS"), surplus, sums, checks };
 }
 
@@ -480,6 +496,7 @@ async function reconcile(values) {
   const usdc = await at("usdc");
   const totalSponsorObligations = await at("totalSponsorObligations");
   const totalCommittedCapital = await at("totalCommittedCapital");
+  const accountingState = await readAccountingState(connection, pinned.number);
   const balance = await connection.client.readContract({
     address: usdc,
     abi: erc20Abi,
@@ -509,7 +526,8 @@ async function reconcile(values) {
     balance,
     totalSponsorObligations,
     totalCommittedCapital,
-    ...reconcileState({ balance, totalSponsorObligations, totalCommittedCapital, lines }),
+    ...(accountingState.accountingModel === SETTLED_ACCOUNTING ? accountingState : {}),
+    ...reconcileState({ balance, totalSponsorObligations, totalCommittedCapital, lines, ...accountingState }),
     discovery: { lines: lines.length, index: found.index, scanned: found.scanned },
     lines,
   };
@@ -540,7 +558,7 @@ const USAGE = [
   `${TOOL} reconcile --manifest <path> [--index <index.json>]`,
   "Both read one pinned block. Default discovery is a complete canonical log scan from deployment; snapshot additionally supports an explicitly approved immutable history prefix and complete canonical suffix. --index (float-mainnet-indexer.mjs) supplies checkpoint lag/reorg diagnostics only; cached events never determine alerts or reconciliation.",
   `check reports each line, the pauses, pending cap increases, operators and owner, and alerts: DEFAULT_ELIGIBLE and DISCOVERY_INCOMPLETE (critical: exit 1), MATURITY_SOON, LINE_EXPIRY_SOON, POLICY_EXPIRY_SOON, SPENDS_PAUSED, OPENINGS_PAUSED, CAP_INCREASE_PENDING, OWNERSHIP_PENDING, OPERATOR_CHANGED, PROTOCOL_CAP_EXCEEDED, SPONSOR_REMOVED, INDEX_LAG. --warn-before (default ${DEFAULT_WARN_BEFORE}) is the warning horizon in seconds for maturities, expiries and the end of purchases before a line's expiry; --max-index-lag (default ${DEFAULT_MAX_INDEX_LAG}) is the largest index lag in seconds before INDEX_LAG; --line-id limits the lines checked and skips the DISCOVERY_INCOMPLETE guard.`,
-  "reconcile compares the Float's USDC balance with totalSponsorObligations (CAP-02, surplus reported), totalSponsorObligations with the lines' availableReserve + recoveryAvailable, totalCommittedCapital with their availableReserve + principalOutstanding + recoveryAvailable, and each line with its reserveCap for its state (a DEFAULTED line with its SponsorClaimed amounts); any mismatch exits 1.",
+  "reconcile compares token balance, sponsor escrow and per-line reserve identities. Legacy manifests count all principal and recovery escrow as committed. Explicit settled-v1 manifests instead count unused reserve plus live DRAWN principal and independently reconcile totalDefaultedPrincipal; any mismatch exits 1.",
 ];
 
 if (isEntrypoint(import.meta)) runCli(COMMANDS, USAGE);
