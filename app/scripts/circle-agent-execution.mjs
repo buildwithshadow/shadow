@@ -63,7 +63,13 @@ export function createCircleGuardedMainnetPurchaser(options) {
   return createExecutor(options, false, 5042, true, options.authorizePurchase);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null) {
+/** Opt-in testnet rehearsal for a pinned settled candidate. Does not enable mainnet. */
+export function createCircleSettledTestnetRepayer(options) {
+  requireThat(options.config.chainId === TESTNET, 'Only Arc testnet settled repayment is enabled.');
+  return createExecutor(options, true, TESTNET, false, null, true);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null, maximumRepayment = false) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;
   const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
@@ -122,7 +128,12 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const read = (functionName, args = []) => client.readContract({ address: contract, abi, functionName, args });
       requireThat(await read('repaymentBindingVersion') === 2n && same(await read('currentDrawDigest', [config.expectedLineId]), config.expectedDraw), 'Reviewed draw is stale.');
       const line = await read('getLine', [config.expectedLineId]);
-      requireThat(same(line.agent, agent) && [2, 3].includes(Number(line.state)) && line.principalOutstanding >= cap, 'Exact reviewed agent debt required.');
+      requireThat(same(line.agent, agent) && [2, 3].includes(Number(line.state))
+        && (maximumRepayment ? line.principalOutstanding > 0n && line.principalOutstanding <= cap : line.principalOutstanding >= cap), 'Exact reviewed agent debt required.');
+      if (maximumRepayment) {
+        const value = await client.readContract({ address: contract, abi: parseAbi(['function totalDefaultedPrincipal() view returns (uint256)']), functionName: 'totalDefaultedPrincipal' });
+        requireThat(typeof value === 'bigint' && value >= 0n, 'Settled defaulted debt ledger required.');
+      }
     } else if (purchaseOnly) {
       const read = (functionName, args = []) => client.readContract({ address: contract, abi, functionName, args });
       requireThat(await read('repaymentBindingVersion') === 2n, 'Guarded repayment binding version required.');
@@ -142,7 +153,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     const simulation = await client.simulateContract({ address: decoded.to, abi: decoded.callAbi, functionName: decoded.functionName, args: decoded.args, account: agent });
     if (decoded.functionName === 'executeSpend') requireThat(simulation.result?.[0] === true, 'Shadow policy refused the purchase.');
     const block = await client.getBlock();
-    return { operation: decoded.functionName, amount: decoded.amount.toString(), lineId: decoded.lineId ?? null, digest: decoded.digest ?? (guarded ? config.expectedDraw : null), fromBlock: block.number.toString() };
+    return { operation: decoded.functionName, amount: decoded.amount.toString(), lineId: decoded.lineId ?? null, digest: decoded.digest ?? (guarded ? config.expectedDraw : null), fromBlock: block.number.toString(), ...(maximumRepayment ? { amountMode: 'maximum' } : {}) };
   }
   function envelope(request, idempotencyKey) {
     return { blockchain: network, sourceAddress: agent, contractAddress: getAddress(request.to), callData: request.data, amount: '0', idempotencyKey };
@@ -162,6 +173,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       requireThat(record.expected.operation === 'executeSpend' && record.expected.amount === decoded.amount.toString() && same(record.expected.lineId, config.expectedLineId), 'Journal purchase attribution changed.');
       return;
     }
+    requireThat((record.expected.amountMode ?? 'exact') === (maximumRepayment ? 'maximum' : 'exact'), 'Journal repayment amount mode changed.');
     requireThat(record.expected.operation === decoded.functionName && record.expected.amount === decoded.amount.toString() && same(record.expected.digest, config.expectedDraw) && (decoded.lineId ? same(record.expected.lineId, decoded.lineId) : record.expected.lineId === null), 'Journal repayment attribution changed.');
   }
   async function verifyReceipt(record, txHash) {
@@ -224,7 +236,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     const matches = events.filter(event => {
       const a = event.args, amount = BigInt(record.expected.amount);
       if (record.expected.operation === 'approve') return event.eventName === 'Approval' && same(a.owner, agent) && same(a.spender, contract) && a.value === amount;
-      if (record.expected.operation === 'repayForDraw') return event.eventName === 'DrawRepaid' && same(a.lineId, record.expected.lineId) && same(a.drawDigest, record.expected.digest) && same(a.payer, agent) && a.amount === amount;
+      if (record.expected.operation === 'repayForDraw') return event.eventName === 'DrawRepaid' && same(a.lineId, record.expected.lineId) && same(a.drawDigest, record.expected.digest) && same(a.payer, agent) && (maximumRepayment ? a.amount > 0n && a.amount <= amount && a.principalRemaining === 0n : a.amount === amount);
       if (record.expected.operation === 'repay') return event.eventName === 'Repaid' && same(a.lineId, record.expected.lineId) && same(a.payer, agent) && a.amount === amount;
       return event.eventName === 'ProviderPaid' && same(a.digest, record.expected.digest) && same(a.lineId, record.expected.lineId) && same(a.provider, config.provider) && a.principal === amount;
     });
@@ -235,11 +247,13 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     }
     if (record.expected.operation === 'repayForDraw') {
       const repayment = matches[0];
-      requireThat(events.filter(e => e.eventName === 'Repaid' && same(e.args.lineId, record.expected.lineId) && same(e.args.payer, agent) && e.args.amount === BigInt(record.expected.amount) && e.args.principalRemaining === repayment?.args.principalRemaining).length === 1, 'Missing exact companion repayment event.');
-      requireThat(events.filter(e => e.eventName === 'Transfer' && same(e.args.from, agent) && same(e.args.to, contract) && e.args.value === BigInt(record.expected.amount)).length === 1, 'Missing exact agent-to-Shadow token transfer.');
+      const actualAmount = repayment?.args.amount;
+      requireThat(events.filter(e => e.eventName === 'Repaid' && same(e.args.lineId, record.expected.lineId) && same(e.args.payer, agent) && e.args.amount === actualAmount && e.args.principalRemaining === repayment?.args.principalRemaining).length === 1, 'Missing exact companion repayment event.');
+      requireThat(events.filter(e => e.eventName === 'Transfer' && same(e.args.from, agent) && same(e.args.to, contract) && e.args.value === actualAmount).length === 1, 'Missing exact agent-to-Shadow token transfer.');
     }
     requireThat(matches.length === 1 && blocked.length === 0, 'Receipt does not prove the exact requested operation.');
-    return { status: 'confirmed', txHash, userOpHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString() };
+    return { status: 'confirmed', txHash, userOpHash, blockHash: receipt.blockHash, blockNumber: receipt.blockNumber.toString(),
+      ...(maximumRepayment && record.expected.operation === 'repayForDraw' ? { actualRepaid: matches[0].args.amount.toString(), principalRemaining: matches[0].args.principalRemaining.toString() } : {}) };
   }
   async function observe(key, record, response) {
     if (!response) return { status: 'unknown', key, transactionId: record.transactionId ?? null };

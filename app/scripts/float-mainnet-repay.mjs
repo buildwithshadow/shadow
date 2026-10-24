@@ -1,3 +1,4 @@
+import { SETTLED_ACCOUNTING } from "./float-mainnet-accounting.mjs";
 import { floatAbi } from "./float-mainnet-config.mjs";
 import { parseAbi } from "viem";
 import {
@@ -40,6 +41,8 @@ async function repay(values) {
   const mode = writeMode(values);
 
   const connection = await connect(values);
+  const maximumRepayment = connection.accountingModel === SETTLED_ACCOUNTING;
+  if (maximumRepayment && !expectedDraw) throw new UsageError("settled repayment requires --expected-draw; no generic debt approval was prepared");
   const keyEnv = mode.mode === "calldata" ? null : repayerKey();
   const signer = signerFor(connection, mode, keyEnv);
   const block = await latestBlock(connection);
@@ -51,14 +54,15 @@ async function repay(values) {
   }
   const state = stateName(line);
   const amount = requested ?? line.principalOutstanding;
-  const funding = await usdcFunding(connection, signer.address, amount);
+  const expectedTransfer = maximumRepayment && amount > line.principalOutstanding ? line.principalOutstanding : amount;
+  const funding = await usdcFunding(connection, signer.address, expectedTransfer);
 
   const problems = [];
   if (state !== "DRAWN" && state !== "DEFAULTED") problems.push(`line ${lineId} is ${state}; only a DRAWN or DEFAULTED line takes repayment`);
-  else if (amount === 0n || amount > line.principalOutstanding) {
+  else if (amount === 0n || line.principalOutstanding === 0n || (!maximumRepayment && amount > line.principalOutstanding)) {
     problems.push(`--amount ${amount} must be between 1 and principalOutstanding ${line.principalOutstanding}`);
   }
-  if (funding.balance < amount) problems.push(`USDC balance ${funding.balance} of ${signer.address} is below the repayment ${amount}`);
+  if (funding.balance < expectedTransfer) problems.push(`USDC balance ${funding.balance} of ${signer.address} is below the repayment ${expectedTransfer}`);
   failIf(problems);
 
   const calls = [
@@ -74,6 +78,7 @@ async function repay(values) {
     repayer: signer.address,
     keyEnv,
     amount,
+    ...(maximumRepayment ? { amountMode: "maximum", expectedTransfer } : {}),
     expectedDraw,
     consent: expectedDraw ? "reviewed-purchase-only" : "any-current-line-debt-at-execution",
     approvalIncluded: funding.approval !== null,

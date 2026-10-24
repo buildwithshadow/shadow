@@ -1,3 +1,4 @@
+import { accountingModel, SETTLED_ACCOUNTING } from "./float-mainnet-accounting.mjs";
 import { readFileSync } from "node:fs";
 import {
   BaseError,
@@ -34,6 +35,7 @@ export const floatEventAbi = [
   ...floatAbi.filter(item => item.type === "event"),
   parseAbiItem("event DrawRepaid(bytes32 indexed lineId, bytes32 indexed drawDigest, address indexed payer, uint256 amount, uint256 principalRemaining)"),
   parseAbiItem("event ExpiredLineClosed(bytes32 indexed lineId, address indexed caller, address indexed sponsor, uint256 amount)"),
+  parseAbiItem("event ExpiredLineSettled(bytes32 indexed lineId, address indexed caller, address indexed sponsor, uint256 returned, uint256 principalOutstanding)"),
 ];
 
 export const DOMAIN_NAME = "ShadowFloatMainnet";
@@ -141,7 +143,7 @@ export function readDeployment(env = process.env, { manifest } = {}) {
     const deployBlock = parsed.deployment?.blockNumber;
     if (!/^\d+$/.test(String(deployBlock))) throw new Error(`${manifest} has no deployment.blockNumber`);
     if (!parsed.contract?.address) throw new Error(`${manifest} has no contract.address`);
-    release = { address: parsed.contract.address, runtimeHash: runtimeHash.toLowerCase(), deployBlock: BigInt(deployBlock) };
+    release = { address: parsed.contract.address, runtimeHash: runtimeHash.toLowerCase(), deployBlock: BigInt(deployBlock), accountingModel: accountingModel(parsed.contract.accountingModel) };
   }
 
   const fromEnv = env.FLOAT_MAINNET_ADDRESS?.trim() || undefined;
@@ -157,6 +159,7 @@ export function readDeployment(env = process.env, { manifest } = {}) {
     expectedChainId: BigInt(chainRaw),
     address: getAddress(raw),
     runtimeHash: release?.runtimeHash ?? null,
+    accountingModel: release?.accountingModel ?? accountingModel(),
     deployBlock: release?.deployBlock ?? null,
   };
 }
@@ -164,6 +167,8 @@ export function readDeployment(env = process.env, { manifest } = {}) {
 // Connects and proves the address is this contract generation on this chain,
 // using the contract's own public domain and type constants.
 export async function connectCandidate(deployment, { readOnly = false } = {}) {
+  const model = accountingModel(deployment.accountingModel);
+  if (model === SETTLED_ACCOUNTING && !deployment.runtimeHash) throw new Error("settled-v1 accounting requires a runtime-verified release manifest");
   deployment = { ...deployment, rpcUrl: arcRpcUrlForChain(deployment.rpcUrl, deployment.expectedChainId) };
   const chain = defineChain({
     id: Number(deployment.expectedChainId),
@@ -221,7 +226,7 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
   if (mismatches.length) {
     throw new Error(`${deployment.address} is not this ShadowFloatMainnet generation (${mismatches.join(", ")} differ)`);
   }
-  return { chain, transport, client, address: deployment.address, chainId, deployBlock: deployment.deployBlock ?? null,
+  return { chain, transport, client, address: deployment.address, chainId, accountingModel: model, deployBlock: deployment.deployBlock ?? null,
     ...(deployment.logChunkBlocks !== undefined ? { logChunkBlocks: deployment.logChunkBlocks } : {}) };
 }
 

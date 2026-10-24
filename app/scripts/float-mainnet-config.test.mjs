@@ -6,6 +6,7 @@ import test from "node:test";
 import { decodeEventLog, http, keccak256, numberToHex, stringToBytes, toBytes } from "viem";
 
 import {
+  connectCandidate,
   BLOCK_REASONS,
   LINE_STATES,
   SPEND_INTENT_TYPE_STRING,
@@ -148,4 +149,29 @@ test("canonical log batch configuration is optional and bounded", () => {
   assert.equal(Object.hasOwn(readDeployment(ENV),"logChunkBlocks"),false);
   for(const value of ['5000','7500',' 10000 '])assert.equal(readDeployment({...ENV,SHADOW_RPC_LOG_CHUNK_BLOCKS:value}).logChunkBlocks,BigInt(value.trim()));
   for(const value of ['', '0','4999','10001','1e4','10000.1','Infinity'])assert.throws(()=>readDeployment({...ENV,SHADOW_RPC_LOG_CHUNK_BLOCKS:value}),/between 5000 and 10000/);
+});
+
+
+test("settled accounting is explicit in a passing runtime-pinned manifest", async () => {
+  const dir=mkdtempSync(join(tmpdir(),"settled-manifest-"));
+  try {
+    const path=join(dir,"manifest.json");
+    const release={ok:true,chainId:"5042002",contract:{address:ADDRESS,accountingModel:"settled-v1"},bytecode:{onchainRuntimeKeccak256:"0x"+"12".repeat(32)},deployment:{blockNumber:"1"}};
+    writeFileSync(path,JSON.stringify(release));
+    assert.equal(readDeployment(ENV,{manifest:path}).accountingModel,"settled-v1");
+    assert.equal(readDeployment(ENV).accountingModel,"legacy-v1");
+    for(const model of ["auto","settled",null,1]) {
+      writeFileSync(path,JSON.stringify({...release,contract:{address:ADDRESS,accountingModel:model}}));
+      assert.throws(()=>readDeployment(ENV,{manifest:path}),/Unsupported contract.accountingModel/);
+    }
+    await assert.rejects(connectCandidate({accountingModel:"settled-v1"}),/requires a runtime-verified release manifest/);
+  } finally {rmSync(dir,{recursive:true,force:true});}
+});
+
+test("settled settlement events decode without changing the callable legacy ABI", () => {
+  const settled=JSON.parse(readFileSync(new URL("../../contracts/out/ShadowFloatMainnetPublicSettled.sol/ShadowFloatMainnetPublicSettled.json",import.meta.url))).abi;
+  const shape=e=>({name:e.name,anonymous:Boolean(e.anonymous),inputs:e.inputs.map(({name,type,indexed})=>({name,type,indexed:Boolean(indexed)}))});
+  for(const event of settled.filter(x=>x.type==="event"))assert.deepEqual(shape(floatEventAbi.find(x=>x.name===event.name)),shape(event));
+  assert.equal(floatEventAbi.filter(x=>x.name==="ExpiredLineSettled").length,1);
+  assert.throws(()=>decodeEventLog({abi:floatEventAbi,topics:["0x"+"ff".repeat(32)],data:"0x"}),/not found on ABI/);
 });
