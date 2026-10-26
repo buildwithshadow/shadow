@@ -1,3 +1,4 @@
+import { SETTLED_TESTNET, SETTLED_TESTNET_SERVICE } from '../settledTestnetDeployment.mjs';
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, keccak256, stringToHex, zeroHash } from 'viem';
 import { circleGuardedRepaymentAbi as abi } from './circle-agent-execution.mjs';
 import { GUARDED_TESTNET as deployment, GUARDED_TESTNET_SERVICE as service } from '../guardedTestnetDeployment.mjs';
@@ -20,11 +21,15 @@ export function createBoundedTestnetCircleOperations(options) {
   return createOperations(options, BOUNDED_TESTNET, BOUNDED_TESTNET_SERVICE);
 }
 
+export function createSettledTestnetCircleOperations(options) {
+  return createOperations(options, SETTLED_TESTNET, SETTLED_TESTNET_SERVICE, true);
+}
+
 export function createGuardedMainnetCircleOperations(options) {
   return createOperations(options, GUARDED_MAINNET, GUARDED_MAINNET_SERVICE);
 }
 
-function createOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }, deployment, service) {
+function createOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }, deployment, service, maximumRepayment = false) {
   const amount = BigInt(service.principal);
   const endpointHash = keccak256(stringToHex(service.endpoint));
   agent = getAddress(agent);
@@ -103,8 +108,10 @@ function createOperations({ agent, line, state, save, purchaseExecutor, makeRepa
     const current = await readLine();
     must(same(current.agent, agent), 'Repayment line belongs to another agent.');
     if (current.principalOutstanding === 0n) return { status: 'no-debt' };
-    must([2, 3].includes(Number(current.state)) && current.principalOutstanding === amount,
-      'This runner repays exactly 0.005 USDC of reviewed agent debt on its pinned chain.');
+    must([2, 3].includes(Number(current.state)) && (maximumRepayment
+      ? current.principalOutstanding > 0n && current.principalOutstanding <= amount
+      : current.principalOutstanding === amount),
+      'Reviewed agent debt must fit this runner repayment limit.');
     const plan = { version: 1, line, draw: current.drawDigest, amount: service.principal };
     validatePlan(plan);
     if (state.guardedRepayment) must(same(state.guardedRepayment.draw, plan.draw), 'Current debt differs from the original repayment review. Do not rebind it.');

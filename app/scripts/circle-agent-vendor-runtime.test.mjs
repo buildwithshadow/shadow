@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import approval from './circle-cli-dependency-approval.json' with { type: 'json' };
 import { inspectCircleCliDependencies, freezeCircleCliSource } from './circle-agent-cli-runtime.mjs';
-import { rawCalldataCompatibility, guardedTestnetPurchaseCompatibility, guardedMainnetPurchaseCompatibility, CIRCLE_CLI_SHA256 } from './circle-agent-cli-transport.mjs';
+import { rawCalldataCompatibility, guardedTestnetPurchaseCompatibility, guardedMainnetPurchaseCompatibility, settledTestnetPurchaseCompatibility, CIRCLE_CLI_SHA256 } from './circle-agent-cli-transport.mjs';
 import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 
 const runtime = fileURLToPath(new URL('../../tooling/circle-cli-runtime/', import.meta.url));
@@ -37,6 +37,12 @@ test('the frozen vendor and scoped compatibility copy boot without credentials a
     const guarded = await freezeCircleCliSource(guardedSource, entrypoint, join(dir, 'cache'));
     assert.match(guardedSource, /\["0xd39d55cc0c84408dcc409badb776459641dfd4be"\]\.includes\(contractAddress/);
     assert.match(guardedSource, /rawData\.toLowerCase\(\)\.startsWith/);
+    const settledSource = settledTestnetPurchaseCompatibility(source);
+    const settled = await freezeCircleCliSource(settledSource, entrypoint, join(dir, 'cache'));
+    const settledSection = settledSource.slice(settledSource.indexOf('async function handleAgentExecute('), settledSource.indexOf('async function handleLocalExecuteEstimate'));
+    assert.match(settledSection, /blockchain !== 'ARC-TESTNET'/);
+    assert.match(settledSection, /0x7ef717d7f7f47d48ba5330047b32353567331dfa/);
+    assert.match(settledSection, /rawData\.toLowerCase\(\)\.startsWith/);
     const mainnetSource = guardedMainnetPurchaseCompatibility(source);
     const mainnet = await freezeCircleCliSource(mainnetSource, entrypoint, join(dir, 'cache'));
     const executeSection = mainnetSource.slice(mainnetSource.indexOf('async function handleAgentExecute('), mainnetSource.indexOf('async function handleLocalExecuteEstimate'));
@@ -52,6 +58,7 @@ test('the frozen vendor and scoped compatibility copy boot without credentials a
     assert.equal(run(compatible, ['--version']).trim(), approval.circleVersion);
     assert.equal(run(guarded, ['--version']).trim(), approval.circleVersion);
     assert.equal(run(mainnet, ['--version']).trim(), approval.circleVersion);
+    assert.equal(run(settled, ['--version']).trim(), approval.circleVersion);
     assert.match(run(mainnet, ['wallet', 'execute', '--help']), /--idempotency-key/);
     assert.match(run(original, ['wallet', 'execute', '--help']), /--idempotency-key/);
     assert.match(run(compatible, ['wallet', 'execute', '--help']), /--estimate/);
