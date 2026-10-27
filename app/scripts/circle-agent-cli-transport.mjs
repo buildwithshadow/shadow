@@ -1,3 +1,4 @@
+import { SETTLED_TESTNET } from '../settledTestnetDeployment.mjs';
 import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -16,6 +17,7 @@ const CONTRACT = '0xb31d9e17410b10a619b66df0c31f59acbb33b553';
 export const GUARDED_MAINNET_CONTRACT = '0x708c8c987eb4cd14445ac2c65ea712b2084888eb';
 export const GUARDED_TESTNET_CONTRACT = '0xd39d55cc0c84408dcc409badb776459641dfd4be';
 export const BOUNDED_TESTNET_CONTRACT = '0xcb4958bbf9cb6c6ee47590e8cf3edd228035d356';
+export const SETTLED_TESTNET_CONTRACT = SETTLED_TESTNET.address.toLowerCase();
 const requireThat = (ok, message) => { if (!ok) throw new Error(message); };
 
 // A reproducible compatibility copy of the unmodified Apache-2.0 Circle CLI.
@@ -35,6 +37,10 @@ export function boundedTestnetPurchaseCompatibility(source) {
 
 export function guardedMainnetPurchaseCompatibility(source) {
   return rawCalldataForContract(source, GUARDED_MAINNET_CONTRACT, true, 'ARC');
+}
+
+export function settledTestnetPurchaseCompatibility(source) {
+  return rawCalldataForContract(source, SETTLED_TESTNET_CONTRACT, true);
 }
 
 function rawCalldataForContract(source, contract, purchaseOnly = false, network = 'ARC-TESTNET') {
@@ -73,13 +79,18 @@ export async function createCircleBoundedTestnetPurchaseTransport(options) {
   return createTransport(options, purchasePolicy(options, false, true));
 }
 
-function purchasePolicy({ expectedLineId, provider, endpointHash, maxAmount }, mainnet = false, boundedTestnet = false) {
-  requireThat(!(mainnet && boundedTestnet), 'Bounded testnet cannot select mainnet.');
+/** Separate fixed settled deployment; no caller-selected address or network. */
+export async function createCircleSettledTestnetPurchaseTransport(options) {
+  return createTransport(options, purchasePolicy(options, false, false, true));
+}
+
+function purchasePolicy({ expectedLineId, provider, endpointHash, maxAmount }, mainnet = false, boundedTestnet = false, settledTestnet = false) {
+  requireThat(Number(mainnet) + Number(boundedTestnet) + Number(settledTestnet) <= 1, 'Select one purchase deployment.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(expectedLineId) && !/^0x0{64}$/.test(expectedLineId), 'Pin the exact nonzero purchase line.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(endpointHash), 'Pin the provider endpoint hash.');
   const amount = BigInt(maxAmount);
   requireThat(amount > 0n && amount <= 5000n, 'Guarded purchase limit exceeds 0.005 USDC.');
-  return Object.freeze({ expectedLineId: expectedLineId.toLowerCase(), provider: getAddress(provider), endpointHash: endpointHash.toLowerCase(), amount, chainId: mainnet ? 5042 : 5042002, network: mainnet ? 'ARC' : 'ARC-TESTNET', contract: mainnet ? GUARDED_MAINNET_CONTRACT : boundedTestnet ? BOUNDED_TESTNET_CONTRACT : GUARDED_TESTNET_CONTRACT });
+  return Object.freeze({ expectedLineId: expectedLineId.toLowerCase(), provider: getAddress(provider), endpointHash: endpointHash.toLowerCase(), amount, chainId: mainnet ? 5042 : 5042002, network: mainnet ? 'ARC' : 'ARC-TESTNET', contract: mainnet ? GUARDED_MAINNET_CONTRACT : settledTestnet ? SETTLED_TESTNET_CONTRACT : boundedTestnet ? BOUNDED_TESTNET_CONTRACT : GUARDED_TESTNET_CONTRACT });
 }
 
 async function createTransport({ entrypoint, agent, journal, runtimeDirectory = journal?.runtimeDirectory, run = runFile, beforeExecute, beforeSign }, policy = null) {
@@ -88,6 +99,7 @@ async function createTransport({ entrypoint, agent, journal, runtimeDirectory = 
   const source = await readFile(original, 'utf8');
   const patched = !policy ? rawCalldataCompatibility(source)
     : policy.chainId === 5042 ? guardedMainnetPurchaseCompatibility(source)
+    : policy.contract === SETTLED_TESTNET_CONTRACT ? settledTestnetPurchaseCompatibility(source)
     : policy.contract === BOUNDED_TESTNET_CONTRACT ? boundedTestnetPurchaseCompatibility(source)
     : guardedTestnetPurchaseCompatibility(source);
   const compatibility = await freezeCircleCliSource(patched, original, runtimeDirectory);
@@ -107,6 +119,10 @@ export function createCircleGuardedTestnetPurchaseDriver(options) {
 
 export function createCircleBoundedTestnetPurchaseDriver(options) {
   return createDriver(options, purchasePolicy(options, false, true));
+}
+
+export function createCircleSettledTestnetPurchaseDriver(options) {
+  return createDriver(options, purchasePolicy(options, false, false, true));
 }
 
 export function createCircleGuardedMainnetPurchaseDriver(options) {
