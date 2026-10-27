@@ -69,6 +69,15 @@ export function createCircleSettledTestnetRepayer(options) {
   return createExecutor(options, true, TESTNET, false, null, true);
 }
 
+/** Mainnet repayment only. Retains the exact draw, runtime, wallet journal and
+ * fee guards, while confirming the actual amount pulled by a settled contract.
+ * This does not enable purchases or select a replacement deployment.
+ */
+export function createCircleSettledMainnetRepayer(options) {
+  requireThat(options.config.chainId === 5042, 'Only Arc mainnet settled repayment is enabled.');
+  return createExecutor(options, true, 5042, false, null, true);
+}
+
 function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null, maximumRepayment = false) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;

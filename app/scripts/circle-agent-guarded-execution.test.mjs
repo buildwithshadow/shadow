@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
-import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor, createCircleSettledTestnetRepayer } from './circle-agent-execution.mjs';
+import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor, createCircleSettledTestnetRepayer, createCircleSettledMainnetRepayer } from './circle-agent-execution.mjs';
 
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 const agent = `0x${'11'.repeat(20)}`, contract = `0x${'22'.repeat(20)}`, provider = `0x${'33'.repeat(20)}`;
@@ -546,6 +546,48 @@ test('settled testnet entry point rejects mainnet, stale debt, missing ledger an
   assert.throws(()=>createCircleSettledTestnetRepayer({...setup().options,config}),/Only Arc testnet/);
   for(const outstanding of [0n,5001n]) {const x=settledRepayerSetup();x.state.outstanding=outstanding;await assert.rejects(()=>x.adapter.execute(repay),/reviewed agent debt/);assert.equal(x.state.sends,0);}
   const x=settledRepayerSetup();const read=x.options.client.readContract;
+  x.options.client.readContract=async r=>r.functionName==='totalDefaultedPrincipal'?undefined:read(r);
+  await assert.rejects(()=>x.adapter.execute(repay),/Settled defaulted debt ledger/);assert.equal(x.state.sends,0);
+});
+
+test('settled mainnet confirms a clamped repayment without a second send',async()=>{
+  const x=setup({},createCircleSettledMainnetRepayer);
+  x.state.outstanding=3000n;setActualRepayment(x.state,3000n);
+  const paid=await x.adapter.execute(repay);
+  assert.equal(x.state.request.blockchain,'ARC');
+  assert.equal(paid.status,'confirmed');assert.equal(paid.actualRepaid,'3000');assert.equal(paid.principalRemaining,'0');
+  assert.equal((await x.adapter.execute(repay)).txHash,txHash);assert.equal(x.state.sends,1);
+});
+
+test('settled mainnet refuses invalid receipt amounts and preserves uncertainty',async()=>{
+  for(const [actual,left,transfer] of [[0n,0n,0n],[5001n,0n,5001n],[3000n,1n,3000n],[3000n,0n,5000n]]) {
+    const x=setup({},createCircleSettledMainnetRepayer);setActualRepayment(x.state,actual,left,transfer);
+    await assert.rejects(()=>x.adapter.execute(repay));assert.equal(x.state.sends,1);
+    assert.equal((await x.adapter.execute(repay)).status,'unknown');assert.equal(x.state.sends,1);
+  }
+});
+
+test('settled mainnet restores its original maximum repayment without reinterpreting an exact journal',async()=>{
+  const x=setup({},createCircleSettledMainnetRepayer);
+  x.state.lose=true;x.state.outstanding=3000n;setActualRepayment(x.state,3000n);
+  const first=await x.adapter.execute(repay);assert.equal(first.status,'unknown');
+  await assert.rejects(()=>createCircleGuardedRepayer(x.options).reconcile(first.key),/amount mode changed/);
+  assert.equal((await createCircleSettledMainnetRepayer(x.options).reconcile(first.key)).actualRepaid,'3000');
+  assert.equal(x.state.sends,1);
+  const legacy=setup();legacy.state.lose=true;const exact=await legacy.adapter.execute(repay);
+  await assert.rejects(()=>createCircleSettledMainnetRepayer(legacy.options).reconcile(exact.key),/amount mode changed/);
+  assert.equal(legacy.state.sends,1);
+});
+
+test('settled mainnet validates network, bounded debt, draw, ledger and fee before execution',async()=>{
+  for(const patch of [{chainId:5042002},{chainId:1},{maxAmount:'50001'},{maxNetworkFee:parseUnits('0.020000000000000001',18).toString()}]) {
+    assert.throws(()=>createCircleSettledMainnetRepayer({...setup().options,config:{...config,...patch}}));
+  }
+  for(const patch of [{outstanding:0n},{outstanding:5001n},{draw:endpointHash},{chainId:5042002},{code:'0x6001'},{fee:'0.021'}]) {
+    const x=setup({},createCircleSettledMainnetRepayer);Object.assign(x.state,patch);
+    await assert.rejects(()=>x.adapter.execute(repay));assert.equal(x.state.sends,0);
+  }
+  const x=setup({},createCircleSettledMainnetRepayer);const read=x.options.client.readContract;
   x.options.client.readContract=async r=>r.functionName==='totalDefaultedPrincipal'?undefined:read(r);
   await assert.rejects(()=>x.adapter.execute(repay),/Settled defaulted debt ledger/);assert.equal(x.state.sends,0);
 });
