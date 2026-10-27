@@ -1,13 +1,14 @@
 import { createRequire } from 'node:module';
+import { createRpcReadTransport } from '../../app/scripts/rpc-read-transport.mjs';
 
-const { createPublicClient, erc20Abi, formatUnits, getAddress, http, zeroAddress } =
+const { createPublicClient, erc20Abi, formatUnits, getAddress, zeroAddress } =
   createRequire(new URL('../../app/package.json', import.meta.url))('viem');
 const USDC = '0x3600000000000000000000000000000000000000';
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const REQUEST = /^arc-wallet:([0-9a-f]{32}):(0x[0-9a-fA-F]{40})$/;
 const NETWORKS = {
   5042: ['https://rpc.mainnet.arc.io', 'https://rpc.blockdaemon.mainnet.arc.io'],
-  5042002: ['https://rpc.testnet.arc.io', 'https://rpc.blockdaemon.testnet.arc.io'],
+  5042002: ['https://rpc.blockdaemon.testnet.arc.io', 'https://rpc.drpc.testnet.arc.io'],
 };
 
 export function walletReportAddress(requestId) {
@@ -20,9 +21,28 @@ export function walletReportAddress(requestId) {
 
 // Public, read-only report. Preparation occurs before provider acceptance; the
 // provider server freezes these bytes under the spend digest for paid recovery.
-export function createShadowArcWalletService({ chainId = 5042, clients, now = () => Math.floor(Date.now() / 1000) } = {}) {
+export function createShadowArcWalletService({ chainId = 5042, clients, rpcUrls = NETWORKS[chainId], now = () => Math.floor(Date.now() / 1000) } = {}) {
   if (!NETWORKS[chainId] || !Number.isInteger(chainId)) throw new Error('wallet report supports Arc mainnet or testnet only');
-  clients ??= NETWORKS[chainId].map(url => createPublicClient({ transport: http(url, { timeout: 15_000, retryCount: 0 }) }));
+  if (!clients) {
+    if (!Array.isArray(rpcUrls) || rpcUrls.length !== 2) throw new Error('two separate RPC URLs required');
+    const urls = rpcUrls.map(value => {
+      let url;
+      try { url = new URL(value); } catch { throw new Error('invalid wallet report RPC URL'); }
+      const local = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname);
+      if (url.username || url.password || url.hash || (url.protocol !== 'https:' && !(url.protocol === 'http:' && local))) {
+        throw new Error('wallet report RPC requires HTTPS or local HTTP without credentials or fragment');
+      }
+      return url.href;
+    });
+    if (urls[0] === urls[1]) throw new Error('two separate RPC URLs required');
+    // Each source keeps its own paced, read-only queue across requests. A
+    // transient quota error can recover before acceptance, but a failed source
+    // is never replaced with the other source to manufacture agreement.
+    clients = urls.map(url => createPublicClient({ transport: createRpcReadTransport(url, {
+      expectedChainId: chainId, timeout: 5_000,
+      queueOptions: { spacingMs: 350, maxAttempts: 3, baseDelayMs: 750, maxDelayMs: 1500 },
+    }) }));
+  }
   if (!Array.isArray(clients) || clients.length !== 2 || clients[0] === clients[1]) throw new Error('two separate read clients required');
   const service = async () => { throw new Error('Arc wallet report must be prepared before acceptance'); };
   service.validatePrepared = async ({ requestId, result }) => {
