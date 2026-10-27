@@ -1,3 +1,4 @@
+import { accountingModel } from './float-mainnet-accounting.mjs';
 import { spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import { closeSync, existsSync, fchmodSync, fsyncSync, mkdirSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
@@ -41,6 +42,7 @@ export function loadContext({ baselinePath, manifestPath, stateDir, indexPath, g
   const manifest = JSON.parse(rawManifest);
   if (baseline.schemaVersion === 2 && (manifest.publicRegistration !== true || manifest.repaymentBindingVersion !== 2)) throw new Error("Public observation requires an explicitly bound public repayment deployment manifest");
   if (manifest.ok !== true) throw new Error("manifest must have ok:true");
+  if (accountingModel(manifest.contract?.accountingModel) !== accountingModel(baseline.accountingModel)) throw new Error("Manifest and baseline accounting models differ");
   validateConfiguredHistory(baseline, manifestPath);
   return { baseline, baselineHash: digestJson(baseline), manifestHash: createHash("sha256").update(rawManifest).digest("hex"), manifestPath: resolve(manifestPath), stateDir: resolve(stateDir), indexPath: indexPath ? resolve(indexPath) : undefined, groupReadableStatus };
 }

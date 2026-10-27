@@ -450,3 +450,41 @@ test("journal preserves measured start and end for successful and failed cycles"
     assert.equal(Date.parse(rows[1].completedAt) - Date.parse(rows[1].startedAt), 1000);
   } finally { f.cleanup(); }
 });
+
+function settledPolicyFixture() {
+  const f=fixture();
+  f.baseline.accountingModel='settled-v1';
+  f.baseline.lines[0].allowedStates=['DEFAULTED'];
+  Object.assign(f.snapshot.contract,{accountingModel:'settled-v1',totalDefaultedPrincipal:'30',totalCommittedCapital:'0',totalSponsorObligations:'20'});
+  Object.assign(f.snapshot.lines[0],{state:'DEFAULTED',availableReserve:'0',principalOutstanding:'30',recoveryAvailable:'20',sponsorClaimed:'50'});
+  f.snapshot.accounting.balance='20';
+  f.snapshot.accounting.checks.push({id:'defaultedPrincipalEqualsLines',status:'PASS'});
+  return f;
+}
+test('settled policy accepts retired debt and recovery escrow without restoring active capacity',()=>{
+  const f=settledPolicyFixture();
+  assert.equal(evaluateSnapshot(f.baseline,f.snapshot,NOW).ok,true);
+});
+test('settled policy rejects missing or corrupt retired debt despite a claimed healthy snapshot',()=>{
+  for(const mutate of [s=>delete s.contract.totalDefaultedPrincipal,s=>s.contract.totalDefaultedPrincipal='31',s=>s.contract.totalDefaultedPrincipal='bad',s=>s.accounting.checks.pop(),s=>s.contract.totalCommittedCapital='30']) {
+    const f=settledPolicyFixture();mutate(f.snapshot);
+    assert.equal(evaluateSnapshot(f.baseline,f.snapshot,NOW).ok,false);
+  }
+});
+test('settled policy cannot downgrade its accounting model or enter a legacy baseline',()=>{
+  const f=settledPolicyFixture();delete f.snapshot.contract.accountingModel;
+  assert.equal(evaluateSnapshot(f.baseline,f.snapshot,NOW).ok,false);
+  const g=settledPolicyFixture();delete g.baseline.accountingModel;
+  assert.equal(evaluateSnapshot(g.baseline,g.snapshot,NOW).ok,false);
+});
+test('settled monitor startup requires matching explicit manifest and baseline models',()=>{
+  const f=stateFixture();
+  try {
+    f.baseline.accountingModel='settled-v1';
+    const baselinePath=join(f.directory,'baseline.json'),manifestPath=join(f.directory,'manifest.json');
+    writeFileSync(baselinePath,JSON.stringify(f.baseline));
+    assert.throws(()=>loadContext({baselinePath,manifestPath,stateDir:f.context.stateDir}),/accounting/);
+    writeFileSync(manifestPath,JSON.stringify({ok:true,contract:{accountingModel:'settled-v1'}}));
+    assert.equal(loadContext({baselinePath,manifestPath,stateDir:f.context.stateDir}).baseline.accountingModel,'settled-v1');
+  } finally {f.cleanup();}
+});

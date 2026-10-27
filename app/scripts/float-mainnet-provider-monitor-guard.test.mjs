@@ -4,7 +4,7 @@ import {mkdtempSync,writeFileSync,rmSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {keccak256} from 'viem';
-import {createProviderMonitorGuard,createTestnetProviderMonitorGuard,configureProviderAdmission} from './float-mainnet-provider-monitor-guard.mjs';
+import {createProviderMonitorGuard,createTestnetProviderMonitorGuard,createSettledTestnetProviderMonitorGuard,configureProviderAdmission} from './float-mainnet-provider-monitor-guard.mjs';
 import {loadContext,runMonitorOnce} from './float-mainnet-monitor-runner.mjs';
 const addr=n=>'0x'+n.toString(16).padStart(40,'0');
 const hash=n=>'0x'+n.toString(16).padStart(64,'0');
@@ -20,6 +20,12 @@ async function fixture({testnet=false}={}){
   snapshot.identity.chainId='5042002';manifest.chainId='5042002';
   manifest.kind='shadow-public-bounded-testnet-release';manifest.contract.name='ShadowFloatMainnetPublicBounded';
   manifest.config={maximumLineLifetime:'604800'};
+  if(testnet==='settled') {
+   baseline.accountingModel='settled-v1';manifest.contract.accountingModel='settled-v1';
+   manifest.kind='shadow-public-settled-testnet-release';manifest.contract.name='ShadowFloatMainnetPublicSettled';
+   snapshot.contract.accountingModel='settled-v1';snapshot.contract.totalDefaultedPrincipal='0';
+   snapshot.accounting.checks.push({id:'defaultedPrincipalEqualsLines',status:'PASS'});
+  }
  }
  const baselinePath=join(directory,'baseline.json'),manifestPath=join(directory,'manifest.json'),stateDir=join(directory,'state');
  writeFileSync(baselinePath,JSON.stringify(baseline));writeFileSync(manifestPath,JSON.stringify(manifest));
@@ -32,7 +38,7 @@ async function fixture({testnet=false}={}){
 test('provider admission verifies a fresh public heartbeat and canonical deployed runtime',async()=>{
  const f=await fixture();try{await createProviderMonitorGuard(f.options)();}finally{f.cleanup();}
 });
-for(const testnet of [false,true]) for(const [name,change] of [
+for(const testnet of [false,true,'settled']) for(const [name,change] of [
  ['missing heartbeat',f=>rmSync(join(f.options.stateDir,'heartbeat.json'))],
  ['latched hold',f=>writeFileSync(join(f.options.stateDir,'hold.json'),JSON.stringify({incidentId:'test'}))],
  ['stale heartbeat',f=>{const p=join(f.options.stateDir,'heartbeat.json');const h=JSON.parse(readFileSync(p));h.startedAt=h.completedAt=new Date(Date.now()-60000).toISOString();writeFileSync(p,JSON.stringify(h));}],
@@ -43,7 +49,7 @@ for(const testnet of [false,true]) for(const [name,change] of [
  ['runtime mismatch',f=>{f.options.connection.client.getCode=async()=> '0x5678';}],
  ['noncanonical observation',f=>{f.options.connection.client.getBlock=async()=>({number:100n,hash:hash(99),timestamp:1n});}],
  ['hold during canonical reads',f=>{f.options.connection.client.getCode=async()=>{writeFileSync(join(f.options.stateDir,'hold.json'),JSON.stringify({incidentId:'during-read'}));return '0x1234';};}],
-])test(`${testnet?'bounded testnet':'mainnet'} provider refuses ${name}`,async()=>{const f=await fixture({testnet});try{const guard=(testnet?createTestnetProviderMonitorGuard:createProviderMonitorGuard)(f.options);change(f);await assert.rejects(guard);}finally{f.cleanup();}});
+])test(`${testnet==='settled'?'settled testnet':testnet?'bounded testnet':'mainnet'} provider refuses ${name}`,async()=>{const f=await fixture({testnet});try{const guard=(testnet==='settled'?createSettledTestnetProviderMonitorGuard:testnet?createTestnetProviderMonitorGuard:createProviderMonitorGuard)(f.options);change(f);await assert.rejects(guard);}finally{f.cleanup();}});
 test('provider startup refuses missing configuration and wrong release identity',async()=>{
  const f=await fixture();try{
   assert.throws(()=>createProviderMonitorGuard({...f.options,baselinePath:undefined}));
@@ -101,4 +107,32 @@ test('signing startup requires an explicit validated mode and never falls back o
   for(const chainId of [undefined,1n,31337n]) assert.throws(()=>configureProviderAdmission({mode:'testnet-unmonitored',connection:{chainId}}));
   assert.equal(configureProviderAdmission({recoveryOnly:true}),null);
  }finally{f.cleanup();}
+});
+
+test('settled provider requires its own accounting mode and cannot substitute bounded or mainnet policy',async()=>{
+ const f=await fixture({testnet:'settled'}),bounded=await fixture({testnet:true}),mainnet=await fixture();
+ try{
+  await configureProviderAdmission({...f.options,mode:'settled-testnet-monitor'})();
+  assert.throws(()=>configureProviderAdmission({...f.options,mode:'testnet-monitor'}));
+  assert.throws(()=>configureProviderAdmission({...f.options,mode:'public-monitor'}));
+  for(const other of [bounded,mainnet]) assert.throws(()=>configureProviderAdmission({...other.options,mode:'settled-testnet-monitor'}));
+ }finally{f.cleanup();bounded.cleanup();mainnet.cleanup();}
+});
+for(const [name,mutate] of [
+ ['missing model',m=>delete m.contract.accountingModel],
+ ['legacy model',m=>m.contract.accountingModel='legacy-v1'],
+ ['wrong generation',m=>m.contract.name='ShadowFloatMainnetPublicBounded'],
+ ['wrong marker',m=>m.kind='shadow-public-bounded-testnet-release'],
+ ['missing lifetime',m=>delete m.config],
+ ['wrong lifetime',m=>m.config.maximumLineLifetime='604801'],
+ ['legacy repayment',m=>m.repaymentBindingVersion=1],
+])test(`settled provider startup rejects ${name}`,async()=>{
+ const f=await fixture({testnet:'settled'});
+ try{mutate(f.manifest);writeFileSync(f.options.manifestPath,JSON.stringify(f.manifest));assert.throws(()=>createSettledTestnetProviderMonitorGuard(f.options));}
+ finally{f.cleanup();}
+});
+test('settled provider holds while its protected spending phase is paused',async()=>{
+ const f=await fixture({testnet:'settled'});
+ try{f.baseline.pauses.spendsPaused=true;writeFileSync(f.options.baselinePath,JSON.stringify(f.baseline));await assert.rejects(createSettledTestnetProviderMonitorGuard(f.options));}
+ finally{f.cleanup();}
 });
