@@ -1,4 +1,5 @@
 import { SETTLED_TESTNET } from '../settledTestnetDeployment.mjs';
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs';
 import { circleCliEnvironment } from './circle-agent-cli-environment.mjs';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
@@ -18,6 +19,7 @@ export const GUARDED_MAINNET_CONTRACT = '0x708c8c987eb4cd14445ac2c65ea712b208488
 export const GUARDED_TESTNET_CONTRACT = '0xd39d55cc0c84408dcc409badb776459641dfd4be';
 export const BOUNDED_TESTNET_CONTRACT = '0xcb4958bbf9cb6c6ee47590e8cf3edd228035d356';
 export const SETTLED_TESTNET_CONTRACT = SETTLED_TESTNET.address.toLowerCase();
+export const SETTLED_MAINNET_CONTRACT = SETTLED_MAINNET_CANDIDATE.address.toLowerCase();
 const requireThat = (ok, message) => { if (!ok) throw new Error(message); };
 
 // A reproducible compatibility copy of the unmodified Apache-2.0 Circle CLI.
@@ -41,6 +43,10 @@ export function guardedMainnetPurchaseCompatibility(source) {
 
 export function settledTestnetPurchaseCompatibility(source) {
   return rawCalldataForContract(source, SETTLED_TESTNET_CONTRACT, true);
+}
+
+export function settledMainnetPurchaseCompatibility(source) {
+  return rawCalldataForContract(source, SETTLED_MAINNET_CONTRACT, true, 'ARC');
 }
 
 function rawCalldataForContract(source, contract, purchaseOnly = false, network = 'ARC-TESTNET') {
@@ -84,13 +90,18 @@ export async function createCircleSettledTestnetPurchaseTransport(options) {
   return createTransport(options, purchasePolicy(options, false, false, true));
 }
 
-function purchasePolicy({ expectedLineId, provider, endpointHash, maxAmount }, mainnet = false, boundedTestnet = false, settledTestnet = false) {
-  requireThat(Number(mainnet) + Number(boundedTestnet) + Number(settledTestnet) <= 1, 'Select one purchase deployment.');
+export async function createCircleSettledMainnetPurchaseTransport(options) {
+  return createTransport(options, purchasePolicy(options, false, false, false, true));
+}
+
+function purchasePolicy({ expectedLineId, provider, endpointHash, maxAmount }, mainnet = false, boundedTestnet = false, settledTestnet = false, settledMainnet = false) {
+  requireThat(Number(mainnet) + Number(boundedTestnet) + Number(settledTestnet) + Number(settledMainnet) <= 1, 'Select one purchase deployment.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(expectedLineId) && !/^0x0{64}$/.test(expectedLineId), 'Pin the exact nonzero purchase line.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(endpointHash), 'Pin the provider endpoint hash.');
   const amount = BigInt(maxAmount);
-  requireThat(amount > 0n && amount <= 5000n, 'Guarded purchase limit exceeds 0.005 USDC.');
-  return Object.freeze({ expectedLineId: expectedLineId.toLowerCase(), provider: getAddress(provider), endpointHash: endpointHash.toLowerCase(), amount, chainId: mainnet ? 5042 : 5042002, network: mainnet ? 'ARC' : 'ARC-TESTNET', contract: mainnet ? GUARDED_MAINNET_CONTRACT : settledTestnet ? SETTLED_TESTNET_CONTRACT : boundedTestnet ? BOUNDED_TESTNET_CONTRACT : GUARDED_TESTNET_CONTRACT });
+  const cap = settledMainnet ? SETTLED_MAINNET_CANDIDATE.maximumPurchase : 5000n;
+  requireThat(amount > 0n && amount <= cap, settledMainnet ? 'Settled purchase limit exceeds 0.05 USDC.' : 'Guarded purchase limit exceeds 0.005 USDC.');
+  return Object.freeze({ expectedLineId: expectedLineId.toLowerCase(), provider: getAddress(provider), endpointHash: endpointHash.toLowerCase(), amount, chainId: mainnet || settledMainnet ? 5042 : 5042002, network: mainnet || settledMainnet ? 'ARC' : 'ARC-TESTNET', contract: settledMainnet ? SETTLED_MAINNET_CONTRACT : mainnet ? GUARDED_MAINNET_CONTRACT : settledTestnet ? SETTLED_TESTNET_CONTRACT : boundedTestnet ? BOUNDED_TESTNET_CONTRACT : GUARDED_TESTNET_CONTRACT });
 }
 
 async function createTransport({ entrypoint, agent, journal, runtimeDirectory = journal?.runtimeDirectory, run = runFile, beforeExecute, beforeSign }, policy = null) {
@@ -98,6 +109,7 @@ async function createTransport({ entrypoint, agent, journal, runtimeDirectory = 
   const original = resolve(entrypoint);
   const source = await readFile(original, 'utf8');
   const patched = !policy ? rawCalldataCompatibility(source)
+    : policy.contract === SETTLED_MAINNET_CONTRACT ? settledMainnetPurchaseCompatibility(source)
     : policy.chainId === 5042 ? guardedMainnetPurchaseCompatibility(source)
     : policy.contract === SETTLED_TESTNET_CONTRACT ? settledTestnetPurchaseCompatibility(source)
     : policy.contract === BOUNDED_TESTNET_CONTRACT ? boundedTestnetPurchaseCompatibility(source)
@@ -127,6 +139,10 @@ export function createCircleSettledTestnetPurchaseDriver(options) {
 
 export function createCircleGuardedMainnetPurchaseDriver(options) {
   return createDriver(options, purchasePolicy(options, true));
+}
+
+export function createCircleSettledMainnetPurchaseDriver(options) {
+  return createDriver(options, purchasePolicy(options, false, false, false, true));
 }
 
 function createDriver({ entrypoint, compatibility, agent, journal, run = runFile, beforeExecute, beforeSign }, policy = null) {

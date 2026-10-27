@@ -5,7 +5,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
-import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor, createCircleSettledTestnetRepayer, createCircleSettledMainnetRepayer } from './circle-agent-execution.mjs';
+import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor, createCircleSettledTestnetRepayer, createCircleSettledMainnetRepayer, createCircleSettledMainnetPurchaser } from './circle-agent-execution.mjs';
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs';
 
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
 const agent = `0x${'11'.repeat(20)}`, contract = `0x${'22'.repeat(20)}`, provider = `0x${'33'.repeat(20)}`;
@@ -590,4 +591,19 @@ test('settled mainnet validates network, bounded debt, draw, ledger and fee befo
   const x=setup({},createCircleSettledMainnetRepayer);const read=x.options.client.readContract;
   x.options.client.readContract=async r=>r.functionName==='totalDefaultedPrincipal'?undefined:read(r);
   await assert.rejects(()=>x.adapter.execute(repay),/Settled defaulted debt ledger/);assert.equal(x.state.sends,0);
+});
+
+test('settled mainnet purchase binds the prepared runtime and refuses absent code before authorization',async()=>{
+  const pinned=SETTLED_MAINNET_CANDIDATE;
+  const good={...config,contract:pinned.address,runtimeHash:pinned.runtimeHash,maxAmount:'50000',maxNetworkFee:'40000000000000000'};
+  const options={...setup().options,config:good,authorizePurchase:async()=>{}};
+  assert.doesNotThrow(()=>createCircleSettledMainnetPurchaser(options));
+  for(const patch of [{chainId:5042002},{contract},{runtimeHash:keccak256(code)},{maxAmount:'50001'},{maxNetworkFee:'40000000000000001'}]) {
+    assert.throws(()=>createCircleSettledMainnetPurchaser({...options,config:{...good,...patch}}));
+  }
+  assert.throws(()=>createCircleSettledMainnetPurchaser({...options,authorizePurchase:undefined}),/monitor authorization/);
+  const x=setup({config:good,authorizePurchase:async()=>{throw Error('should not authorize absent code');}},createCircleSettledMainnetPurchaser);
+  x.state.code='0x';let signatures=0;
+  await assert.rejects(()=>x.adapter.withPurchaseOperation(async()=>{signatures++;}),/Unexpected Shadow deployment/);
+  assert.equal(signatures,0);assert.equal(x.state.sends,0);
 });

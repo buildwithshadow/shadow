@@ -1,4 +1,5 @@
 import { readFailedCircleSessionAttempt } from './circle-agent-mainnet-failure.mjs';
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs';
 import { randomUUID } from 'node:crypto';
 import { decodeFunctionData, encodeFunctionData, decodeEventLog, erc20Abi, formatUnits, getAddress, keccak256, parseAbi, parseUnits, stringToHex } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
@@ -78,7 +79,18 @@ export function createCircleSettledMainnetRepayer(options) {
   return createExecutor(options, true, 5042, false, null, true);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null, maximumRepayment = false) {
+/** Explicit replacement purchase boundary. No caller supplied deployment or
+ * relaxed legacy cap; fresh deployed runtime and monitor checks still apply.
+ */
+export function createCircleSettledMainnetPurchaser(options) {
+  const pinned = SETTLED_MAINNET_CANDIDATE;
+  requireThat(options.config.chainId === pinned.chainId, 'Only Arc mainnet settled purchases are enabled.');
+  requireThat(same(options.config.contract, pinned.address) && same(options.config.runtimeHash, pinned.runtimeHash), 'Pin the prepared settled mainnet deployment.');
+  requireThat(typeof options.authorizePurchase === 'function', 'A mainnet monitor authorization guard is required.');
+  return createExecutor(options, false, 5042, true, options.authorizePurchase, false, pinned.maximumPurchase);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null, maximumRepayment = false, purchaseCap = 5000n) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;
   const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
@@ -89,7 +101,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     : CHAIN === TESTNET && guarded ? BigInt(GUARDED_TESTNET_REPAYMENT_FEE_CAP)
     : CHAIN === 5042 && purchaseOnly ? BigInt(GUARDED_MAINNET_PURCHASE_FEE_CAP)
     : parseUnits(guarded || purchaseOnly ? '0.02' : '0.1', 18);
-  requireThat(cap > 0n && cap <= (purchaseOnly ? 5_000n : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= maximumFee, 'Invalid bounded execution limits.');
+  requireThat(cap > 0n && cap <= (purchaseOnly ? purchaseCap : guarded ? 50_000n : 1_000_000n) && feeCap > 0n && feeCap <= maximumFee, 'Invalid bounded execution limits.');
   if (guarded) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && /^0x[0-9a-fA-F]{64}$/.test(config.expectedDraw) && !/^0x0{64}$/.test(config.expectedDraw), 'Pin the exact line and nonzero reviewed draw.');
   if (purchaseOnly) requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.expectedLineId) && !/^0x0{64}$/.test(config.expectedLineId), 'Pin the exact nonzero purchase line.');
   requireThat(/^0x[0-9a-fA-F]{64}$/.test(config.runtimeHash), 'Pin the deployed runtime hash.');
