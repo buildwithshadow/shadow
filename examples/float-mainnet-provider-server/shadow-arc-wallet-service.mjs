@@ -8,7 +8,7 @@ const HASH = /^0x[0-9a-fA-F]{64}$/;
 const REQUEST = /^arc-wallet:([0-9a-f]{32}):(0x[0-9a-fA-F]{40})$/;
 const NETWORKS = {
   5042: ['https://rpc.mainnet.arc.io', 'https://rpc.blockdaemon.mainnet.arc.io'],
-  5042002: ['https://rpc.testnet.arc.io', 'https://rpc.blockdaemon.testnet.arc.io'],
+  5042002: ['https://rpc.blockdaemon.testnet.arc.io', 'https://rpc.drpc.testnet.arc.io'],
 };
 
 export function walletReportAddress(requestId) {

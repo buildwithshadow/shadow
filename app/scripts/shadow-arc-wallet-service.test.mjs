@@ -133,3 +133,26 @@ test('report RPC configuration rejects duplicate, insecure and credentialed endp
     assert.throws(() => createShadowArcWalletService({ rpcUrls: urls }), /RPC/);
   }
 });
+
+test('default testnet reports use Blockdaemon and dRPC while retaining two source verification', async t => {
+  const a = await rpcFixture(t, { chainId: 5042002 }), b = await rpcFixture(t, { chainId: 5042002 });
+  const routes = new Map([['rpc.blockdaemon.testnet.arc.io', a.url], ['rpc.drpc.testnet.arc.io', b.url]]);
+  const seen = new Set(), originalFetch = globalThis.fetch;
+  t.mock.method(globalThis, 'fetch', async (input, init) => {
+    const url = new URL(typeof input === 'string' || input instanceof URL ? input : input.url);
+    assert(routes.has(url.hostname), `Unexpected testnet report source: ${url.hostname}`);
+    seen.add(url.hostname);
+    if (input instanceof Request) {
+      return originalFetch(routes.get(url.hostname), { method: input.method, headers: input.headers,
+        body: await input.text(), signal: input.signal });
+    }
+    return originalFetch(routes.get(url.hostname), init);
+  });
+  const service = createShadowArcWalletService({ chainId: 5042002, now: () => 1010 });
+  const prepared = await service.prepare({ requestId });
+  await service.validatePrepared({ requestId, ...prepared });
+  assert.deepEqual([...seen].sort(), [...routes.keys()].sort());
+  const report = JSON.parse(prepared.result);
+  assert.equal(report.chainId, 5042002); assert.equal(report.checks.twoRpcBlocksMatch, true);
+  assert.equal(report.checks.twoRpcBalancesMatch, true); assert.equal(report.checks.canonicalBlockRechecked, true);
+});
