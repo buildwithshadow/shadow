@@ -16,9 +16,15 @@ function createBoundMonitorGuard({ connection, manifestPath, baselinePath, state
   requireThat(manifest.publicRegistration === true && manifest.repaymentBindingVersion === 2);
   if (fixedTestnet) {
     requireThat(b.schemaVersion === 1 && b.identity.chainId === "5042002"
-      && manifest.kind === "shadow-public-bounded-testnet-release"
-      && manifest.contract?.name === "ShadowFloatMainnetPublicBounded"
       && manifest.config?.maximumLineLifetime === "604800");
+    if (fixedTestnet === "settled") {
+      requireThat(manifest.kind === "shadow-public-settled-testnet-release"
+        && manifest.contract?.name === "ShadowFloatMainnetPublicSettled"
+        && manifest.contract?.accountingModel === "settled-v1" && b.accountingModel === "settled-v1");
+    } else {
+      requireThat(manifest.kind === "shadow-public-bounded-testnet-release"
+        && manifest.contract?.name === "ShadowFloatMainnetPublicBounded");
+    }
   } else {
     requireThat(b.schemaVersion === 2 && b.identity.chainId === "5042");
   }
@@ -60,6 +66,10 @@ export function createTestnetProviderMonitorGuard(options) {
   return createBoundMonitorGuard(options, true);
 }
 
+export function createSettledTestnetProviderMonitorGuard(options) {
+  return createBoundMonitorGuard(options, "settled");
+}
+
 // An explicit startup mode avoids silently treating a missing public marker as
 // a private deployment. Unmonitored signing is restricted to testnet; all new
 // mainnet signing processes require a validated public monitor configuration.
@@ -67,6 +77,7 @@ export function configureProviderAdmission({mode, recoveryOnly = false, ...optio
   if (recoveryOnly) return null;
   if (mode === "public-monitor") return createProviderMonitorGuard(options);
   if (mode === "testnet-monitor") return createTestnetProviderMonitorGuard(options);
+  if (mode === "settled-testnet-monitor") return createSettledTestnetProviderMonitorGuard(options);
   if (mode === "testnet-unmonitored" && String(options.connection?.chainId) === "5042002") return null;
   throw new Error("Signing requires an explicit bound monitor mode; bounded testnet may select testnet-monitor, and other testnet rehearsals may explicitly select testnet-unmonitored");
 }

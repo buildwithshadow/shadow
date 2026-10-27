@@ -1,3 +1,4 @@
+import { accountingModel, SETTLED_ACCOUNTING } from './float-mainnet-accounting.mjs';
 import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import { isAddress, zeroAddress } from "viem";
@@ -30,8 +31,9 @@ function addressSet(value, name) {
 // create or rewrite the approved roles, limits or line policy automatically.
 export function validateBaseline(raw) {
   const b = structuredClone(raw);
-  keys(b, ["schemaVersion", "identity", "owner", "operators", "sponsors", "effectiveLimits", "pauses", "lines", "executor", "policy", ...(Object.hasOwn(b, "approvedHistory") ? ["approvedHistory"] : [])], "baseline");
+  keys(b, ["schemaVersion", "identity", "owner", "operators", "sponsors", "effectiveLimits", "pauses", "lines", "executor", "policy", ...(Object.hasOwn(b, "approvedHistory") ? ["approvedHistory"] : []), ...(Object.hasOwn(b, "accountingModel") ? ["accountingModel"] : [])], "baseline");
   requireThat(b.schemaVersion === 1, "unsupported baseline schema");
+  if (Object.hasOwn(b, "accountingModel")) accountingModel(b.accountingModel);
   keys(b.identity, ["chainId", "address", "runtimeCodeHash", "usdc", "deployBlock"], "identity");
   requireThat(uint(b.identity.chainId) && BigInt(b.identity.chainId) > 0n && uint(b.identity.deployBlock) && address(b.identity.address) && address(b.identity.usdc) && hash(b.identity.runtimeCodeHash), "invalid baseline identity");
   requireThat(address(b.owner), "invalid baseline owner");
@@ -139,9 +141,13 @@ export function evaluateSnapshot(rawBaseline, snapshot, nowMs = Date.now()) {
     if (index) check(index.canonical === true && index.note === null && uint(index.lagSeconds) && Number(index.lagSeconds) <= b.policy.maxIndexLagSeconds, "INDEX_LAG", "index is stale or noncanonical");
     // Recompute accounting rather than trusting an exit code or an `ok` flag.
     requireThat(s.accounting && Array.isArray(s.accounting.checks), "missing accounting checks");
-    check(ACCOUNTING.every((id) => s.accounting.checks.some((entry) => entry.id === id && entry.status === "PASS")), "ACCOUNTING_FAILED", "snapshot accounting checks failed or are incomplete");
+    const model = accountingModel(b.accountingModel);
+    check(accountingModel(s.contract.accountingModel) === model, "ACCOUNTING_MODEL_DRIFT", "snapshot accounting model differs from the protected baseline");
+    const requiredAccounting = model === SETTLED_ACCOUNTING ? [...ACCOUNTING, "defaultedPrincipalEqualsLines"] : ACCOUNTING;
+    check(requiredAccounting.every((id) => s.accounting.checks.some((entry) => entry.id === id && entry.status === "PASS")), "ACCOUNTING_FAILED", "snapshot accounting checks failed or are incomplete");
+    if (model === SETTLED_ACCOUNTING) requireThat(uint(s.contract.totalDefaultedPrincipal), "settled defaulted principal ledger required");
     requireThat(uint(s.accounting.balance) && uint(s.contract.totalSponsorObligations) && uint(s.contract.totalCommittedCapital) && s.lines.every((line) => ["OPEN", "DRAWN", "CLOSED", "DEFAULTED"].includes(line.state)), "invalid accounting state");
-    const accounting = reconcileState({ balance: BigInt(s.accounting.balance), totalSponsorObligations: BigInt(s.contract.totalSponsorObligations), totalCommittedCapital: BigInt(s.contract.totalCommittedCapital), lines: s.lines.map((line) => ({ ...line, ...Object.fromEntries(["reserveCap", "availableReserve", "principalOutstanding", "recoveryAvailable", "sponsorClaimed"].map((field) => { requireThat(uint(line[field]), "invalid accounting amount"); return [field, BigInt(line[field])]; })) })) });
+    const accounting = reconcileState({ accountingModel: model, ...(model === SETTLED_ACCOUNTING ? {totalDefaultedPrincipal: BigInt(s.contract.totalDefaultedPrincipal)} : {}), balance: BigInt(s.accounting.balance), totalSponsorObligations: BigInt(s.contract.totalSponsorObligations), totalCommittedCapital: BigInt(s.contract.totalCommittedCapital), lines: s.lines.map((line) => ({ ...line, ...Object.fromEntries(["reserveCap", "availableReserve", "principalOutstanding", "recoveryAvailable", "sponsorClaimed"].map((field) => { requireThat(uint(line[field]), "invalid accounting amount"); return [field, BigInt(line[field])]; })) })) });
     check(s.accounting.ok === true && accounting.ok, "ACCOUNTING_FAILED", "line identities, balance or aggregate obligations do not reconcile");
     const audit = s.executionAudit;
     requireThat(audit && Array.isArray(audit.executions), "missing execution audit");

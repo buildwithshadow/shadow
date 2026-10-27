@@ -1,3 +1,4 @@
+import { evaluateSnapshot } from './float-mainnet-monitor-policy.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
@@ -62,7 +63,17 @@ test('settled CLI and canonical monitor follow default, permissionless settlemen
   await write(sponsor,target,abi,'openLine',[{agent:agent.address,reserve:100000n,lineSpendCap:200000n,dailySpendCap:200000n,lineExpiry:expiry,maximumRepaymentWindow:86400n,provider:provider.address,endpointHash,providerPerSpendCap:50000n,providerDailyCap:200000n,providerExpiry:expiry}]);
   const id=await read('activeLineId',[sponsor.address,agent.address]);
   async function draw(nonce){const timestamp=(await client.getBlock()).timestamp;const intent={agent:agent.address,sponsor:sponsor.address,lineId:id,lineEpoch:1n,termsHash:await read('currentTermsHash',[id,provider.address]),provider:provider.address,endpointHash,principal:50000n,maximumTotalDebt:50000n,dueAt:timestamp+7200n,nonce,signatureExpiry:timestamp+900n,executor:agent.address};const sig=await agent.signTypedData({domain:eip712Domain(5042002n,target),types:SPEND_INTENT_TYPES,primaryType:'SpendIntent',message:intent});await write(agent,target,abi,'executeSpend',[intent,sig]);return read('currentDrawDigest',[id]);}
-  async function healthy(command='snapshot') {const result=await runTool('monitor',[command,'--manifest',manifest],env);assert.equal(result.status,0,JSON.stringify(result.json));assert(result.json.accounting?.checks.every(c=>c.status==='PASS')??result.json.checks.every(c=>c.status==='PASS'));return result.json;}
+  const policy={schemaVersion:1,accountingModel:'settled-v1',identity:{chainId:'5042002',address:target,runtimeCodeHash:JSON.parse(readFileSync(manifest)).bytecode.onchainRuntimeKeccak256,usdc:token,deployBlock:JSON.parse(readFileSync(manifest)).deployment.blockNumber},owner:owner.address,operators:[],sponsors:[sponsor.address],effectiveLimits:Object.fromEntries(Object.entries(lim).map(([k,v])=>[k,String(v)])),pauses:{openingsPaused:false,spendsPaused:false},executor:{address:agent.address,fromBlock:JSON.parse(readFileSync(manifest)).deployment.blockNumber},policy:{intervalMs:1000,runTimeoutMs:5000,maxHeartbeatAgeMs:10000,maxBlockAgeSeconds:120,maxIndexLagSeconds:120,warnBeforeSeconds:3600,requireIndex:false},lines:[{lineId:id,sponsor:sponsor.address,agent:agent.address,epoch:'1',reserveCap:'100000',lineSpendCap:'200000',dailySpendCap:'200000',maximumRepaymentWindow:'86400',termsVersion:'1',expiry:String(expiry),allowedStates:['OPEN','DRAWN','DEFAULTED','CLOSED'],providers:[{provider:provider.address,active:true,endpointHash,perSpendCap:'50000',dailySpendCap:'200000',expiry:String(expiry)}]}]};
+  async function healthy(command='snapshot') {
+    const result=await runTool('monitor',[command,'--manifest',manifest],env);
+    assert.equal(result.status,0,JSON.stringify(result.json));
+    assert(result.json.accounting?.checks.every(c=>c.status==='PASS')??result.json.checks.every(c=>c.status==='PASS'));
+    if(command==='snapshot') {
+      const evaluated=evaluateSnapshot(policy,result.json,Number(result.json.observedAt.timestamp)*1000);
+      assert.equal(evaluated.ok,true,JSON.stringify(evaluated));
+    }
+    return result.json;
+  }
   const first=await draw(1n);
   const planned=await runTool('repay',['--line-id',id,'--full','--calldata','--from',agent.address,'--expected-draw',first],env);
   assert.equal(planned.status,0,JSON.stringify(planned.json));
