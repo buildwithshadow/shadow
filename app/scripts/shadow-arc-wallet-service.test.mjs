@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { createServer } from 'node:http';
 import { createShadowArcWalletService, walletReportAddress } from '../../examples/float-mainnet-provider-server/shadow-arc-wallet-service.mjs';
 const address = '0xbad35FA6e368e90fC4faf63507F2D0A2Fdf94BAF';
 const requestId = `arc-wallet:${'a'.repeat(32)}:${address}`;
@@ -66,4 +67,69 @@ test('prepared report cannot receive a new acceptance after expiry or a canonica
   await assert.rejects(service.validatePrepared({ requestId, ...result }), /no longer canonical/);
   orphaned = false;
   await assert.rejects(service.validatePrepared({ requestId: `${requestId}:other`, ...result }), /identity/);
+});
+
+async function rpcFixture(t, { balanceFailures = 0, chainId = 5042 } = {}) {
+  const calls = []; let balanceAttempts = 0;
+  const server = createServer(async (req, res) => {
+    let body = ''; for await (const chunk of req) body += chunk;
+    const request = JSON.parse(body); calls.push({ method: request.method, at: Date.now() });
+    let result, error;
+    switch (request.method) {
+      case 'eth_chainId': result = `0x${chainId.toString(16)}`; break;
+      case 'eth_blockNumber': result = '0x78'; break;
+      case 'eth_getBlockByNumber': result = { number: '0x64', hash, timestamp: '0x3e8', transactions: [] }; break;
+      case 'eth_call':
+        assert.equal(request.params[1], '0x64');
+        if (++balanceAttempts <= balanceFailures) error = { code: -32005, message: 'rate limit exceeded' };
+        else result = `0x${10000001n.toString(16).padStart(64, '0')}`;
+        break;
+      case 'eth_getBalance': assert.equal(request.params[1], '0x64'); result = `0x${10000001000000000001n.toString(16)}`; break;
+      default: error = { code: -32601, message: 'unexpected fixture method' };
+    }
+    res.setHeader('content-type', 'application/json');
+    res.end(JSON.stringify({ jsonrpc: '2.0', id: request.id, ...(error ? { error } : { result }) }));
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  t.after(() => new Promise(resolve => { server.close(resolve); server.closeAllConnections(); }));
+  return { url: `http://127.0.0.1:${server.address().port}`, calls, get balanceAttempts() { return balanceAttempts; } };
+}
+
+test('real report RPCs pace reads and recover from a quota rejection before freezing a report', async t => {
+  const a = await rpcFixture(t, { balanceFailures: 1 }), b = await rpcFixture(t);
+  const service = createShadowArcWalletService({ rpcUrls: [a.url, b.url], now: () => 1010 });
+  const prepared = await service.prepare({ requestId });
+  await service.validatePrepared({ requestId, ...prepared });
+  assert.equal(a.balanceAttempts, 2); assert.equal(b.balanceAttempts, 1);
+  const report = JSON.parse(prepared.result); assert.equal(report.checks.twoRpcBalancesMatch, true);
+  for (const rpc of [a, b]) {
+    const lastCall = rpc.calls.findLastIndex(call => call.method === 'eth_call');
+    const native = rpc.calls.findIndex((call, index) => index > lastCall && call.method === 'eth_getBalance');
+    assert(native > lastCall);
+    assert(rpc.calls[native].at - rpc.calls[lastCall].at >= 250, 'balance reads must share the paced queue');
+    assert(rpc.calls.every(call => !/send|sign/.test(call.method)));
+  }
+});
+
+test('persistent quota failure is bounded and cannot produce a report', async t => {
+  const a = await rpcFixture(t, { balanceFailures: 99 }), b = await rpcFixture(t);
+  const service = createShadowArcWalletService({ rpcUrls: [a.url, b.url], now: () => 1010 });
+  await assert.rejects(service.prepare({ requestId }), /rate limit/i);
+  assert.equal(a.balanceAttempts, 3);
+  assert.equal(a.calls.some(call => call.method === 'eth_getBalance'), false);
+});
+
+test('a report read endpoint on the wrong chain is refused without balance reads', async t => {
+  const a = await rpcFixture(t), b = await rpcFixture(t, { chainId: 5042002 });
+  const service = createShadowArcWalletService({ rpcUrls: [a.url, b.url], now: () => 1010 });
+  await assert.rejects(service.prepare({ requestId }), /unexpected chain|network mismatch/);
+  assert.equal(b.balanceAttempts, 0);
+});
+
+test('report RPC configuration rejects duplicate, insecure and credentialed endpoints', () => {
+  for (const urls of [[], ['https://rpc.testnet.arc.io'], ['https://rpc.testnet.arc.io', 'https://rpc.testnet.arc.io/'],
+    ['http://example.com', 'https://rpc.testnet.arc.io'], ['https://user:secret@example.com', 'https://rpc.testnet.arc.io'],
+    ['https://example.com/#different', 'https://example.com/']]) {
+    assert.throws(() => createShadowArcWalletService({ rpcUrls: urls }), /RPC/);
+  }
 });
