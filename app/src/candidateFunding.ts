@@ -2,6 +2,7 @@ import { ARC_TESTNET_RPC_URL, ARC_TESTNET_EXPLORER_URL, arcTestnetConnectionHelp
 import { TransactionReceiptNotFoundError, decodeEventLog, decodeFunctionData, encodeAbiParameters, encodeFunctionData, erc20Abi, getAddress, isAddress, isAddressEqual, keccak256, parseUnits, stringToHex, zeroAddress, zeroHash, defineChain, type Abi, type Address, type Hash, type Hex, type PublicClient, type WalletClient } from 'viem'
 import candidateAbiJson from '../scripts/float-mainnet-abi.json' with { type: 'json' }
 import { parseAbi } from 'viem'
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs'
 const drawBindingAbi = parseAbi(['function currentDrawDigest(bytes32) view returns (bytes32)', 'function repaymentBindingVersion() view returns (uint256)', 'function repayForDraw(bytes32 lineId, bytes32 expectedDraw, uint256 amount)', 'event DrawRepaid(bytes32 indexed lineId, bytes32 indexed drawDigest, address indexed payer, uint256 amount, uint256 principalRemaining)'])
 
 export const CANDIDATE_FUNDING = {
@@ -47,12 +48,14 @@ export interface CandidatePrepared {
   kind: CandidateAction; account: Address; to: Address; data: Hex; value: '0'; amount: bigint
   lineId: Hash | null; agent: Address | null; expectedEpoch: bigint | null
   observedBlock: bigint; summary: string; nextAction?: 'open' | 'repay'; lineFingerprint?: string
+  repaymentMode?: 'maximum'
 }
 export interface CandidatePending {
   version: 1; chainId: number; candidate: Address; account: Address; kind: CandidateAction
   to: Address; data: Hex; value: '0'; amount: string; lineId: Hash | null; agent: Address | null
   expectedEpoch: string | null; fromBlock: string; nonce: number; createdAt: string
   status: 'wallet' | 'pending' | 'unknown'; txHash: Hash | null; actualNonce?: number
+  repaymentMode?: 'maximum'
 }
 export interface CandidateStorage { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void }
 export interface CandidateJournal { key: string; load(): CandidatePending | null; save(pending: CandidatePending): void; clear(): void }
@@ -63,6 +66,7 @@ export interface CandidateDeployment {
   chainId: number; address: Address; usdc: Address; runtimeHash: Hash; signatureTtl: bigint;
   maxReserve: bigint; maxLineSpend: bigint; maxDailySpend: bigint; maxPerSpend: bigint;
   selfRegistration?: boolean; drawBoundRepayment?: boolean;
+  accountingModel?: 'settled-v1';
 }
 // Both published endpoints were verified against older payment receipts.
 // A recent-state RPC returning null for an old receipt cannot establish nonpayment.
@@ -74,7 +78,7 @@ export function candidateChainFor(deployment: CandidateDeployment) {
   throw new Error('Unsupported funding deployment.')
 }
 export function createGuardedMainnetFundingKit(deployment: CandidateDeployment) {
-  if (deployment.chainId !== 5042 || !deployment.drawBoundRepayment || deployment.selfRegistration
+  if (deployment.accountingModel || deployment.chainId !== 5042 || !deployment.drawBoundRepayment || deployment.selfRegistration
       || deployment.maxReserve <= 0n || deployment.maxReserve > 100_000n
       || [deployment.maxLineSpend, deployment.maxDailySpend, deployment.maxPerSpend].some(cap => cap <= 0n || cap > 5_000n)) {
     throw new Error('Guarded mainnet requires draw-bound repayment, admitted sponsors and the bounded release limits.')
@@ -82,10 +86,21 @@ export function createGuardedMainnetFundingKit(deployment: CandidateDeployment) 
   return createFundingKit(deployment)
 }
 export function createPublicMainnetFundingKit(deployment: CandidateDeployment) {
-  if (deployment.chainId !== 5042 || !deployment.drawBoundRepayment || deployment.selfRegistration !== true
+  if (deployment.accountingModel || deployment.chainId !== 5042 || !deployment.drawBoundRepayment || deployment.selfRegistration !== true
       || deployment.maxReserve <= 0n || deployment.maxReserve > 100_000n
       || [deployment.maxLineSpend, deployment.maxDailySpend, deployment.maxPerSpend].some(cap => cap <= 0n || cap > 5_000n)) {
     throw new Error('Public mainnet requires self registration, draw-bound repayment and the bounded release limits.')
+  }
+  return createFundingKit(deployment)
+}
+export function createSettledPublicMainnetFundingKit(deployment: CandidateDeployment) {
+  const pinned = SETTLED_MAINNET_CANDIDATE
+  if (deployment.chainId !== pinned.chainId || deployment.accountingModel !== 'settled-v1'
+      || deployment.address.toLowerCase() !== pinned.address.toLowerCase() || deployment.runtimeHash.toLowerCase() !== pinned.runtimeHash
+      || !deployment.drawBoundRepayment || deployment.selfRegistration !== true
+      || deployment.maxReserve <= 0n || deployment.maxReserve > 100_000n
+      || [deployment.maxLineSpend, deployment.maxDailySpend, deployment.maxPerSpend].some(cap => cap <= 0n || cap > pinned.maximumPurchase)) {
+    throw new Error('Settled mainnet requires the pinned replacement, maximum repayment and bounded release limits.')
   }
   return createFundingKit(deployment)
 }
@@ -95,6 +110,8 @@ export function createCandidateFundingKit(deployment: CandidateDeployment) {
 }
 function createFundingKit(inputDeployment: CandidateDeployment) {
   const deployment = Object.freeze({ ...inputDeployment })
+  const maximumRepayment = deployment.accountingModel === 'settled-v1'
+  if (deployment.accountingModel !== undefined && !maximumRepayment || maximumRepayment && !deployment.drawBoundRepayment) throw new Error('Unsupported repayment accounting model.')
   const CANDIDATE_FUNDING = deployment
   const candidateFundingChain = candidateChainFor(deployment)
   const mainnet = deployment.chainId === 5042
@@ -104,7 +121,8 @@ function createFundingKit(inputDeployment: CandidateDeployment) {
     { type: 'function', name: 'registerSponsor', inputs: [], outputs: [], stateMutability: 'nonpayable' },
     { type: 'function', name: 'sponsorAdmissionRevoked', inputs: [{ name: 'sponsor', type: 'address' }], outputs: [{ name: '', type: 'bool' }], stateMutability: 'view' },
   ] as Abi : candidateAbiJson as Abi
-  const candidateFundingAbi: Abi = deployment.drawBoundRepayment ? [...baseAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...drawBindingAbi] : baseAbi
+  const boundAbi: Abi = deployment.drawBoundRepayment ? [...baseAbi.filter(x => !(x.type === 'function' && x.name === 'repay')), ...drawBindingAbi] : baseAbi
+  const candidateFundingAbi: Abi = maximumRepayment ? [...boundAbi, ...parseAbi(['function totalDefaultedPrincipal() view returns (uint256)'])] : boundAbi
 const states = ['NONE', 'OPEN', 'DRAWN', 'DEFAULTED', 'CLOSED'] as const
 const typeString = 'SpendIntent(address agent,address sponsor,bytes32 lineId,uint64 lineEpoch,bytes32 termsHash,address provider,bytes32 endpointHash,uint256 principal,uint256 maximumTotalDebt,uint256 dueAt,uint256 nonce,uint256 signatureExpiry,address executor)'
 const memoryLocks = new Set<string>()
@@ -158,6 +176,7 @@ async function verifyCandidate(client: CandidateReadClient): Promise<void> {
   const usdc = await read(client, 'usdc')
   const decimals = await tokenRead(client, 'decimals')
   if (deployment.drawBoundRepayment && BigInt(await read(client, 'repaymentBindingVersion')) !== 2n) throw new Error('Draw-bound repayment identity is inconsistent. Writes are disabled.')
+  if (maximumRepayment && typeof await read(client, 'totalDefaultedPrincipal') !== 'bigint') throw new Error('Settled repayment identity is unavailable. Writes are disabled.')
   if (name !== keccak256(stringToHex('ShadowFloatMainnet')) || version !== keccak256(stringToHex('1')) || type !== keccak256(stringToHex(typeString)) || BigInt(chainId) !== BigInt(CANDIDATE_FUNDING.chainId) || !same(usdc, CANDIDATE_FUNDING.usdc) || Number(decimals) !== 6) throw new Error('Candidate identity or USDC configuration is inconsistent. Writes are disabled.')
 }
 
@@ -262,7 +281,7 @@ async function prepareCandidateRepay(client: CandidateReadClient, rawAccount: st
   if (BigInt(balance) < line.principalOutstanding) throw new Error(`This wallet does not have enough ${currency} to repay the debt.`)
   if (BigInt(allowance) < line.principalOutstanding) return approval(account, line.principalOutstanding, line.observedBlock, 'repay')
   if (deployment.drawBoundRepayment && (!line.drawDigest || line.drawDigest === zeroHash)) throw new Error('The current purchase identity is unavailable. No repayment was prepared.')
-  return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', args: deployment.drawBoundRepayment ? [line.lineId, line.drawDigest!, line.principalOutstanding] : [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), summary: deployment.drawBoundRepayment ? `Repay purchase ${line.drawDigest}. The transaction reverts if another purchase replaces it.` : 'Pay this fixed amount toward whatever debt this line has when the transaction executes. A delayed approval can pay a newer purchase. This legacy contract does not bind repayment to the purchase shown now.' }
+  return { kind: 'repay', account, to: CANDIDATE_FUNDING.address, data: encodeFunctionData({ abi: candidateFundingAbi, functionName: deployment.drawBoundRepayment ? 'repayForDraw' : 'repay', args: deployment.drawBoundRepayment ? [line.lineId, line.drawDigest!, line.principalOutstanding] : [line.lineId, line.principalOutstanding] }), value: '0', amount: line.principalOutstanding, lineId: line.lineId, agent: line.agent, expectedEpoch: line.epoch, observedBlock: line.observedBlock, lineFingerprint: fingerprint(line), ...(maximumRepayment ? { repaymentMode: 'maximum' as const } : {}), summary: maximumRepayment ? `Repay up to the reviewed amount for purchase ${line.drawDigest}. If another repayment arrives first, only its remaining debt is collected. A different purchase cannot receive this repayment.` : deployment.drawBoundRepayment ? `Repay purchase ${line.drawDigest}. The transaction reverts if another purchase replaces it.` : 'Pay this fixed amount toward whatever debt this line has when the transaction executes. A delayed approval can pay a newer purchase. This legacy contract does not bind repayment to the purchase shown now.' }
 }
 
 async function prepareCandidateDefault(client: CandidateReadClient, rawAccount: string, rawLineId: string): Promise<CandidatePrepared> {
@@ -319,7 +338,9 @@ function createCandidateJournal(storage: CandidateStorage, rawAccount: string): 
   }
 }
 
-function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'value' | 'lineId'> & { amount: bigint | string }) {
+function checkedCall(record: Pick<CandidatePrepared, 'kind' | 'to' | 'data' | 'value' | 'lineId' | 'repaymentMode'> & { amount: bigint | string }) {
+  if (record.repaymentMode !== undefined && record.repaymentMode !== 'maximum') throw new Error('Invalid repayment consent mode.')
+  if (record.kind === 'repay' ? (record.repaymentMode === 'maximum') !== maximumRepayment : record.repaymentMode !== undefined) throw new Error('The saved repayment consent mode differs from this release.')
   const isApproval = record.kind === 'approve'
   if (!same(record.to, isApproval ? CANDIDATE_FUNDING.usdc : CANDIDATE_FUNDING.address) || record.value !== '0') throw new Error('The transaction does not target the expected release contract.')
   const abi: Abi = isApproval ? erc20Abi : candidateFundingAbi
@@ -418,6 +439,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
       version: 1, chainId: CANDIDATE_FUNDING.chainId, candidate: CANDIDATE_FUNDING.address, account: session.account, kind: prepared.kind,
       to: prepared.to, data: prepared.data, value: '0', amount: prepared.amount.toString(), lineId: prepared.lineId, agent: prepared.agent,
       expectedEpoch: prepared.expectedEpoch?.toString() ?? null, fromBlock: block.number.toString(), nonce, createdAt: new Date().toISOString(), status: 'wallet', txHash: null,
+      ...(prepared.repaymentMode ? { repaymentMode: prepared.repaymentMode } : {}),
     }
     session.journal.save(pending)
     stage(session, pending)
@@ -457,6 +479,7 @@ async function executeCandidateCall(session: CandidateSession, prepared: Candida
 }
 
 function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly any[] }): boolean {
+  if (pending.kind === 'repay' && maximumRepayment) return hasSettledRepayment(pending, receipt)
   const expected = { register: 'SponsorAllowed', approve: 'Approval', open: 'LineOpened', repay: deployment.drawBoundRepayment ? 'DrawRepaid' : 'Repaid', default: 'LineDefaulted', close: 'LineClosed', 'claim-defaulted': 'SponsorClaimed' }[pending.kind]
   for (const log of receipt.logs) {
     if (!same(log.address, pending.to)) continue
@@ -477,6 +500,30 @@ function hasExpectedEvent(pending: CandidatePending, receipt: { logs: readonly a
     } catch { /* other logs cannot establish this action */ }
   }
   return false
+}
+
+function hasSettledRepayment(pending: CandidatePending, receipt: { logs: readonly any[] }): boolean {
+  const digest = (decodeFunctionData({ abi: candidateFundingAbi, data: pending.data }).args as readonly any[])[1]
+  const draws: any[] = [], repaid: any[] = [], transfers: any[] = []
+  for (const log of receipt.logs) {
+    try {
+      if (same(log.address, CANDIDATE_FUNDING.address)) {
+        const event = decodeEventLog({ abi: candidateFundingAbi, data: log.data, topics: log.topics })
+        const args: any = event.args
+        if (!pending.lineId || !same(args.lineId, pending.lineId) || !same(args.payer, pending.account)) continue
+        if (event.eventName === 'DrawRepaid' && same(args.drawDigest, digest)) draws.push(args)
+        if (event.eventName === 'Repaid') repaid.push(args)
+      } else if (same(log.address, CANDIDATE_FUNDING.usdc)) {
+        const event = decodeEventLog({ abi: erc20Abi, data: log.data, topics: log.topics })
+        const args: any = event.args
+        if (event.eventName === 'Transfer' && same(args.from, pending.account) && same(args.to, CANDIDATE_FUNDING.address)) transfers.push(args)
+      }
+    } catch { /* unrelated or malformed logs cannot establish repayment */ }
+  }
+  if (draws.length !== 1 || repaid.length !== 1 || transfers.length !== 1) return false
+  const actual = BigInt(draws[0].amount)
+  return actual > 0n && actual <= BigInt(pending.amount) && BigInt(draws[0].principalRemaining) === 0n
+    && BigInt(repaid[0].amount) === actual && BigInt(repaid[0].principalRemaining) === 0n && BigInt(transfers[0].value) === actual
 }
 
 async function reconcileCandidatePending(client: CandidateReadClient, rawPending: CandidatePending, providedHash?: string, journal?: CandidateJournal): Promise<CandidateResolution> {

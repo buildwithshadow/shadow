@@ -1,10 +1,11 @@
 import assert from 'node:assert/strict'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
-import { TransactionReceiptNotFoundError, createPublicClient, createTestClient, createWalletClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getAddress, http, keccak256, stringToHex, toHex, zeroAddress, zeroHash, type Abi, type Address, type Hash, type Hex } from 'viem'
+import { TransactionReceiptNotFoundError, createPublicClient, createTestClient, createWalletClient, decodeFunctionData, encodeAbiParameters, encodeEventTopics, getAddress, http, keccak256, parseAbi, erc20Abi, stringToHex, toHex, zeroAddress, zeroHash, type Abi, type Address, type Hash, type Hex } from 'viem'
 // @ts-expect-error Existing shared JavaScript Anvil helpers have no declaration file.
 import { account, startAnvil, e2eSkip } from './float-mainnet-e2e.mjs'
-import { CANDIDATE_FUNDING, candidateFundingAbi, candidateFundingChain, createCandidateFundingKit, createGuardedMainnetFundingKit, type CandidateOpenInput, type CandidatePending, type CandidateReadClient, type CandidateStorage, type CandidateWalletClient } from '../src/candidateFunding.ts'
+import { CANDIDATE_FUNDING, candidateFundingAbi, candidateFundingChain, createCandidateFundingKit, createGuardedMainnetFundingKit, createPublicMainnetFundingKit, createSettledPublicMainnetFundingKit, type CandidateOpenInput, type CandidatePending, type CandidateReadClient, type CandidateStorage, type CandidateWalletClient } from '../src/candidateFunding.ts'
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs'
 
 const fakeCode = '0x6000' as Hex
 const publicManifest = JSON.parse(readFileSync(new URL('../../contracts/deployments/public-testnet/arc-testnet.manifest.json', import.meta.url), 'utf8')) as {
@@ -42,11 +43,12 @@ function defaultedLog(id: Hash, principalOutstanding: bigint, dueAt: bigint): Mo
   }
 }
 
-function fixture(guardedMainnet = false) {
+function fixture(guardedMainnet = false, settled = false) {
   const deployment = {
     ...CANDIDATE_FUNDING,
     ...(guardedMainnet ? { chainId: 5042, address: mainnetContract, maxReserve: 100_000n, maxLineSpend: 5_000n, maxDailySpend: 5_000n, maxPerSpend: 5_000n, drawBoundRepayment: true } : {}),
     runtimeHash: keccak256(fakeCode),
+    ...(settled ? { drawBoundRepayment: true, accountingModel: 'settled-v1' as const } : {}),
   }
   const kit = guardedMainnet ? createGuardedMainnetFundingKit(deployment) : createCandidateFundingKit(deployment)
   const storageMap = new Map<string, string>()
@@ -86,6 +88,7 @@ function fixture(guardedMainnet = false) {
         case 'usdc': return deployment.usdc
         case 'decimals': return 6
         case 'repaymentBindingVersion': return 2n
+        case 'totalDefaultedPrincipal': return 0n
         case 'currentDrawDigest': return drawDigest
         case 'getLine': return { ...state.line }
         case 'spendsPaused': return false
@@ -355,4 +358,87 @@ test('public testnet default sends recovery repayment to the sponsor claim on lo
     assert.equal(claimed.stateName, 'DEFAULTED')
     assert.equal(claimed.availableReserve + claimed.recoveryAvailable, 0n)
   } finally { anvil.stop() }
+})
+
+
+const settledEvents = parseAbi([
+  'event Repaid(bytes32 indexed lineId,address indexed payer,uint256 amount,uint256 principalRemaining)',
+  'event DrawRepaid(bytes32 indexed lineId,bytes32 indexed drawDigest,address indexed payer,uint256 amount,uint256 principalRemaining)',
+])
+function settlementLog(name: 'Repaid' | 'DrawRepaid', values: Record<string, unknown>): MockLog {
+  const event = settledEvents.find(x => x.type === 'event' && x.name === name)!
+  return { address: CANDIDATE_FUNDING.address, topics: encodeEventTopics({ abi: settledEvents, eventName: name, args: values }) as Hex[],
+    data: encodeAbiParameters(event.inputs.filter(x => !('indexed' in x && x.indexed)), event.inputs.filter(x => !('indexed' in x && x.indexed)).map(x => values[x.name])) }
+}
+function settledLogs(actual = 30000n, remaining = 0n, transfer = actual, digest = drawDigest): MockLog[] {
+  const values = { lineId, payer: sponsor, amount: actual, principalRemaining: remaining }
+  return [settlementLog('Repaid', values), settlementLog('DrawRepaid', { ...values, drawDigest: digest }),
+    { address: CANDIDATE_FUNDING.usdc, topics: encodeEventTopics({ abi: erc20Abi, eventName: 'Transfer', args: { from: sponsor, to: CANDIDATE_FUNDING.address } }) as Hex[],
+      data: encodeAbiParameters([{ type: 'uint256' }], [transfer]) }]
+}
+async function settledPending() {
+  const f = fixture(false, true)
+  const prepared = await f.kit.prepareCandidateRepay(f.client, sponsor, lineId)
+  assert.equal(prepared.repaymentMode, 'maximum');assert.match(prepared.summary, /up to the reviewed amount/)
+  const pending: CandidatePending = { version:1,chainId:CANDIDATE_FUNDING.chainId,candidate:CANDIDATE_FUNDING.address,account:sponsor,
+    kind:'repay',to:prepared.to,data:prepared.data,value:'0',amount:prepared.amount.toString(),lineId,agent,expectedEpoch:'1',
+    fromBlock:f.state.block.number.toString(),nonce:f.state.walletNonce,createdAt:new Date().toISOString(),status:'pending',txHash,repaymentMode:'maximum' }
+  const blockNumber=f.state.block.number+1n
+  f.state.transactions.set(txHash,{hash:txHash,from:sponsor,to:prepared.to,input:prepared.data,value:0n,nonce:pending.nonce,chainId:pending.chainId,blockHash,blockNumber})
+  f.state.receipts.set(txHash,{status:'success',transactionHash:txHash,blockNumber,blockHash,logs:settledLogs()})
+  f.journal.save(pending)
+  return {...f,pending}
+}
+
+test('settled browser confirms an actual repayment below the maximum after another repayment',async()=>{
+  const f=await settledPending()
+  const result=await f.kit.reconcileCandidatePending(f.client,f.pending,undefined,f.journal)
+  assert.equal(result.status,'confirmed');assert.equal(f.state.sends,0)
+})
+
+test('settled browser stores maximum consent before sending and restores the original action after reload',async()=>{
+  const f=fixture(false,true)
+  const prepared=await f.kit.prepareCandidateRepay(f.client,sponsor,lineId)
+  const first=await f.kit.executeCandidateCall(f.session,prepared)
+  assert.equal(first.status,'unknown');assert.equal(f.state.sends,1)
+  const restored=f.kit.createCandidateJournal(f.storage,sponsor)
+  const pending=restored.load()!;assert.equal(pending.repaymentMode,'maximum');assert.equal(pending.txHash,txHash)
+  const receipt=f.state.receipts.get(txHash)!
+  f.state.receipts.set(txHash,{...receipt,logs:settledLogs()})
+  assert.equal((await f.kit.reconcileCandidatePending(f.client,pending,undefined,restored)).status,'confirmed')
+  assert.equal(f.state.sends,1)
+})
+
+test('settled browser retains recovery for zero, excessive, incomplete or inconsistent repayments',async()=>{
+  for(const logs of [settledLogs(0n),settledLogs(50001n),settledLogs(30000n,1n),settledLogs(30000n,0n,50000n),settledLogs(30000n,0n,30000n,otherLineId),settledLogs().slice(0,2),[...settledLogs(),settledLogs()[1]]]) {
+    const f=await settledPending();const receipt=f.state.receipts.get(txHash)!
+    f.state.receipts.set(txHash,{...receipt,logs})
+    assert.equal((await f.kit.reconcileCandidatePending(f.client,f.pending,undefined,f.journal)).status,'unknown')
+    assert.equal(f.journal.load()?.txHash,txHash);assert.equal(f.state.sends,0)
+  }
+})
+
+test('settled browser does not reinterpret exact and maximum consent across restored journals',async()=>{
+  const f=await settledPending()
+  await assert.rejects(()=>f.kit.reconcileCandidatePending(f.client,{...f.pending,repaymentMode:undefined}),/consent mode/)
+  const legacy=createCandidateFundingKit({...CANDIDATE_FUNDING,drawBoundRepayment:true,runtimeHash:keccak256(fakeCode)})
+  await assert.rejects(()=>legacy.reconcileCandidatePending(f.client,f.pending),/consent mode/)
+  assert.equal(f.state.sends,0);assert.equal(f.journal.load()?.repaymentMode,'maximum')
+})
+
+test('settled browser verifies its accounting marker before preparing repayment',async()=>{
+  const f=fixture(false,true);const read=f.client.readContract
+  f.client.readContract=(async (args:any)=>args.functionName==='totalDefaultedPrincipal'?undefined:read(args)) as typeof f.client.readContract
+  await assert.rejects(()=>f.kit.prepareCandidateRepay(f.client,sponsor,lineId),/Settled repayment identity/)
+  assert.equal(f.state.sends,0)
+})
+
+test('settled mainnet browser requires its own pinned deployment and keeps legacy limits isolated',()=>{
+  const deployment={...CANDIDATE_FUNDING,...SETTLED_MAINNET_CANDIDATE,maxReserve:100000n,maxLineSpend:50000n,maxDailySpend:50000n,maxPerSpend:50000n,
+    selfRegistration:true,drawBoundRepayment:true,accountingModel:'settled-v1' as const}
+  assert.doesNotThrow(()=>createSettledPublicMainnetFundingKit(deployment))
+  for(const patch of [{chainId:5042002},{address:other},{runtimeHash:keccak256(fakeCode)},{accountingModel:undefined},{drawBoundRepayment:false},{selfRegistration:false},{maxReserve:100001n},{maxPerSpend:50001n}]) {
+    assert.throws(()=>createSettledPublicMainnetFundingKit({...deployment,...patch}))
+  }
+  assert.throws(()=>createPublicMainnetFundingKit({...deployment,maxLineSpend:5000n,maxDailySpend:5000n,maxPerSpend:5000n}))
 })
