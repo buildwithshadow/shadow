@@ -90,7 +90,18 @@ export function createCircleSettledMainnetPurchaser(options) {
   return createExecutor(options, false, 5042, true, options.authorizePurchase, false, pinned.maximumPurchase);
 }
 
-function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null, maximumRepayment = false, purchaseCap = 5000n) {
+/** Post settlement cleanup only. Zeroes the reviewed contract allowance after
+ * debt is fully settled, using the original wallet journal and receipt checks. */
+export function createCircleSettledTestnetAllowanceResetter(options) {
+  requireThat(options.config.chainId === TESTNET, 'Only Arc testnet allowance cleanup is enabled.');
+  return createExecutor(options, true, TESTNET, false, null, true, 5000n, true);
+}
+export function createCircleSettledMainnetAllowanceResetter(options) {
+  requireThat(options.config.chainId === 5042, 'Only Arc mainnet allowance cleanup is enabled.');
+  return createExecutor(options, true, 5042, false, null, true, 5000n, true);
+}
+
+function createExecutor({ client, circle, journal, config: suppliedConfig }, guarded, chainId = guarded ? 5042 : TESTNET, purchaseOnly = false, authorizePurchase = null, maximumRepayment = false, purchaseCap = 5000n, allowanceResetOnly = false) {
   const config = Object.freeze({ ...suppliedConfig });
   const CHAIN = chainId;
   const network = CHAIN === TESTNET ? 'ARC-TESTNET' : 'ARC';
@@ -117,6 +128,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
   function decode(request) {
     requireThat(BigInt(request.value ?? 0) === 0n, 'Native value is not permitted.');
     const to = getAddress(request.to);
+    if (allowanceResetOnly) requireThat(same(to, USDC), 'Allowance cleanup cannot call Shadow or move tokens.');
     if (purchaseOnly) requireThat(same(to, contract), 'Only a guarded purchase is supported.');
     requireThat(same(to, contract) || same(to, USDC), 'Destination is outside this adapter.');
     const callAbi = same(to, USDC) ? erc20Abi : abi;
@@ -139,7 +151,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     } else if (!guarded && !purchaseOnly && call.functionName === 'repay') {
       [lineId, amount] = call.args;
     } else throw new Error('Unsupported Shadow operation.');
-    requireThat(amount > 0n && (guarded ? amount === cap : amount <= cap), 'Amount exceeds adapter limit.');
+    requireThat(allowanceResetOnly ? amount === 0n : amount > 0n && (guarded ? amount === cap : amount <= cap), 'Amount exceeds adapter limit.');
     return { to, callAbi, ...call, amount, lineId, digest };
   }
   async function prepare(request) {
@@ -149,7 +161,13 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       const read = (functionName, args = []) => client.readContract({ address: contract, abi, functionName, args });
       requireThat(await read('repaymentBindingVersion') === 2n && same(await read('currentDrawDigest', [config.expectedLineId]), config.expectedDraw), 'Reviewed draw is stale.');
       const line = await read('getLine', [config.expectedLineId]);
-      requireThat(same(line.agent, agent) && [2, 3].includes(Number(line.state))
+      if (allowanceResetOnly) {
+        requireThat(same(line.agent, agent) && [1, 3, 4].includes(Number(line.state)) && line.principalOutstanding === 0n,
+          'Allowance cleanup requires the reviewed agent draw to be fully settled.');
+        const allowance = await client.readContract({ address: USDC, abi: erc20Abi, functionName: 'allowance', args: [agent, contract] });
+        requireThat(typeof allowance === 'bigint' && allowance > 0n && allowance <= cap,
+          'No reviewed residual allowance remains, or it exceeds the original limit.');
+      } else requireThat(same(line.agent, agent) && [2, 3].includes(Number(line.state))
         && (maximumRepayment ? line.principalOutstanding > 0n && line.principalOutstanding <= cap : line.principalOutstanding >= cap), 'Exact reviewed agent debt required.');
       if (maximumRepayment) {
         const value = await client.readContract({ address: contract, abi: parseAbi(['function totalDefaultedPrincipal() view returns (uint256)']), functionName: 'totalDefaultedPrincipal' });
@@ -174,7 +192,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
     const simulation = await client.simulateContract({ address: decoded.to, abi: decoded.callAbi, functionName: decoded.functionName, args: decoded.args, account: agent });
     if (decoded.functionName === 'executeSpend') requireThat(simulation.result?.[0] === true, 'Shadow policy refused the purchase.');
     const block = await client.getBlock();
-    return { operation: decoded.functionName, amount: decoded.amount.toString(), lineId: decoded.lineId ?? null, digest: decoded.digest ?? (guarded ? config.expectedDraw : null), fromBlock: block.number.toString(), ...(maximumRepayment ? { amountMode: 'maximum' } : {}) };
+    return { operation: decoded.functionName, amount: decoded.amount.toString(), lineId: decoded.lineId ?? null, digest: decoded.digest ?? (guarded ? config.expectedDraw : null), fromBlock: block.number.toString(), ...(allowanceResetOnly ? { amountMode: 'allowance-reset' } : maximumRepayment ? { amountMode: 'maximum' } : {}) };
   }
   function envelope(request, idempotencyKey) {
     return { blockchain: network, sourceAddress: agent, contractAddress: getAddress(request.to), callData: request.data, amount: '0', idempotencyKey };
@@ -194,7 +212,7 @@ function createExecutor({ client, circle, journal, config: suppliedConfig }, gua
       requireThat(record.expected.operation === 'executeSpend' && record.expected.amount === decoded.amount.toString() && same(record.expected.lineId, config.expectedLineId), 'Journal purchase attribution changed.');
       return;
     }
-    requireThat((record.expected.amountMode ?? 'exact') === (maximumRepayment ? 'maximum' : 'exact'), 'Journal repayment amount mode changed.');
+    requireThat((record.expected.amountMode ?? 'exact') === (allowanceResetOnly ? 'allowance-reset' : maximumRepayment ? 'maximum' : 'exact'), 'Journal repayment amount mode changed.');
     requireThat(record.expected.operation === decoded.functionName && record.expected.amount === decoded.amount.toString() && same(record.expected.digest, config.expectedDraw) && (decoded.lineId ? same(record.expected.lineId, decoded.lineId) : record.expected.lineId === null), 'Journal repayment attribution changed.');
   }
   async function verifyReceipt(record, txHash) {

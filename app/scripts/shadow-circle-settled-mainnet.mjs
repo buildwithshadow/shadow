@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { clearSettledCircleAllowance } from './circle-agent-settled-allowance.mjs';
+import { createCircleSettledAllowanceResetTransport } from './circle-agent-guarded-cli.mjs';
+import { createCircleSettledMainnetAllowanceResetter } from './circle-agent-execution.mjs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -23,6 +26,8 @@ import { parseAgentArgs, recoverAgentPurchase } from './shadow-circle-agent.mjs'
 const must = (ok, message) => { if (!ok) throw new Error(message); };
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 export function parseSettledMainnetArgs(args) {
+  const cleanup = args[0] === 'cleanup-allowance';
+  if (cleanup) args = ['repay', ...args.slice(1)];
   const filtered = [], monitor = {};
   let purchaseFeeUSDC;
   const names = { '--monitor-baseline': 'baselinePath', '--monitor-manifest': 'manifestPath', '--monitor-state': 'stateDir', '--session-policy': 'sessionPath' };
@@ -48,11 +53,11 @@ export function parseSettledMainnetArgs(args) {
   must(options.line && !/^0x0{64}$/.test(options.line), 'Pin the exact nonzero mainnet line, including for doctor.');
   if (options.command === 'recover') must(monitor.sessionPath, 'Recovery requires the original --session-policy path; it does not require a spend-enabled monitor.');
   if (options.command === 'purchase' && options.confirm) must(Object.values(names).every(key => monitor[key]), 'Confirmed mainnet purchase requires all four reviewed monitor and session paths.');
-  return { ...options, monitor, purchaseFeeUSDC: purchaseFeeUSDC ?? '0.02' };
+  return { ...options, monitor, purchaseFeeUSDC: purchaseFeeUSDC ?? '0.02', ...(cleanup ? {command:'cleanup-allowance'} : {}) };
 }
 export const createSettledMainnetRunnerPurchase = createSettledMainnetPurchase;
 export async function runSettledMainnetAgent(options) {
-  if (options.command === 'help') return { help: 'Controlled Arc MAINNET only, chain 5042. doctor|inspect|purchase|recover|repay --agent ADDRESS --line LINE --state ORIGINAL_JOURNAL --runtime ISOLATED_RUNTIME. Only purchase or repay with --confirm can sign or send. Purchase requires --monitor-baseline, --monitor-manifest, --monitor-state and --session-policy. Pinned report price 0.005 USDC, reserve 0.10 USDC, default fee estimate cap 0.02 USDC per operation. An explicit purchase-only --purchase-fee-cap-usdc may select up to 0.04 USDC; repayment remains capped at 0.02. No activation, policy setters, admission, funding, unpause or journal reset. No new mainnet access is granted by installing this runner.' };
+  if (options.command === 'help') return { help: 'Controlled Arc MAINNET only, chain 5042. doctor|inspect|purchase|recover|repay|cleanup-allowance --agent ADDRESS --line LINE --state ORIGINAL_JOURNAL --runtime ISOLATED_RUNTIME. Only purchase, repay or cleanup-allowance with --confirm can sign or send. Cleanup approves zero for the original contract only. Purchase requires --monitor-baseline, --monitor-manifest, --monitor-state and --session-policy. Pinned report price 0.005 USDC, reserve 0.10 USDC, default fee estimate cap 0.02 USDC per operation. An explicit purchase-only --purchase-fee-cap-usdc may select up to 0.04 USDC; repayment remains capped at 0.02. No activation, policy setters, admission, funding, unpause or journal reset. No new mainnet access is granted by installing this runner.' };
   const { agent, line, command } = options;
   const client = createPublicClient({ chain: guardedMainnetChain, transport: createRpcReadTransport(guardedMainnetChain.rpcUrls.default.http[0],
     { expectedChainId: deployment.chainId, fallbackUrls: guardedMainnetChain.rpcUrls.default.http.slice(1), timeout: 15000,
@@ -84,7 +89,7 @@ export async function runSettledMainnetAgent(options) {
   const summary = snapshot => ({ chainId: deployment.chainId, contract: deployment.address, agent, lineId: line,
     state: snapshot.stateName, debt: snapshot.principalOutstanding.toString(), reserve: snapshot.availableReserve.toString(),
     drawDigest: snapshot.drawDigest, purchasePrice: '0.005 USDC', purchaseFeeCapUSDC: options.purchaseFeeUSDC ?? '0.02', provider: service.provider });
-  if (command === 'inspect' || !options.confirm && ['purchase', 'repay'].includes(command)) return { ...summary(current),
+  if (command === 'inspect' || !options.confirm && ['purchase', 'repay', 'cleanup-allowance'].includes(command)) return { ...summary(current),
     next: 'Nothing signed or sent. Review the exact line and use --confirm only for the intended purchase or repayment.' };
   return journal.withLock(`agent-runner:${agent.toLowerCase()}:${line.toLowerCase()}`, async () => {
     must(!await journal.hasLegacyRunnerState(agent, line), 'Preserve and reconcile legacy runner state before migration.');
@@ -119,6 +124,14 @@ export async function runSettledMainnetAgent(options) {
         try { recovered=await recoverAgentPurchase({ executor: operations, state, engine, client, save }); }
         finally { await sync(); }
         return { ...summary(await readLine()), ...recovered };
+      }
+      if (command === 'cleanup-allowance') {
+        const cleanup = await clearSettledCircleAllowance({ agent, line, contract: deployment.address, state, save, operations, readLine,
+          readAllowance: () => client.readContract({ address: deployment.usdc, abi: erc20Abi, functionName: 'allowance', args: [agent, deployment.address] }),
+          makeResetter: async plan => createCircleSettledMainnetAllowanceResetter({ client, journal, config: { ...config, expectedDraw: plan.draw },
+            circle: await createCircleSettledAllowanceResetTransport({ ...common, chainId: deployment.chainId, contract: deployment.address, expectedDraw: plan.draw }) }),
+        });
+        return { ...summary(await readLine()), cleanup };
       }
       if (command === 'repay') { const repayment = await operations.repay(); return { ...summary(await readLine()), repayment }; }
       must(command === 'purchase' && options.confirm, 'Explicit purchase confirmation is required.');

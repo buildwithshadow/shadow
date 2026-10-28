@@ -24,6 +24,18 @@ export async function createCircleGuardedTestnetCliTransport(options) {
   return createVerifiedTransport(options, createCircleGuardedTestnetCliDriver);
 }
 
+export async function createCircleSettledAllowanceResetTransport(options) {
+  const createDriver = options.chainId === 5042002 ? createCircleSettledTestnetAllowanceResetDriver : options.chainId === 5042 ? createCircleSettledMainnetAllowanceResetDriver : null;
+  must(createDriver, 'Allowance cleanup supports Arc mainnet or testnet only.');
+  return createVerifiedTransport(options, createDriver);
+}
+export function createCircleSettledTestnetAllowanceResetDriver(options) {
+  return createGuardedCliDriver(options, { blockchain: 'ARC-TESTNET', chainId: 5042002, sessionKey: 'testnet', allowanceResetOnly: true });
+}
+export function createCircleSettledMainnetAllowanceResetDriver(options) {
+  return createGuardedCliDriver(options, { blockchain: 'ARC', chainId: 5042, sessionKey: 'mainnet', allowanceResetOnly: true });
+}
+
 async function createVerifiedTransport(options, createDriver) {
   const original = resolve(options.entrypoint);
   const source = await readFile(original);
@@ -42,7 +54,7 @@ export function createCircleGuardedTestnetCliDriver(options) {
   return createGuardedCliDriver(options, { blockchain: 'ARC-TESTNET', chainId: 5042002, sessionKey: 'testnet' });
 }
 
-function createGuardedCliDriver({ entrypoint, agent, contract, maxAmount, expectedLineId, expectedDraw, journal, run = runFile }, { blockchain, chainId, sessionKey }) {
+function createGuardedCliDriver({ entrypoint, agent, contract, maxAmount, expectedLineId, expectedDraw, journal, run = runFile }, { blockchain, chainId, sessionKey, allowanceResetOnly = false }) {
   const address = getAddress(agent), shadow = getAddress(contract);
   const cap = BigInt(maxAmount);
   must(cap > 0n && cap <= 50_000n && /^0x[0-9a-fA-F]{64}$/.test(expectedLineId)
@@ -63,13 +75,13 @@ function createGuardedCliDriver({ entrypoint, agent, contract, maxAmount, expect
   function argumentsFor(request) {
     must(request.blockchain === blockchain && same(request.sourceAddress, address) && request.amount === '0', `Circle ${sessionKey} transport identity mismatch.`);
     const token = same(request.contractAddress, USDC);
-    must(token || same(request.contractAddress, shadow), 'Unsupported Circle destination.');
+    must(allowanceResetOnly ? token : token || same(request.contractAddress, shadow), 'Unsupported Circle destination.');
     const abi = token ? erc20Abi : circleGuardedRepaymentAbi;
     const call = decodeFunctionData({ abi, data: request.callData });
     must(same(encodeFunctionData({ abi, ...call }), request.callData), 'Noncanonical repayment calldata.');
     if (token) must(call.functionName === 'approve' && same(call.args[0], shadow), 'Only exact Shadow approval is supported.');
     else must(call.functionName === 'repayForDraw', 'Only draw-bound repayment is supported.');
-    must((token ? call.args[1] : call.args[2]) === cap, 'Repayment or allowance amount changed.');
+    must((token ? call.args[1] : call.args[2]) === (allowanceResetOnly ? 0n : cap), 'Repayment or allowance amount changed.');
     if (!token) must(same(call.args[0], expectedLineId) && same(call.args[1], expectedDraw), 'Reviewed repayment line or draw changed.');
     const signature = token ? 'approve(address,uint256)' : 'repayForDraw(bytes32,bytes32,uint256)';
     return ['wallet', 'execute', signature, ...call.args.map(String), '--contract', request.contractAddress,
