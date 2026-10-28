@@ -1,10 +1,17 @@
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs';
 import { getAddress,keccak256,stringToHex,decodeFunctionData } from 'viem';
 import { circleGuardedRepaymentAbi } from './circle-agent-execution.mjs';
 import { mainnetCircleSessionIntent } from './circle-agent-mainnet-session.mjs';
 const hash=v=>keccak256(stringToHex(JSON.stringify(v)));
 const same=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.toLowerCase()===b.toLowerCase();
 /** Read the original protected adapter record, not an arbitrary hash from UI. */
-export async function reconcileOriginalMainnetCirclePurchase({journal,requestRecord,purchaseRecord,agent,sessionGuard}){
+export function reconcileOriginalMainnetCirclePurchase(options){
+ return reconcileOriginalPurchase(options,'0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB');
+}
+export function reconcileOriginalSettledMainnetCirclePurchase(options){
+ return reconcileOriginalPurchase(options,SETTLED_MAINNET_CANDIDATE.address);
+}
+async function reconcileOriginalPurchase({journal,requestRecord,purchaseRecord,agent,sessionGuard},contract){
  if(!requestRecord)return sessionGuard.reconcile();
  const saved=await journal.get(requestRecord.key);
  if(!saved)throw Error('Original Circle execution record is missing. Preserve the session and journal.');
@@ -12,7 +19,7 @@ export async function reconcileOriginalMainnetCirclePurchase({journal,requestRec
  const key=hash({namespace,operationId:requestRecord.request.operationId});
  if(key!==requestRecord.key||saved.namespace!==namespace||saved.requestHash!==hash(saved.request)
   ||saved.request.blockchain!=='ARC'||!same(saved.request.sourceAddress,agent)||!same(saved.request.contractAddress,requestRecord.request.to)
-  ||!same(saved.request.callData,requestRecord.request.data)||saved.request.amount!=='0'||saved.operationId!==requestRecord.request.operationId||!same(saved.request.contractAddress,'0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB'))throw Error('Original Circle recovery identity changed.');
+  ||!same(saved.request.callData,requestRecord.request.data)||saved.request.amount!=='0'||saved.operationId!==requestRecord.request.operationId||!same(saved.request.contractAddress,contract))throw Error('Original Circle recovery identity changed.');
  const decoded=decodeFunctionData({abi:circleGuardedRepaymentAbi,data:saved.request.callData});
  if(decoded.functionName!=='executeSpend'||!same(decoded.args[0].agent,agent)||!same(decoded.args[0].executor,agent))throw Error('Original Circle purchase calldata changed.');
  const {digest}=mainnetCircleSessionIntent(decoded.args[0],{chainId:5042n,address:saved.request.contractAddress});
