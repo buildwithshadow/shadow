@@ -1,4 +1,4 @@
-import {encodeFunctionData,erc20Abi} from 'viem';
+import {encodeFunctionData,erc20Abi,keccak256,encodeAbiParameters} from 'viem';
 const must=(ok,message)=>{if(!ok)throw Error(message)};
 const same=(a,b)=>typeof a==='string'&&typeof b==='string'&&a.toLowerCase()===b.toLowerCase();
 const USDC='0x3600000000000000000000000000000000000000';
@@ -13,7 +13,7 @@ export async function clearSettledCircleAllowance({agent,line,contract,state,sav
   must(['confirmed','blocked','not-submitted'].includes(result.status),'Reconcile the earlier Circle operation before cleanup.');
  }
  const resetter=await makeResetter(plan);
- const request={operationId:`${line}:allowance-reset:${plan.draw}`,to:USDC,value:'0',
+ const request={operationId:`allowance-reset:${keccak256(encodeAbiParameters([{type:"bytes32"},{type:"bytes32"}],[line,plan.draw]))}`,to:USDC,value:'0',
   data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,0n]})};
  const reviewed={version:1,draw:plan.draw,request,key:resetter.operationKey(request)};
  const prior=state.allowanceCleanup;

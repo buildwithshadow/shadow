@@ -1,3 +1,4 @@
+import {clearSettledCircleAllowance} from './circle-agent-settled-allowance.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { realpath, mkdtemp, rm, readdir, stat } from 'node:fs/promises';
@@ -645,3 +646,13 @@ for(const [chainId,factory] of [[5042002,createCircleSettledTestnetAllowanceRese
   await assert.rejects(()=>x.adapter.reconcile(previous.key),/mode changed|limit|cleanup cannot call/);
  });
 }
+
+for(const [chainId,factory] of [[5042002,createCircleSettledTestnetAllowanceResetter],[5042,createCircleSettledMainnetAllowanceResetter]])test(`cleanup helper integrates with the real executor operation key on ${chainId}`,async()=>{
+ const x=setup({config:{...config,chainId}},factory);x.state.lineState=4;x.state.outstanding=0n;x.state.allowance=2000n;
+ x.state.receipt.logs=[eventLog('Approval',{owner:agent,spender:contract,value:0n},usdc,erc20Abi)];
+ const state={requests:{},guardedRepayment:{version:1,line:lineId,draw:digest,amount:'5000'}};let persisted=false;
+ const execute=x.options.circle.execute;x.options.circle.execute=async request=>{assert(persisted);const result=await execute(request);x.state.allowance=0n;return result};
+ const result=await clearSettledCircleAllowance({agent,line:lineId,contract,state,save:async()=>{persisted=true},operations:{reconcile:async()=>assert.fail('No earlier operation')},
+  readLine:async()=>({agent,drawDigest:digest,principalOutstanding:0n}),readAllowance:async()=>x.state.allowance,makeResetter:async()=>x.adapter});
+ assert.equal(result.status,'confirmed');assert.equal(x.state.sends,1);assert(state.allowanceCleanup.request.operationId.length<=128);
+});
