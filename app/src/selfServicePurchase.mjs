@@ -7,6 +7,7 @@ import {
   parseAbi,
 } from "viem";
 import abi from "../scripts/float-mainnet-abi.json" with { type: "json" };
+import { SETTLED_MAINNET_CANDIDATE } from "../settledMainnetCandidate.mjs";
 import { readBoundedJson } from "./boundedResponse.mjs";
 
 // Wallet libraries can wrap an EIP-1193 rejection in several cause objects.
@@ -84,6 +85,14 @@ export function createGuardedMainnetPurchase(options) {
     'Guarded mainnet supports a bounded purchase of at most 0.005 USDC.');
   return createPurchase(options, true);
 }
+export function createSettledMainnetPurchase(options) {
+  const c = options.config, candidate = SETTLED_MAINNET_CANDIDATE;
+  const principal = BigInt(c.principal);
+  assert(c.chainId === candidate.chainId && same(c.contract, candidate.address)
+    && same(c.runtimeHash, candidate.runtimeHash) && principal > 0n && principal <= candidate.maximumPurchase,
+    "Settled mainnet requires the pinned candidate and a purchase of at most 0.05 USDC.");
+  return createPurchase(options, true, candidate.maximumPurchase);
+}
 function createPurchase({
   client,
   wallet,
@@ -103,7 +112,7 @@ function createPurchase({
     });
   },
   random = () => crypto.getRandomValues(new Uint8Array(32)),
-}, mainnet) {
+}, mainnet, purchaseCap = mainnet ? 5000n : 1000000n) {
   config = Object.freeze({ ...config });
   const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
   const account = getAddress(config.account),
@@ -355,7 +364,7 @@ function createPurchase({
     const principal = BigInt(config.principal);
     assert(
       principal > 0n &&
-        principal <= (mainnet ? 5000n : 1000000n) &&
+        principal <= purchaseCap &&
         principal <= line.availableReserve,
       "Insufficient authorized funding.",
     );
