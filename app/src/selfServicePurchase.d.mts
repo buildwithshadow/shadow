@@ -23,3 +23,5 @@ export function createSelfServicePurchase(input: {
 };
 
 export const createGuardedMainnetPurchase: typeof createSelfServicePurchase;
+
+export const createSettledMainnetPurchase: typeof createSelfServicePurchase;

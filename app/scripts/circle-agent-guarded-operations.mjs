@@ -1,3 +1,4 @@
+import { SETTLED_MAINNET_CANDIDATE } from "../settledMainnetCandidate.mjs";
 import { SETTLED_TESTNET, SETTLED_TESTNET_SERVICE } from '../settledTestnetDeployment.mjs';
 import { decodeFunctionData, encodeFunctionData, erc20Abi, getAddress, keccak256, stringToHex, zeroHash } from 'viem';
 import { circleGuardedRepaymentAbi as abi } from './circle-agent-execution.mjs';
@@ -27,6 +28,19 @@ export function createSettledTestnetCircleOperations(options) {
 
 export function createGuardedMainnetCircleOperations(options) {
   return createOperations(options, GUARDED_MAINNET, GUARDED_MAINNET_SERVICE);
+}
+
+export function createSettledMainnetCircleOperations(options, service) {
+  const principal = BigInt(service.principal);
+  const endpoint = new URL(service.endpoint);
+  must(principal > 0n && principal <= SETTLED_MAINNET_CANDIDATE.maximumPurchase
+    && String(principal) === service.principal, 'Settled mainnet service price must be canonical and at most 0.05 USDC.');
+  must(endpoint.protocol === 'https:' && !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash,
+    'Settled mainnet service requires a fixed HTTPS endpoint.');
+  const provider = getAddress(service.provider);
+  must(!same(provider, '0x0000000000000000000000000000000000000000'), 'Service provider is required.');
+  return createOperations(options, {...SETTLED_MAINNET_CANDIDATE,
+    usdc: '0x3600000000000000000000000000000000000000'}, Object.freeze({...service,provider}), true);
 }
 
 function createOperations({ agent, line, state, save, purchaseExecutor, makeRepayer, readLine, readAllowance }, deployment, service, maximumRepayment = false) {

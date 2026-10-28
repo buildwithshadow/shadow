@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { keccak256, toHex, hashTypedData, createWalletClient, custom, defineChain } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
-import { createSelfServicePurchase, createGuardedMainnetPurchase } from "../src/selfServicePurchase.mjs";
+import { createSelfServicePurchase, createGuardedMainnetPurchase, createSettledMainnetPurchase } from "../src/selfServicePurchase.mjs";
 import { assertPurchaseResolved } from "../src/gatewayFundingGuard.ts";
+import { SETTLED_MAINNET_CANDIDATE } from "../settledMainnetCandidate.mjs";
 const agent = privateKeyToAccount(`0x${"11".repeat(32)}`),
   provider = privateKeyToAccount(`0x${"22".repeat(32)}`);
 const contract = `0x${"33".repeat(20)}`,
@@ -452,4 +453,19 @@ test('a failed locked line lookup cannot request a signature',async()=>{
   const h=setup(),flow=h.create();const prepared=await flow.prepare(lineId,'line-unavailable');
   const read=h.client.readContract;h.client.readContract=async request=>{if(request.functionName==='lines')throw Error('line RPC unavailable');return read(request);};
   await assert.rejects(flow.submit(prepared.intent.digest),/line RPC unavailable/);assert.deepEqual(h.counts(),{sends:0,signs:0});
+});
+
+test("settled mainnet pins its deployment and keeps legacy purchase caps isolated", async () => {
+  const c = {...config,chainId:5042,contract:SETTLED_MAINNET_CANDIDATE.address,runtimeHash:SETTLED_MAINNET_CANDIDATE.runtimeHash,principal:"10000"};
+  for (const patch of [{chainId:5042002},{contract},{runtimeHash:keccak256(code)},{principal:"50001"},{principal:"0"}])
+    assert.throws(()=>createSettledMainnetPurchase({config:{...c,...patch}}), /pinned candidate/);
+  assert.throws(()=>createGuardedMainnetPurchase({config:c}),/at most 0.005/);
+  for (const principal of ["10000","50000"]) {
+    let signs=0,sends=0;
+    const flow=createSettledMainnetPurchase({config:{...c,principal},storage:{getItem:()=>null},
+      client:{getChainId:async()=>5042,getCode:async()=>"0x"},
+      wallet:{request:async()=>{signs++},sendTransaction:async()=>{sends++}},withLock:async(_,work)=>work()});
+    await assert.rejects(()=>flow.prepare(lineId,"undeployed"),/approved release/);
+    assert.equal(signs,0);assert.equal(sends,0);
+  }
 });
