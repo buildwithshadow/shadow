@@ -1,13 +1,15 @@
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeFunctionData,getAddress,keccak256,stringToHex } from 'viem';
 import { circleGuardedRepaymentAbi as abi } from './circle-agent-execution.mjs';
 import { mainnetCircleSessionIntent } from './circle-agent-mainnet-session.mjs';
-import { reconcileOriginalMainnetCirclePurchase } from './circle-agent-mainnet-recovery.mjs';
+import { reconcileOriginalMainnetCirclePurchase, reconcileOriginalSettledMainnetCirclePurchase } from './circle-agent-mainnet-recovery.mjs';
 import { recoverAgentPurchase } from './shadow-circle-agent.mjs';
 const hash=v=>keccak256(stringToHex(JSON.stringify(v)));
 const agent=getAddress(`0x${'11'.repeat(20)}`),provider=`0x${'22'.repeat(20)}`,line=`0x${'33'.repeat(32)}`,txHash=`0x${'44'.repeat(32)}`,contract='0x708c8c987eb4Cd14445Ac2c65ea712b2084888eB';
-function setup(){
+function setup(contractAddress=contract){
+ const contract=contractAddress;
  const message={agent,executor:agent,sponsor:provider,provider,lineId:line,lineEpoch:1n,termsHash:line,endpointHash:line,principal:5000n,maximumTotalDebt:5000n,dueAt:1000n,nonce:0n,signatureExpiry:900n};
  const {digest}=mainnetCircleSessionIntent(message,{chainId:5042n,address:contract});
  const data=encodeFunctionData({abi,functionName:'executeSpend',args:[message,'0x1234']});
@@ -43,4 +45,21 @@ test('a durable exact pre-send failure reconciles without attaching a transactio
  x.options.journal.get=async()=>null;
  await assert.rejects(()=>reconcileOriginalMainnetCirclePurchase(x.options),/record is missing/);
  assert.equal(x.calls.length,1);
+});
+
+test('settled recovery reconciles only the original candidate operation and never an older deployment',async()=>{
+ const x=setup(SETTLED_MAINNET_CANDIDATE.address);
+ await reconcileOriginalSettledMainnetCirclePurchase(x.options);
+ assert.deepEqual(x.calls,[[x.digest,txHash,false]]);
+ await assert.rejects(()=>reconcileOriginalMainnetCirclePurchase(x.options),/identity changed/);
+ const old=setup();
+ await assert.rejects(()=>reconcileOriginalSettledMainnetCirclePurchase(old.options),/identity changed/);
+ assert.equal(old.calls.length,0);
+ for(const mutate of [x=>{x.saved.requestHash='bad'},x=>{x.saved.expected.digest=line},x=>{x.saved.request.sourceAddress=provider;x.saved.requestHash=hash(x.saved.request)},x=>{x.options.requestRecord.key=line}]){
+   const changed=setup(SETTLED_MAINNET_CANDIDATE.address);mutate(changed);
+   await assert.rejects(()=>reconcileOriginalSettledMainnetCirclePurchase(changed.options));assert.equal(changed.calls.length,0);
+ }
+ const unsent=setup(SETTLED_MAINNET_CANDIDATE.address);delete unsent.saved.txHash;unsent.saved.notSubmitted=true;
+ await reconcileOriginalSettledMainnetCirclePurchase(unsent.options);
+ assert.deepEqual(unsent.calls,[[unsent.digest,undefined,true]]);
 });

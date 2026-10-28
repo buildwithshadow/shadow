@@ -14,7 +14,7 @@ import { createCircleGuardedCliTransport } from './circle-agent-guarded-cli.mjs'
 import { createSettledMainnetCircleOperations } from './circle-agent-guarded-operations.mjs';
 import { createRpcReadTransport } from './rpc-read-transport.mjs';
 import { assertHealthySpendMonitor } from './float-mainnet-monitor-spend-guard.mjs';
-import { reconcileOriginalMainnetCirclePurchase } from './circle-agent-mainnet-recovery.mjs';
+import { reconcileOriginalSettledMainnetCirclePurchase } from './circle-agent-mainnet-recovery.mjs';
 import { createMainnetCircleSessionGuard, mainnetCircleSessionIntent } from './circle-agent-mainnet-session.mjs';
 import { decodeFunctionData } from 'viem';
 import { circleGuardedRepaymentAbi } from './circle-agent-execution.mjs';
@@ -113,7 +113,7 @@ export async function runSettledMainnetAgent(options) {
         config: { chainId: deployment.chainId, account: agent, contract: deployment.address, runtimeHash: deployment.runtimeHash, ...service } });
       if (command === 'recover') {
         const record=engine.load(), originalRequest=state.requests.purchase;
-        const sync=()=>reconcileOriginalMainnetCirclePurchase({journal,requestRecord:originalRequest,purchaseRecord:record,agent,sessionGuard});
+        const sync=()=>reconcileOriginalSettledMainnetCirclePurchase({journal,requestRecord:originalRequest,purchaseRecord:record,agent,sessionGuard});
         await sync();
         let recovered;
         try { recovered=await recoverAgentPurchase({ executor: operations, state, engine, client, save }); }
