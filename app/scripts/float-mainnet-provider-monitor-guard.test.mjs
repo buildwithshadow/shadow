@@ -6,6 +6,7 @@ import {join} from 'node:path';
 import {keccak256} from 'viem';
 import {createProviderMonitorGuard,createTestnetProviderMonitorGuard,createSettledTestnetProviderMonitorGuard,configureProviderAdmission} from './float-mainnet-provider-monitor-guard.mjs';
 import {loadContext,runMonitorOnce} from './float-mainnet-monitor-runner.mjs';
+import {SETTLED_MAINNET_CANDIDATE} from '../settledMainnetCandidate.mjs';
 const addr=n=>'0x'+n.toString(16).padStart(40,'0');
 const hash=n=>'0x'+n.toString(16).padStart(64,'0');
 async function fixture({testnet=false}={}){
@@ -37,6 +38,19 @@ async function fixture({testnet=false}={}){
 }
 test('provider admission verifies a fresh public heartbeat and canonical deployed runtime',async()=>{
  const f=await fixture();try{await createProviderMonitorGuard(f.options)();}finally{f.cleanup();}
+});
+test('settled mainnet provider startup accepts its pinned profile but cannot reuse the previous profile heartbeat',async()=>{
+ const f=await fixture();try{
+  f.baseline.accountingModel='settled-v1';
+  Object.assign(f.baseline.identity,{address:SETTLED_MAINNET_CANDIDATE.address,runtimeCodeHash:SETTLED_MAINNET_CANDIDATE.runtimeHash});
+  for(const key of ['lineSpend','perSpend','dailySpend'])f.baseline.effectiveLimits[key]='50000';
+  Object.assign(f.manifest.contract,{address:SETTLED_MAINNET_CANDIDATE.address,accountingModel:'settled-v1'});
+  f.manifest.bytecode.onchainRuntimeKeccak256=SETTLED_MAINNET_CANDIDATE.runtimeHash;
+  f.options.connection.address=SETTLED_MAINNET_CANDIDATE.address;
+  writeFileSync(f.options.baselinePath,JSON.stringify(f.baseline));writeFileSync(f.options.manifestPath,JSON.stringify(f.manifest));
+  const guard=configureProviderAdmission({...f.options,mode:'public-monitor'});
+  await assert.rejects(guard,/could not be verified/);
+ }finally{f.cleanup();}
 });
 for(const testnet of [false,true,'settled']) for(const [name,change] of [
  ['missing heartbeat',f=>rmSync(join(f.options.stateDir,'heartbeat.json'))],
