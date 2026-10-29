@@ -1,5 +1,6 @@
 import { isAddress, zeroAddress } from 'viem';
 import { entryPoint07Address } from 'viem/account-abstraction';
+import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs';
 import { validateBaseline as validateFixedBaseline, evaluateSnapshot as evaluateFixedSnapshot, digestJson } from './float-mainnet-monitor-policy.mjs';
 
 const same = (a,b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
@@ -18,7 +19,13 @@ export function validateBaseline(raw) {
   must(publicAdmission.minimumRepaymentWindow==='3600' && publicAdmission.maximumRepaymentWindow==='86400', 'Invalid public repayment bounds');
   const b=validateFixedBaseline({...fixed,schemaVersion:1});
   must(b.identity.chainId==='5042' && b.sponsors.length===0 && b.lines.length===0, 'Public policy requires mainnet and predicate admission, not a fixed participant roster');
-  must(BigInt(b.effectiveLimits.protocolReserve)<=1000000n && BigInt(b.effectiveLimits.lineReserve)<=100000n && BigInt(b.effectiveLimits.lineSpend)<=5000n && BigInt(b.effectiveLimits.perSpend)<=5000n && BigInt(b.effectiveLimits.dailySpend)<=5000n, 'Public pilot limits exceed the approved release bounds');
+  // The replacement has a separately reviewed spend ceiling. Select it only
+  // from the protected identity and accounting model, never from live state.
+  const settledRelease=b.accountingModel==='settled-v1'
+    && same(b.identity.address,SETTLED_MAINNET_CANDIDATE.address)
+    && same(b.identity.runtimeCodeHash,SETTLED_MAINNET_CANDIDATE.runtimeHash);
+  const spendCeiling=settledRelease?SETTLED_MAINNET_CANDIDATE.maximumPurchase:5000n;
+  must(BigInt(b.effectiveLimits.protocolReserve)<=1000000n && BigInt(b.effectiveLimits.lineReserve)<=100000n && ['lineSpend','perSpend','dailySpend'].every(k=>BigInt(b.effectiveLimits[k])<=spendCeiling), 'Public pilot limits exceed the approved release bounds');
   return {...b,schemaVersion:2,publicAdmission:structuredClone(publicAdmission)};
 }
 

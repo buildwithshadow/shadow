@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import {evaluateSnapshot,validateBaseline} from './float-mainnet-monitor-public-policy.mjs';
+import {SETTLED_MAINNET_CANDIDATE} from '../settledMainnetCandidate.mjs';
 const addr=n=>'0x'+n.toString(16).padStart(40,'0');
 const hash=n=>'0x'+n.toString(16).padStart(64,'0');
 const NOW=1800000000000;
@@ -64,4 +65,41 @@ test('a matching snapshot cannot legitimize an oversized aggregate reserve basel
  snapshot.contract.totalCommittedCapital='1000001';
  assert.throws(()=>validateBaseline(baseline),/approved release bounds/);
  assert.throws(()=>evaluateSnapshot(baseline,snapshot,NOW),/approved release bounds/);
+});
+
+function settledFixture(){
+ const {baseline,snapshot}=fixture();
+ baseline.accountingModel='settled-v1';
+ Object.assign(baseline.identity,{address:SETTLED_MAINNET_CANDIDATE.address,runtimeCodeHash:SETTLED_MAINNET_CANDIDATE.runtimeHash});
+ for(const k of ['lineSpend','perSpend','dailySpend'])baseline.effectiveLimits[k]='50000';
+ Object.assign(snapshot.identity,baseline.identity);delete snapshot.identity.deployBlock;
+ Object.assign(snapshot.contract,{address:baseline.identity.address,accountingModel:'settled-v1',effectiveLimits:{...baseline.effectiveLimits},totalDefaultedPrincipal:'0'});
+ Object.assign(snapshot.lines[0],{lineSpendCap:'50000',dailySpendCap:'50000'});
+ Object.assign(snapshot.lines[0].providers[0],{perSpendCap:'50000',dailySpendCap:'50000'});
+ snapshot.accounting.checks.push({id:'defaultedPrincipalEqualsLines',status:'PASS'});
+ return {baseline,snapshot};
+}
+test('the pinned settled release admits its reviewed ceiling and preserves every global check',()=>{
+ const {baseline,snapshot}=settledFixture();
+ assert.equal(validateBaseline(baseline).effectiveLimits.lineSpend,'50000');
+ assert.equal(evaluateSnapshot(baseline,snapshot,NOW).ok,true);
+ for(const mutate of [s=>s.identity.runtimeCodeHash=hash(99),s=>s.contract.owner=addr(99),s=>s.contract.spendsPaused=true,s=>s.accounting.balance='99999',s=>s.discovery.scanned.fromBlock='11',s=>s.executionAudit.executions=[{event:'ProviderPaid',digest:hash(12),lineId:hash(2),sender:addr(6),executor:addr(6)}]]){
+  const changed=structuredClone(snapshot);mutate(changed);assert.equal(evaluateSnapshot(baseline,changed,NOW).hold,true);
+ }
+});
+test('settled ceilings cannot be selected by a model marker or a matching live snapshot alone',()=>{
+ const {baseline,snapshot}=settledFixture();
+ for(const mutate of [b=>delete b.accountingModel,b=>b.accountingModel='legacy-v1',b=>b.identity.address=addr(99),b=>b.identity.runtimeCodeHash=hash(99),b=>b.identity.chainId='5042002']){
+  const changed=structuredClone(baseline);mutate(changed);assert.throws(()=>validateBaseline(changed));
+  assert.throws(()=>evaluateSnapshot(changed,snapshot,NOW));
+ }
+ const legacy=fixture().baseline;legacy.effectiveLimits.lineSpend='5001';assert.throws(()=>validateBaseline(legacy));
+});
+test('the pinned settled release rejects excess protocol, reserve, spend and provider capacity',()=>{
+ for(const [key,value] of [['protocolReserve','1000001'],['lineReserve','100001'],['lineSpend','50001'],['perSpend','50001'],['dailySpend','50001']]){
+  const {baseline}=settledFixture();baseline.effectiveLimits[key]=value;assert.throws(()=>validateBaseline(baseline));
+ }
+ for(const mutate of [s=>s.lines[0].lineSpendCap='50001',s=>s.lines[0].dailySpendCap='50001',s=>s.lines[0].providers[0].perSpendCap='50001',s=>s.lines[0].providers[0].dailySpendCap='50001',s=>s.lines[0].cumulativePrincipalPaid='50001']){
+  const {baseline,snapshot}=settledFixture();mutate(snapshot);assert.equal(evaluateSnapshot(baseline,snapshot,NOW).hold,true);
+ }
 });
