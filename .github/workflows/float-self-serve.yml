@@ -37,6 +37,7 @@ on:
       - "app/settledMainnetCandidate.*"
       - "app/settledMainnetDeployment.mjs"
       - "app/scripts/shadow-circle-settled-mainnet.mjs"
+      - "app/scripts/shadow-circle-settled-testnet.mjs"
       - "app/guardedTestnetDeployment.mjs"
       - "app/boundedTestnetDeployment.mjs"
       - "app/scripts/arc-testnet-network.test.mjs"

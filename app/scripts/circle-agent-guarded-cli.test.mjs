@@ -2,14 +2,14 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { encodeFunctionData, erc20Abi } from 'viem';
 import { circleGuardedRepaymentAbi } from './circle-agent-execution.mjs';
-import { createCircleGuardedCliDriver, createCircleGuardedTestnetCliDriver } from './circle-agent-guarded-cli.mjs';
+import { createCircleGuardedCliDriver, createCircleGuardedTestnetCliDriver, createCircleSettledTestnetAllowanceResetDriver, createCircleSettledMainnetAllowanceResetDriver } from './circle-agent-guarded-cli.mjs';
 
 const agent=`0x${'11'.repeat(20)}`,contract=`0x${'22'.repeat(20)}`,other=`0x${'33'.repeat(20)}`;
 const line=`0x${'44'.repeat(32)}`,draw=`0x${'55'.repeat(32)}`,usdc='0x3600000000000000000000000000000000000000';
 const key='180fefd3-af7d-4b57-b14a-3b4560be742c';
 const request={blockchain:'ARC',sourceAddress:agent,contractAddress:contract,amount:'0',idempotencyKey:key,
   callData:encodeFunctionData({abi:circleGuardedRepaymentAbi,functionName:'repayForDraw',args:[line,draw,5000n]})};
-function setup(testnet = false) {
+function setup(testnet = false, reset = false) {
   const blockchain = testnet ? 'ARC-TESTNET' : 'ARC';
   const records=new Map(),calls=[];
   const state={valid:true,lose:false,failSave:false,estimateChain:blockchain};
@@ -27,7 +27,7 @@ function setup(testnet = false) {
     if(state.lose)throw Error('SECRET_CHILD_OUTPUT');
     return {stdout:JSON.stringify({data:response})};
   };
-  const factory=testnet?createCircleGuardedTestnetCliDriver:createCircleGuardedCliDriver;
+  const factory=reset?(testnet?createCircleSettledTestnetAllowanceResetDriver:createCircleSettledMainnetAllowanceResetDriver):(testnet?createCircleGuardedTestnetCliDriver:createCircleGuardedCliDriver);
   return {state,calls,records,response,driver:factory({entrypoint:'/isolated/runtime.js',agent,contract,maxAmount:'5000',expectedLineId:line,expectedDraw:draw,journal,run})};
 }
 test('guarded transport uses the exact draw and original idempotency key with ordinary mainnet CLI arguments',async()=>{
@@ -90,4 +90,18 @@ test('testnet transport cannot use a mainnet envelope, mainnet session or mainne
   assert(!x.calls.some(a=>a.includes('--idempotency-key')));
   x.state.valid=true;x.state.estimateChain='ARC';
   await assert.rejects(()=>x.driver.estimate(testnetRequest),/estimate network mismatch/);
+});
+
+for(const testnet of [false,true])test(`zero allowance transport is isolated on ${testnet?'testnet':'mainnet'}`,async()=>{
+ const x=setup(testnet,true);
+ const cleanup={...request,blockchain:testnet?'ARC-TESTNET':'ARC',contractAddress:usdc,callData:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,0n]})};
+ await x.driver.execute(cleanup);const sent=x.calls.find(a=>a.includes('--idempotency-key'));
+ assert.deepEqual(sent.slice(1,6),['wallet','execute','approve(address,uint256)',contract,'0']);
+ for(const bad of [request,{...cleanup,callData:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})},
+  {...cleanup,callData:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[other,0n]})},
+  {...cleanup,callData:encodeFunctionData({abi:erc20Abi,functionName:'transfer',args:[other,1n]})},
+  {...cleanup,amount:'1'},{...cleanup,blockchain:testnet?'ARC':'ARC-TESTNET'}]){
+  const before=x.calls.length;await assert.rejects(()=>x.driver.execute(bad));assert.equal(x.calls.length,before);
+ }
+ const ordinary=setup(testnet);await assert.rejects(()=>ordinary.driver.execute(cleanup));assert.equal(ordinary.calls.length,0);
 });

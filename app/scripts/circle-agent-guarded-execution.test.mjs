@@ -1,3 +1,4 @@
+import {clearSettledCircleAllowance} from './circle-agent-settled-allowance.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { realpath, mkdtemp, rm, readdir, stat } from 'node:fs/promises';
@@ -5,7 +6,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { encodeFunctionData, encodeEventTopics, encodeAbiParameters, erc20Abi, keccak256, parseAbi, parseUnits } from 'viem';
 import { entryPoint07Abi, entryPoint07Address } from 'viem/account-abstraction';
-import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor, createCircleSettledTestnetRepayer, createCircleSettledMainnetRepayer, createCircleSettledMainnetPurchaser } from './circle-agent-execution.mjs';
+import { circleGuardedRepaymentAbi as abi, createCircleGuardedRepayer, createCircleGuardedTestnetRepayer, createCircleGuardedTestnetPurchaser, createCircleAgentExecutor, createCircleSettledTestnetRepayer, createCircleSettledMainnetRepayer, createCircleSettledMainnetPurchaser, createCircleSettledTestnetAllowanceResetter, createCircleSettledMainnetAllowanceResetter } from './circle-agent-execution.mjs';
 import { SETTLED_MAINNET_CANDIDATE } from '../settledMainnetCandidate.mjs';
 
 import { createCircleAgentJournal } from './circle-agent-journal.mjs';
@@ -36,7 +37,7 @@ function setup(overrides = {}, factory = createCircleGuardedRepayer) {
     getChainId: async()=>state.chainId, getCode: async()=>state.code,
     getBlock: async args=>args?.blockTag==='finalized'?{number:state.finalized}:args?.blockNumber?{number:args.blockNumber,hash:state.canonicalHash}:{number:100n},
     getTransaction: async()=>({to:entryPoint07Address,blockHash,input:encodeFunctionData({abi:entryPoint07Abi,functionName:'handleOps',args:[state.duplicateOps?[operation(),operation()]:[operation()],provider]})}),
-    readContract: async({functionName})=>({ getLine:{agent:state.lineAgent,state:state.lineState??2,principalOutstanding:state.outstanding??5000n}, totalDefaultedPrincipal:state.defaultedPrincipal??0n,repaymentBindingVersion:2n,currentDrawDigest:state.draw??digest,openingsPaused:true,spendsPaused:true, hashSpendIntent:digest, getUserOpHash:digest, receiptStatus:state.receiptStatus })[functionName],
+    readContract: async({functionName})=>({ getLine:{agent:state.lineAgent,state:state.lineState??2,principalOutstanding:state.outstanding??5000n}, allowance:state.allowance??2000n,totalDefaultedPrincipal:state.defaultedPrincipal??0n,repaymentBindingVersion:2n,currentDrawDigest:state.draw??digest,openingsPaused:true,spendsPaused:true, hashSpendIntent:digest, getUserOpHash:digest, receiptStatus:state.receiptStatus })[functionName],
     simulateContract: async()=>({result:[state.policy,0]}),
     getTransactionReceipt: async()=>({...state.receipt,blockHash,logs:state.bundleLogs??[before(),...state.receipt.logs,boundary()]}),
   };
@@ -606,4 +607,52 @@ test('settled mainnet purchase binds the prepared runtime and refuses absent cod
   x.state.code='0x';let signatures=0;
   await assert.rejects(()=>x.adapter.withPurchaseOperation(async()=>{signatures++;}),/Unexpected Shadow deployment/);
   assert.equal(signatures,0);assert.equal(x.state.sends,0);
+});
+
+for(const [chainId,factory] of [[5042002,createCircleSettledTestnetAllowanceResetter],[5042,createCircleSettledMainnetAllowanceResetter]]) {
+ const request={operationId:'clear-residual',to:usdc,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,0n]})};
+ const make=()=>{const x=setup({config:{...config,chainId}},factory);x.state.lineState=4;x.state.outstanding=0n;x.state.receipt.logs=[eventLog('Approval',{owner:agent,spender:contract,value:0n},usdc,erc20Abi)];return x};
+ test(`allowance cleanup ${chainId}: confirms exact zero approval and recovers without resending`,async()=>{
+  const x=make();x.state.lose=true;const first=await x.adapter.execute(request);assert.equal(first.status,'unknown');
+  const restored=factory(x.options);assert.equal((await restored.reconcile(first.key)).status,'confirmed');
+  assert.equal((await restored.execute(request)).status,'confirmed');assert.equal(x.state.sends,1);
+ });
+ test(`allowance cleanup ${chainId}: refuses transfers, repayment, nonzero approval and another spender`,async()=>{
+  const x=make();
+  for(const bad of [{...request,value:'1'},{...request,to:contract,data:repay.data},
+   {...request,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[contract,5000n]})},
+   {...request,data:encodeFunctionData({abi:erc20Abi,functionName:'approve',args:[provider,0n]})},
+   {...request,data:encodeFunctionData({abi:erc20Abi,functionName:'transfer',args:[provider,1n]})}])
+   await assert.rejects(()=>x.adapter.execute(bad));
+  assert.equal(x.state.sends,0);assert.equal(x.state.estimates,0);
+ });
+ test(`allowance cleanup ${chainId}: refuses unsettled debt, changed identity and unexpected allowance`,async()=>{
+  for(const patch of [{outstanding:1n},{draw:endpointHash},{lineAgent:provider},{allowance:0n},{allowance:5001n},{code:'0x6001'}]){
+   const x=make();Object.assign(x.state,patch);await assert.rejects(()=>x.adapter.execute(request));assert.equal(x.state.sends,0);
+  }
+ });
+ test(`allowance cleanup ${chainId}: wrong receipt attribution cannot clear the journal hold`,async()=>{
+  for(const patch of [{spender:provider},{owner:provider},{value:2000n}]){
+   const x=make();x.state.receipt.logs=[eventLog('Approval',{owner:agent,spender:contract,value:0n,...patch},usdc,erc20Abi)];
+   await assert.rejects(()=>x.adapter.execute(request),/event|attribution|requested/i);assert.equal(x.state.sends,1);
+   await assert.rejects(()=>x.adapter.execute({...request,operationId:'another-clear'}),/previous Circle operation/);assert.equal(x.state.sends,1);
+  }
+ });
+ test(`allowance cleanup ${chainId}: cannot reinterpret a maximum repayment journal record`,async()=>{
+  const x=make();x.state.lineState=2;x.state.outstanding=5000n;
+  const repayer=(chainId===5042?createCircleSettledMainnetRepayer:createCircleSettledTestnetRepayer)(x.options);
+  x.state.lose=true;const previous=await repayer.execute(repay);assert.equal(previous.status,'unknown');
+  await assert.rejects(()=>x.adapter.execute(request),/previous Circle operation/);assert.equal(x.state.sends,1);
+  await assert.rejects(()=>x.adapter.reconcile(previous.key),/mode changed|limit|cleanup cannot call/);
+ });
+}
+
+for(const [chainId,factory] of [[5042002,createCircleSettledTestnetAllowanceResetter],[5042,createCircleSettledMainnetAllowanceResetter]])test(`cleanup helper integrates with the real executor operation key on ${chainId}`,async()=>{
+ const x=setup({config:{...config,chainId}},factory);x.state.lineState=4;x.state.outstanding=0n;x.state.allowance=2000n;
+ x.state.receipt.logs=[eventLog('Approval',{owner:agent,spender:contract,value:0n},usdc,erc20Abi)];
+ const state={requests:{},guardedRepayment:{version:1,line:lineId,draw:digest,amount:'5000'}};let persisted=false;
+ const execute=x.options.circle.execute;x.options.circle.execute=async request=>{assert(persisted);const result=await execute(request);x.state.allowance=0n;return result};
+ const result=await clearSettledCircleAllowance({agent,line:lineId,contract,state,save:async()=>{persisted=true},operations:{reconcile:async()=>assert.fail('No earlier operation')},
+  readLine:async()=>({agent,drawDigest:digest,principalOutstanding:0n}),readAllowance:async()=>x.state.allowance,makeResetter:async()=>x.adapter});
+ assert.equal(result.status,'confirmed');assert.equal(x.state.sends,1);assert(state.allowanceCleanup.request.operationId.length<=128);
 });

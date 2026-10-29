@@ -1,4 +1,7 @@
 #!/usr/bin/env node
+import { clearSettledCircleAllowance } from './circle-agent-settled-allowance.mjs';
+import { createCircleSettledAllowanceResetTransport } from './circle-agent-guarded-cli.mjs';
+import { createCircleSettledTestnetAllowanceResetter } from './circle-agent-execution.mjs';
 import { join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { randomUUID } from 'node:crypto';
@@ -19,12 +22,14 @@ import { parseAgentArgs, recoverAgentPurchase } from './shadow-circle-agent.mjs'
 const must = (ok, message) => { if (!ok) throw new Error(message); };
 const same = (a, b) => typeof a === 'string' && typeof b === 'string' && a.toLowerCase() === b.toLowerCase();
 export function parseSettledAgentArgs(args) {
-  const options = parseAgentArgs(args);
+  const cleanup = args[0] === 'cleanup-allowance';
+  const options = parseAgentArgs(cleanup ? ['repay', ...args.slice(1)] : args);
+  if (cleanup) options.command = 'cleanup-allowance';
   must(options.command !== 'setup', 'Activate through the existing testnet setup with the same wallet journal, then return here.');
   return options;
 }
 export async function runSettledAgent(options) {
-  if (options.command === 'help') return { help: 'Settled Arc testnet only. doctor --agent ADDRESS; inspect|purchase|recover|repay --agent ADDRESS --line LINE. Preserve the original --state directory and isolated --runtime. Only purchase and repay with --confirm can sign or send. Purchase price is exactly 0.005 test USDC; repayment is capped at 0.005 test USDC for the original draw. Network fee estimate ceilings are 0.05 test USDC for purchase and 0.03 per repayment operation; these do not guarantee actual fees. Sponsor admission and funding are separate. This is an engineering runner, not a public mainnet release.' };
+  if (options.command === 'help') return { help: 'Settled Arc testnet only. doctor --agent ADDRESS; inspect|purchase|recover|repay|cleanup-allowance --agent ADDRESS --line LINE. Preserve the original --state directory and isolated --runtime. Only purchase, repay and cleanup-allowance with --confirm can sign or send. Cleanup approves zero for the original contract only. Purchase price is exactly 0.005 test USDC; repayment is capped at 0.005 test USDC for the original draw. Network fee estimate ceilings are 0.05 test USDC for purchase and 0.03 per repayment operation; these do not guarantee actual fees. Sponsor admission and funding are separate. This is an engineering runner, not a public mainnet release.' };
   const { agent, line, command } = options;
   const client = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL,
     { expectedChainId: deployment.chainId, fallbackUrls: ['https://rpc.blockdaemon.testnet.arc.io', 'https://rpc.drpc.testnet.arc.io'], timeout: 15000,
@@ -47,7 +52,7 @@ export async function runSettledAgent(options) {
   const summary = snapshot => ({ chainId: deployment.chainId, contract: deployment.address, agent, lineId: line,
     state: snapshot.stateName, debt: snapshot.principalOutstanding.toString(), reserve: snapshot.availableReserve.toString(),
     drawDigest: snapshot.drawDigest, purchasePrice: '0.005 test USDC', provider: service.provider });
-  if (command === 'inspect' || !options.confirm && ['purchase', 'repay'].includes(command)) return { ...summary(current),
+  if (command === 'inspect' || !options.confirm && ['purchase', 'repay', 'cleanup-allowance'].includes(command)) return { ...summary(current),
     next: 'Nothing signed or sent. Review the exact line and use --confirm only for the intended purchase or repayment.' };
   return journal.withLock(`agent-runner:${agent.toLowerCase()}:${line.toLowerCase()}`, async () => {
     must(!await journal.hasLegacyRunnerState(agent, line), 'Preserve and reconcile legacy runner state before migration.');
@@ -75,6 +80,14 @@ export async function runSettledAgent(options) {
         fetchImpl: async (...args) => { await flush(); return fetch(...args); },
         config: { chainId: deployment.chainId, account: agent, contract: deployment.address, runtimeHash: deployment.runtimeHash, ...service } });
       if (command === 'recover') return { ...summary(await readLine()), ...await recoverAgentPurchase({ executor: operations, state, engine, client, save }) };
+      if (command === 'cleanup-allowance') {
+        const cleanup = await clearSettledCircleAllowance({ agent, line, contract: deployment.address, state, save, operations, readLine,
+          readAllowance: () => client.readContract({ address: deployment.usdc, abi: erc20Abi, functionName: 'allowance', args: [agent, deployment.address] }),
+          makeResetter: async plan => createCircleSettledTestnetAllowanceResetter({ client, journal, config: { ...config, expectedDraw: plan.draw },
+            circle: await createCircleSettledAllowanceResetTransport({ ...common, chainId: deployment.chainId, contract: deployment.address, expectedDraw: plan.draw }) }),
+        });
+        return { ...summary(await readLine()), cleanup };
+      }
       if (command === 'repay') { const repayment = await operations.repay(); return { ...summary(await readLine()), repayment }; }
       must(command === 'purchase' && options.confirm, 'Explicit purchase confirmation is required.');
       await transport.session();
