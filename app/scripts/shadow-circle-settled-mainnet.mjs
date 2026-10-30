@@ -59,8 +59,10 @@ export const createSettledMainnetRunnerPurchase = createSettledMainnetPurchase;
 export async function runSettledMainnetAgent(options) {
   if (options.command === 'help') return { help: 'Controlled Arc MAINNET only, chain 5042. doctor|inspect|purchase|recover|repay|cleanup-allowance --agent ADDRESS --line LINE --state ORIGINAL_JOURNAL --runtime ISOLATED_RUNTIME. Only purchase, repay or cleanup-allowance with --confirm can sign or send. Cleanup approves zero for the original contract only. Purchase requires --monitor-baseline, --monitor-manifest, --monitor-state and --session-policy. Pinned report price 0.005 USDC, reserve 0.10 USDC, default fee estimate cap 0.02 USDC per operation. An explicit purchase-only --purchase-fee-cap-usdc may select up to 0.04 USDC; repayment remains capped at 0.02. No activation, policy setters, admission, funding, unpause or journal reset. No new mainnet access is granted by installing this runner.' };
   const { agent, line, command } = options;
-  const client = createPublicClient({ chain: guardedMainnetChain, transport: createRpcReadTransport(guardedMainnetChain.rpcUrls.default.http[0],
-    { expectedChainId: deployment.chainId, fallbackUrls: guardedMainnetChain.rpcUrls.default.http.slice(1), timeout: 15000,
+  // Keep read failover separate from Circle's signing and execution transport.
+  const readUrls = ['https://rpc.blockdaemon.mainnet.arc.io', ...guardedMainnetChain.rpcUrls.default.http];
+  const client = createPublicClient({ chain: guardedMainnetChain, transport: createRpcReadTransport(readUrls[0],
+    { expectedChainId: deployment.chainId, fallbackUrls: readUrls.slice(1), timeout: 15000,
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3000 } }) });
   const kit = createSettledPublicMainnetFundingKit(deployment);
   await kit.verifyCandidate(client);
