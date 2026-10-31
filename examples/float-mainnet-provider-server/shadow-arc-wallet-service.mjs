@@ -21,7 +21,10 @@ export function walletReportAddress(requestId) {
 
 // Public, read-only report. Preparation occurs before provider acceptance; the
 // provider server freezes these bytes under the spend digest for paid recovery.
-export function createShadowArcWalletService({ chainId = 5042, clients, rpcUrls = NETWORKS[chainId], now = () => Math.floor(Date.now() / 1000) } = {}) {
+export function createShadowArcWalletService({ chainId = 5042, clients, env = process.env,
+  rpcUrls = env.SHADOW_WALLET_REPORT_RPC_URLS === undefined ? NETWORKS[chainId]
+    : env.SHADOW_WALLET_REPORT_RPC_URLS.split(',').map(url => url.trim()),
+  now = () => Math.floor(Date.now() / 1000) } = {}) {
   if (!NETWORKS[chainId] || !Number.isInteger(chainId)) throw new Error('wallet report supports Arc mainnet or testnet only');
   if (!clients) {
     if (!Array.isArray(rpcUrls) || rpcUrls.length !== 2) throw new Error('two separate RPC URLs required');
