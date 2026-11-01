@@ -97,7 +97,7 @@ async function rpcFixture(t, { balanceFailures = 0, chainId = 5042 } = {}) {
 
 test('real report RPCs pace reads and recover from a quota rejection before freezing a report', async t => {
   const a = await rpcFixture(t, { balanceFailures: 1 }), b = await rpcFixture(t);
-  const service = createShadowArcWalletService({ rpcUrls: [a.url, b.url], now: () => 1010 });
+  const service = createShadowArcWalletService({ env: { SHADOW_WALLET_REPORT_RPC_URLS: ` ${a.url}, ${b.url} ` }, now: () => 1010 });
   const prepared = await service.prepare({ requestId });
   await service.validatePrepared({ requestId, ...prepared });
   assert.equal(a.balanceAttempts, 2); assert.equal(b.balanceAttempts, 1);
@@ -113,7 +113,7 @@ test('real report RPCs pace reads and recover from a quota rejection before free
 
 test('persistent quota failure is bounded and cannot produce a report', async t => {
   const a = await rpcFixture(t, { balanceFailures: 99 }), b = await rpcFixture(t);
-  const service = createShadowArcWalletService({ rpcUrls: [a.url, b.url], now: () => 1010 });
+  const service = createShadowArcWalletService({ env: { SHADOW_WALLET_REPORT_RPC_URLS: `${a.url},${b.url}` }, now: () => 1010 });
   await assert.rejects(service.prepare({ requestId }), /rate limit/i);
   assert.equal(a.balanceAttempts, 3);
   assert.equal(a.calls.some(call => call.method === 'eth_getBalance'), false);
@@ -131,6 +131,7 @@ test('report RPC configuration rejects duplicate, insecure and credentialed endp
     ['http://example.com', 'https://rpc.testnet.arc.io'], ['https://user:secret@example.com', 'https://rpc.testnet.arc.io'],
     ['https://example.com/#different', 'https://example.com/']]) {
     assert.throws(() => createShadowArcWalletService({ rpcUrls: urls }), /RPC/);
+    assert.throws(() => createShadowArcWalletService({ env: { SHADOW_WALLET_REPORT_RPC_URLS: urls.join(',') } }), /RPC/);
   }
 });
 
