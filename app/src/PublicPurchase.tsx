@@ -7,7 +7,7 @@ import { recoverOriginalPurchase, type RecoveryResult } from './purchaseRecovery
 import { createWalletClient, custom, formatUnits, type Address, type Hex, type PublicClient } from 'viem';
 import { candidateErrorMessage, candidateChainFor, candidateFundingAbi, type CandidateDeployment, type CandidateLine } from './candidateFunding';
 import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPurchaseResolved, gatewayWalletLockKey } from './gatewayFundingGuard';
-import { createSelfServicePurchase, createGuardedMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
+import { createSelfServicePurchase, createGuardedMainnetPurchase, createSettledMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string; requestKind?: 'arc-wallet' }
 export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, onDeliveryChecked, loadedLine = null, active = true }: {
@@ -61,7 +61,7 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const visible = useRef(active);
   visible.current = active;
   const revision = useRef(0);
-  const setup = useMemo(() => { try { return { engine: account && window.ethereum ? (mainnet ? createGuardedMainnetPurchase : createSelfServicePurchase)({
+  const setup = useMemo(() => { try { return { engine: account && window.ethereum ? (mainnet ? deployment.accountingModel === "settled-v1" ? createSettledMainnetPurchase : createGuardedMainnetPurchase : createSelfServicePurchase)({
     client, wallet: createWalletClient({ chain, transport: custom(window.ethereum), account }),
     storage: window.localStorage,
     onProgress: setBusy,

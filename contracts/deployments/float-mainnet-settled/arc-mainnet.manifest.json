@@ -1,0 +1,45 @@
+{
+  "schema": "shadow-float-mainnet-settled-release-manifest/v1",
+  "ok": true,
+  "chainId": "5042",
+  "publicRegistration": true,
+  "repaymentBindingVersion": 2,
+  "contract": {
+    "name": "ShadowFloatMainnetPublicSettled",
+    "address": "0x2D868A718C5d8d6dF15E3C13c1a134C71cB0b218",
+    "accountingModel": "settled-v1"
+  },
+  "deployment": {
+    "transactionHash": "0xf89c2afa2a694317593c2326399d9501af1a063cc06a6fe081bdb0d98d8131ed",
+    "blockNumber": "28470866",
+    "blockHash": "0xf6bb32270f057cafca0d12a936c0693f4dd95adfb709246a8f5e2c7262f0f8f2"
+  },
+  "bytecode": {
+    "onchainRuntimeKeccak256": "0x2475a14a10aa0524616f7081f707a4436e17e14a53468ada709a2ffa258ab8f2",
+    "runtimeBytes": 16629
+  },
+  "config": {
+    "usdc": "0x3600000000000000000000000000000000000000",
+    "initial": {
+      "protocolReserve": "1000000",
+      "lineReserve": "100000",
+      "lineSpend": "50000",
+      "perSpend": "50000",
+      "dailySpend": "50000"
+    },
+    "minimumRepaymentWindow": "3600",
+    "maximumRepaymentWindow": "86400",
+    "maximumLineLifetime": "604800"
+  },
+  "source": {
+    "contractCommit": "743c3e53ebf802574f1176fe62eb32ee044efa70",
+    "compiler": "0.8.24+commit.e11b9ed9"
+  },
+  "sourceVerification": {
+    "server": "https://sourcify.dev/server",
+    "ok": true,
+    "verifiedAt": "2026-10-29T11:44:33Z",
+    "match": "exact creation and runtime"
+  },
+  "scope": "Verified deployment identity and initial limits. Current pauses, limits and financial state are read from the contract before an action. This manifest is not an audit or activation authorization."
+}

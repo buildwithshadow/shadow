@@ -143,3 +143,5 @@
 @media (max-width: 520px) {
   .purchasePanel .purchaseSteps { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
+
+.fundingReleaseLink { display: inline-flex; align-items: center; min-height: 44px; padding-block: 8px; }

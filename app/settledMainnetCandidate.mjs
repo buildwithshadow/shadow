@@ -1,7 +1,5 @@
-// Prepared replacement binding, not a live deployment claim. Both independent
-// mainnet creation simulations agreed on this address and runtime. Execution
-// still requires deployed code verification and fresh monitor authorization.
-// Existing public product routes select their deployment separately.
+// Deployed replacement identity, verified by exact creation and runtime match.
+// Live permissions, limits and provider admission are checked separately.
 export const SETTLED_MAINNET_CANDIDATE = Object.freeze({
   chainId: 5042,
   address: '0x2D868A718C5d8d6dF15E3C13c1a134C71cB0b218',

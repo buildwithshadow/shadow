@@ -6,10 +6,11 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { PublicPurchase } from '../src/PublicPurchase';
 import { recoverySession } from '../src/purchaseRecoverySession.mjs';
 import type { RecoveryResult } from '../src/purchaseRecovery.mjs';
-const h = vi.hoisted(() => ({ engines: new Map<string, any>() }));
+const h = vi.hoisted(() => ({ engines: new Map<string, any>(), settled: vi.fn(), guarded: vi.fn() }));
 vi.mock('../src/selfServicePurchase.mjs', () => ({
   createSelfServicePurchase: ({config}: any) => h.engines.get(config.account),
-  createGuardedMainnetPurchase: ({config}: any) => h.engines.get(config.account),
+  createGuardedMainnetPurchase: ({config}: any) => { h.guarded(config); return h.engines.get(config.account); },
+  createSettledMainnetPurchase: ({config}: any) => { h.settled(config); return h.engines.get(config.account); },
 }));
 const account = '0x1111111111111111111111111111111111111111';
 const deployment: any = {chainId:5042002,address:'0x3333333333333333333333333333333333333333',runtimeHash:`0x${'44'.repeat(32)}`};
@@ -27,12 +28,12 @@ function fixture(status=2n) {
   const client: any = {getBlock:vi.fn(async()=>({number:123n,timestamp:2000000000n})),readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
-function Host({client, loadedLine = null, lineId = '', onDeliveryChecked}: {client:any; loadedLine?:any; lineId?:string; onDeliveryChecked?:(check:any)=>void}) {
+function Host({client, loadedLine = null, lineId = '', onDeliveryChecked, profile = deployment}: {profile?:any; client:any; loadedLine?:any; lineId?:string; onDeliveryChecked?:(check:any)=>void}) {
   const [busy,setBusy]=useState('');
   return <MemoryRouter initialEntries={['/start/purchase']}>
     <Link to="/other">Leave funding</Link><Link to="/start/purchase">Return to purchase</Link>
     <Routes><Route path="/other" element={<p>Other page</p>}/><Route path="/start/purchase" element={<PublicPurchase
-      account={account} correctNetwork deployment={deployment} service={service} client={client} busy={busy} setBusy={setBusy}
+      account={account} correctNetwork deployment={profile} service={service} client={client} busy={busy} setBusy={setBusy}
       fundingPending={false} lineId={lineId} loadedLine={loadedLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}} onDeliveryChecked={onDeliveryChecked}/>}/></Routes>
   </MemoryRouter>;
 }
@@ -361,4 +362,18 @@ test('failed report recovery cannot publish delivery into the cycle tracker',asy
   render(<Host client={f.client} onDeliveryChecked={checked}/>);
   await screen.findByText('Provider receipt signature is invalid.');
   expect(checked).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+test('settled and earlier mainnet receipt recovery use their matching purchase engines', async () => {
+  const f = fixture();
+  h.settled.mockClear(); h.guarded.mockClear();
+  const view = render(<Host client={f.client} profile={{...deployment, chainId:5042, drawBoundRepayment:true, accountingModel:'settled-v1'}}/>);
+  await screen.findByText(`original report ${counter}`);
+  expect(h.settled).toHaveBeenCalledTimes(1);
+  expect(h.guarded).not.toHaveBeenCalled();
+  view.unmount();
+  render(<Host client={f.client} profile={{...deployment, chainId:5042, drawBoundRepayment:true}}/>);
+  await screen.findByText(`original report ${counter}`);
+  expect(h.guarded).toHaveBeenCalledTimes(1);
+  expect(f.engine.submit).not.toHaveBeenCalled();
 });
