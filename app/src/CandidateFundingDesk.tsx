@@ -250,7 +250,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
         setLineRefreshError("");
       },
       onError: () => {
-        if (isCurrent()) setLineRefreshError("Automatic refresh is temporarily unavailable. Showing the last confirmed values and retrying. You can also select Refresh line.");
+        if (isCurrent()) setLineRefreshError("Automatic refresh is temporarily unavailable. Retrying the latest balances. You can also select Refresh line.");
       },
       visible: () => document.visibilityState === "visible",
       focusTarget: window,
