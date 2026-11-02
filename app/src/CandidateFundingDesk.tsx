@@ -72,7 +72,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay, prepareCandidateDefault,
     readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => (mainnet ? deployment.accountingModel === "settled-v1" ? createSettledPublicMainnetFundingKit : deployment.selfRegistration ? createPublicMainnetFundingKit : createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment), [deployment, mainnet]);
   const client = useMemo(() => mainnet ? createPublicClient({ chain, transport: createRpcReadTransport(chain.rpcUrls.default.http[0], {
-    timeout: 15_000, fallbackUrls: chain.rpcUrls.default.http.slice(1), expectedChainId: 5042,
+    timeout: 8_000, fallbackUrls: chain.rpcUrls.default.http.slice(1), expectedChainId: 5042,
     queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
   }) }) : guardedTestnet ? createPublicClient({ chain, transport: createRpcReadTransport('https://rpc.quicknode.testnet.arc.io', {
     timeout: 15_000, fallbackUrls: ['https://rpc.drpc.testnet.arc.io', ARC_TESTNET_RPC_URL], expectedChainId: deployment.chainId,
@@ -157,6 +157,14 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   const activeRoute = useRef({ key: location.key, generation: 0 });
   activeRoute.current = observeFundingRoute(activeRoute.current, location.key);
   const autoLoadedLink = useRef("");
+  const confirmedLineFloor = useRef<{ id: string; block: bigint } | null>(null);
+  function minimumLineBlock(id: string) {
+    return confirmedLineFloor.current?.id.toLowerCase() === id.trim().toLowerCase() ? confirmedLineFloor.current.block : 0n;
+  }
+  function rememberConfirmedLine(id: string, block: bigint) {
+    confirmedLineFloor.current = { id, block: block > minimumLineBlock(id) ? block : minimumLineBlock(id) };
+  }
+
   const correctNetwork = chainId === CANDIDATE_FUNDING.chainId;
   const canWrite = Boolean(account && correctNetwork && !busy && !pending && !journalError && !gatewayHeld);
   const lineDiscoveryContext = useRef({ account, role, mode, lineId, pending, journalError, gatewayHeld, unresolvedPurchase, showAgentLineDiscovery });
@@ -204,7 +212,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     if (!guided || requestedStep !== 'register' || !snapshotCurrent || !snapshot?.sponsorAllowed || !correctNetwork || journeyLocked || prepared) return;
     navigate(`/start/agent${location.search}`, { replace: true });
   }, [guided, requestedStep, snapshotCurrent, snapshot?.sponsorAllowed, correctNetwork, journeyLocked, prepared, navigate, location.search]);
-  const loadedLineId = line?.lineId;
+  const loadedLineId = line?.lineId ?? (confirmedLineFloor.current?.id.toLowerCase() === lineId.trim().toLowerCase() ? confirmedLineFloor.current.id as Hash : undefined);
   const lineViewRevision = revision.current;
 
   useEffect(() => {
@@ -220,7 +228,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     let active = true;
     const readRevision = revision.current;
     setLineLoading(true);
-    readCandidateLine(client, id).then(value => { if (active && revision.current === readRevision) setLine(value); })
+    readCandidateLine(client, id, minimumLineBlock(id)).then(value => { if (active && revision.current === readRevision) setLine(value); })
       .catch(cause => { if (active && revision.current === readRevision) setError(messageOf(cause)); })
       .finally(() => { if (active) { if (revision.current === readRevision) autoLoadedLink.current = location.key; setLineLoading(false); } });
     return () => { active = false; setLineLoading(false); };
@@ -233,10 +241,10 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     if (!loadedLineId || mode !== "manage" || busy || prepared || pending || journalError || gatewayHeld) return;
     const isCurrent = () => revision.current === lineViewRevision;
     return startLineRefresh({
-      read: () => readCandidateLine(client, loadedLineId),
+      read: () => readCandidateLine(client, loadedLineId, minimumLineBlock(loadedLineId)),
       onValue: value => {
         if (!isCurrent()) return;
-        setLine(previous => isCurrent() && previous?.lineId === value.lineId && value.observedBlock >= previous.observedBlock ? value : previous);
+        setLine(previous => isCurrent() && (!previous || previous.lineId === value.lineId && value.observedBlock >= previous.observedBlock) ? value : previous);
         setLineRefreshError("");
       },
       onError: () => {
@@ -352,7 +360,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       // Finish the unread page before moving either scan cursor further.
       if (cached?.pendingPageIds?.length) {
         const refreshed = await refreshAgentLineDiscoveryCachePage(cached, cached.pendingPageIds,
-          currentAccount, id => readCandidateLine(client, id), isActive);
+          currentAccount, id => readCandidateLine(client, id, minimumLineBlock(id)), isActive);
         if (!refreshed || !isActive()) return;
         discoveredLinesByAccount.current.set(accountKey, refreshed);
         setDiscoveredLines(refreshed.lines);
@@ -394,7 +402,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       }
       setLineDiscoveryLoadingStates(Boolean(stagedCache.pendingPageIds.length));
       const completeCache = await refreshAgentLineDiscoveryCachePage(stagedCache, stagedCache.pendingPageIds, currentAccount,
-        id => readCandidateLine(client, id), isActive);
+        id => readCandidateLine(client, id, minimumLineBlock(id)), isActive);
       if (!completeCache || !isActive()) return;
       const values = completeCache.lines;
       discoveredLinesByAccount.current.set(accountKey, completeCache);
@@ -598,7 +606,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     setBusy("Reading the funding line…");
     const currentRevision = revision.current;
     try {
-      const value = await readCandidateLine(client, id);
+      const value = await readCandidateLine(client, id, minimumLineBlock(id));
       if (revision.current === currentRevision) setLine(value);
     }
     catch (cause) { if (revision.current === currentRevision) setError(messageOf(cause)); }
@@ -618,10 +626,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     await withOwnedBusy(busyOwner, transactionHash ? "Waiting for purchase confirmation and updating the balance…" : "Updating the funding line balance…", async () => {
     try {
       if (transactionHash) {
-        await client.waitForTransactionReceipt({ hash: transactionHash, timeout: 45_000 });
+        const receipt = await client.waitForTransactionReceipt({ hash: transactionHash, timeout: 45_000 });
         if (!isCurrent()) return;
+        if (receipt.status !== "success") throw new Error("The purchase transaction did not succeed. Check its saved receipt.");
+        rememberConfirmedLine(id, receipt.blockNumber);
       }
-      const value = await readCandidateLine(client, id);
+      const value = await readCandidateLine(client, id, minimumLineBlock(id));
       if (isCurrent()) { setLineId(id); setLine(value); setMode("manage"); }
     } catch (cause) {
       if (isCurrent()) setError(`Could not confirm the latest line balance. Use “Check payment & recover result” when your connection recovers; do not submit another purchase. ${messageOf(cause)}`);
@@ -632,23 +642,32 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   async function refreshAfter(result: CandidateResolution, forAccount: Address, currentRevision: number) {
     if (result.status !== "confirmed") return;
     const isCurrent = () => activeAccount.current === forAccount && revision.current === currentRevision;
-    try {
-      const refreshed = await readCandidateSnapshot(client, { sponsor: forAccount });
-      if (!isCurrent()) return;
-      setSnapshot(refreshed);
-      const id = result.lineId || line?.lineId;
-      if (id) {
-        const refreshedLine = await readCandidateLine(client, id);
-        if (!isCurrent()) return;
-        setLineId(id); setLine(refreshedLine);
-        if (result.lineId) {
-          setMode("manage");
-          if (guided) navigate(`/start/line?line=${result.lineId}`);
-        }
-      }
-    } catch {
-      if (isCurrent()) setNotice("The transaction is confirmed. The latest balance could not be loaded; refresh the line when your connection recovers.");
+    const id = result.lineId;
+    // Confirmed transactions and their balances are separate observations.
+    // Do not show the pre-transaction amounts beside a confirmed receipt.
+    setSnapshot(null);
+    if (id) {
+      rememberConfirmedLine(id, result.confirmedBlock ?? 0n);
+      setLineId(id); setLine(null); setMode("manage"); setLineLoading(true);
     }
+    try {
+      // Update the affected line before the much larger sponsor snapshot.
+      if (id) {
+        const refreshedLine = await readCandidateLine(client, id, minimumLineBlock(id));
+        if (!isCurrent()) return;
+        setLine(refreshedLine); setLineRefreshError("");
+        if (guided) navigate(`/start/line?line=${id}`);
+      }
+      const refreshed = await readCandidateSnapshot(client, { sponsor: forAccount });
+      if (id && refreshed.observedBlock < minimumLineBlock(id)) throw new Error("Sponsor balances are still catching up with the confirmed transaction.");
+      if (isCurrent()) setSnapshot(refreshed);
+    } catch {
+      if (isCurrent()) {
+        const message = "The transaction is confirmed. Balances are still updating from the chain; no new transaction is needed.";
+        setNotice(message);
+        if (id) setLineRefreshError(message);
+      }
+    } finally { if (isCurrent()) setLineLoading(false); }
   }
 
   async function sendReviewed() {
@@ -847,7 +866,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
         {showAgentLineDiscovery && lineDiscoveryButtons}
         <button type="submit" disabled={Boolean(busy)}>Load line</button>
       </form>
-      {lineLoading && <p role="status">Loading the line from your link…</p>}
+      {lineLoading && <p role="status">Updating the funding line from the chain…</p>}
+      {!line && loadedLineId && lineRefreshError && <p role="status" className="fundingCallout">{lineRefreshError} Automatic refresh will check again.</p>}
       {lineDiscoveryResults}
       {mainnet && deployment.selfRegistration && service && <p className="fundingScope">Use the connected agent browser wallet to buy a service. Circle CLI handoff is not enabled for this deployment.</p>}
       {mainnet && role === "agent" && account && !lineId.trim() && <p className="agentLineDiscovery" role="status">Enter a funding line ID on this route to load a mainnet line.</p>}
