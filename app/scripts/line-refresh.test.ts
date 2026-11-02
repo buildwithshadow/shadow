@@ -9,7 +9,7 @@ function deferred<T>() {
   const promise = new Promise<T>((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject };
 }
-function fixture(t: TestContext, read: () => Promise<string>) {
+function fixture(t: TestContext, read: () => Promise<string>, immediate = false) {
   t.mock.timers.enable({ apis: ['setTimeout'] });
   const focus = new EventTarget();
   const visibility = new EventTarget();
@@ -17,7 +17,7 @@ function fixture(t: TestContext, read: () => Promise<string>) {
   const errors: unknown[] = [];
   const state = { visible: true };
   const stop = startLineRefresh({ read, onValue: value => values.push(value), onError: error => errors.push(error),
-    visible: () => state.visible, focusTarget: focus, visibilityTarget: visibility, intervalMs: 15_000 });
+    visible: () => state.visible, focusTarget: focus, visibilityTarget: visibility, intervalMs: 15_000, immediate });
   t.after(stop);
   return { focus, visibility, values, errors, state, stop };
 }
@@ -110,4 +110,28 @@ test('becoming hidden cancels a queued resume until the page is visible again', 
   t.mock.timers.tick(60_000); await settle(); assert.equal(calls, 1);
   f.state.visible = true; f.visibility.dispatchEvent(new Event('visibilitychange')); await settle();
   assert.deepEqual(f.values, ['EARLIER', 'CURRENT']); assert.equal(calls, 2);
+});
+
+
+test('sponsor refresh starts immediately and retries a lagging observation without a wallet event', async t => {
+  let caughtUp = false;
+  const f = fixture(t, async () => {
+    if (!caughtUp) throw Error('RPC has not reached the confirmed block');
+    return 'REGISTERED:CONFIRMED_BALANCE';
+  }, true);
+  await settle();
+  assert.equal(f.errors.length, 1);
+  assert.deepEqual(f.values, []);
+  caughtUp = true;
+  t.mock.timers.tick(15_000); await settle();
+  assert.deepEqual(f.values, ['REGISTERED:CONFIRMED_BALANCE']);
+});
+
+test('a replaced immediate refresh discards the old wallet response', async t => {
+  const oldWallet = deferred<string>();
+  const f = fixture(t, () => oldWallet.promise, true);
+  f.stop(); oldWallet.resolve('OLD_WALLET'); await settle();
+  assert.deepEqual(f.values, []);
+  t.mock.timers.tick(60_000); await settle();
+  assert.deepEqual(f.errors, []);
 });

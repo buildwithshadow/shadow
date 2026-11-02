@@ -157,6 +157,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   const activeRoute = useRef({ key: location.key, generation: 0 });
   activeRoute.current = observeFundingRoute(activeRoute.current, location.key);
   const autoLoadedLink = useRef("");
+  const [sponsorRefreshRevision, setSponsorRefreshRevision] = useState(0);
+  const confirmedSponsorFloor = useRef<{ account: Address; block: bigint } | null>(null);
   const confirmedLineFloor = useRef<{ id: string; block: bigint } | null>(null);
   function minimumLineBlock(id: string) {
     return confirmedLineFloor.current?.id.toLowerCase() === id.trim().toLowerCase() ? confirmedLineFloor.current.block : 0n;
@@ -495,20 +497,38 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   }, []);
 
   useEffect(() => {
-    setSnapshot(null);
-    setSnapshotError("");
     setPending(null);
     setRecoveryHash("");
     setJournalError("");
     if (!account) return;
-    let active = true;
     loadJournal(account);
     const changed = () => loadJournal(account);
     window.addEventListener("storage", changed);
-    readCandidateSnapshot(client, { sponsor: account }).then((value) => { if (active) setSnapshot(value); })
-      .catch((cause) => { if (active) setSnapshotError(`Could not read your sponsor status. ${messageOf(cause)} Reload the page to try again.`); });
-    return () => { active = false; window.removeEventListener("storage", changed); };
-  }, [account, walletSnapshotRevision, client, readCandidateSnapshot]);
+    return () => window.removeEventListener("storage", changed);
+  }, [account, walletSnapshotRevision, client]);
+
+  // Sponsor status has its own read-only recovery loop. A failed line read
+  // must not prevent registration or balances from recovering independently.
+  useEffect(() => {
+    setSnapshot(null);
+    setSnapshotError("");
+    if (!account) return;
+    const stop = startLineRefresh({
+      immediate: true,
+      read: async () => {
+        const value = await readCandidateSnapshot(client, { sponsor: account });
+        const floor = confirmedSponsorFloor.current;
+        if (floor?.account === account && value.observedBlock < floor.block) throw new Error("Sponsor balances are still catching up with the confirmed transaction.");
+        return value;
+      },
+      onValue: value => { setSnapshot(value); setSnapshotError(""); stop(); },
+      onError: cause => setSnapshotError(`Could not read your sponsor status. ${messageOf(cause)} Automatic refresh will try again.`),
+      visible: () => document.visibilityState === "visible",
+      focusTarget: window,
+      visibilityTarget: document,
+    });
+    return stop;
+  }, [account, walletSnapshotRevision, sponsorRefreshRevision, client, readCandidateSnapshot]);
 
   useEffect(() => {
     if (prepared && dialog.current) {
@@ -645,29 +665,27 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     const id = result.lineId;
     // Confirmed transactions and their balances are separate observations.
     // Do not show the pre-transaction amounts beside a confirmed receipt.
+    const priorFloor = confirmedSponsorFloor.current;
+    const block = result.confirmedBlock ?? 0n;
+    confirmedSponsorFloor.current = { account: forAccount, block: priorFloor?.account === forAccount && priorFloor.block > block ? priorFloor.block : block };
     setSnapshot(null);
-    if (id) {
-      rememberConfirmedLine(id, result.confirmedBlock ?? 0n);
-      setLineId(id); setLine(null); setMode("manage"); setLineLoading(true);
-    }
+    setSponsorRefreshRevision(value => value + 1);
+    if (!id) return;
+    rememberConfirmedLine(id, block);
+    setLineId(id); setLine(null); setMode("manage"); setLineLoading(true);
     try {
-      // Update the affected line before the much larger sponsor snapshot.
-      if (id) {
-        const refreshedLine = await readCandidateLine(client, id, minimumLineBlock(id));
-        if (!isCurrent()) return;
-        setLine(refreshedLine); setLineRefreshError("");
-        if (guided) navigate(`/start/line?line=${id}`);
-      }
-      const refreshed = await readCandidateSnapshot(client, { sponsor: forAccount });
-      if (id && refreshed.observedBlock < minimumLineBlock(id)) throw new Error("Sponsor balances are still catching up with the confirmed transaction.");
-      if (isCurrent()) setSnapshot(refreshed);
+      const refreshedLine = await readCandidateLine(client, id, minimumLineBlock(id));
+      if (!isCurrent()) return;
+      setLine(refreshedLine); setLineRefreshError("");
     } catch {
       if (isCurrent()) {
         const message = "The transaction is confirmed. Balances are still updating from the chain; no new transaction is needed.";
-        setNotice(message);
-        if (id) setLineRefreshError(message);
+        setNotice(message); setLineRefreshError(message);
       }
     } finally { if (isCurrent()) setLineLoading(false); }
+    // Navigation can invalidate recovery's route revision. Finish publishing
+    // and cleanup first; sponsor refresh is independently owned by its effect.
+    if (isCurrent() && guided) navigate(`/start/line?line=${id}`);
   }
 
   async function sendReviewed() {
