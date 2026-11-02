@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { ensureWalletChain, walletErrorCode, walletRequestHelp, type WalletRequester } from '../src/walletNetwork.ts';
+import { ensureWalletChain, readWalletChain, walletErrorCode, walletRequestHelp, type WalletRequester } from '../src/walletNetwork.ts';
 import { candidateErrorMessage } from '../src/candidateFunding.ts';
 import { arcTestnetWalletParameters } from '../arcTestnetNetwork.mjs';
 
@@ -111,5 +111,26 @@ test('public RPC and simulation codes are not misattributed to a wallet request'
     const rpcFailure = Object.assign(new Error('RPC simulation failed: execution reverted'), { code });
     assert.equal(candidateErrorMessage(rpcFailure), 'RPC simulation failed: execution reverted');
     assert.doesNotMatch(candidateErrorMessage({ code }), /wallet|waiting|pending transaction/);
+  }
+});
+
+
+test('one transient wallet network read is retried without requesting approval', async () => {
+  let reads = 0;
+  const {provider, calls} = wallet(() => { if (++reads === 1) throw new Error('eth_chainId RPC timeout'); return chain.chainId; });
+  assert.equal(await readWalletChain(provider), chain.chainId);
+  assert.deepEqual(calls.map(x => x.method), ['eth_chainId', 'eth_chainId']);
+});
+test('persistent network timeout stops after two reads with safe actionable feedback', async () => {
+  const {provider,calls} = wallet(() => { throw new Error('eth_chainId RPC timeout SECRET'); });
+  await assert.rejects(readWalletChain(provider), /network check sends no transaction/);
+  assert.equal(calls.length,2);
+});
+test('rejected or pending wallet requests are never retried as transient reads', async () => {
+  for (const code of [4001,-32002]) {
+    const failure={code,message:'network timeout'};
+    const {provider,calls}=wallet(() => { throw failure; });
+    await assert.rejects(readWalletChain(provider),e => e === failure);
+    assert.equal(calls.length,1);
   }
 });

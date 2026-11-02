@@ -35,11 +35,29 @@ export function walletRequestHelp(error: unknown): string | null {
   return null;
 }
 
+// Retry only a failed read. Never retry network changes, signatures or transactions.
+export async function readWalletChain(provider: WalletRequester): Promise<string> {
+  for (let attempt = 0; attempt < 2; attempt++) {
+    try {
+      const value = await provider.request({ method: 'eth_chainId' });
+      if (typeof value !== 'string' || !/^0x[0-9a-f]+$/i.test(value)) throw new Error('Your wallet did not report its current network. Open it and select Refresh wallet.');
+      return value;
+    } catch (error) {
+      const code = walletErrorCode(error);
+      const message = error && typeof error === 'object' && 'message' in error ? String(error.message) : '';
+      const transient = (code === null || code === -32603) && /timed? out|timeout|fetch failed|network error/i.test(message);
+      if (!transient) throw error;
+      if (attempt === 1) throw new Error('Your wallet’s network check timed out. This network check sends no transaction. Check its RPC connection, then select Refresh wallet.');
+    }
+  }
+  throw new Error('Wallet network unavailable.');
+}
+
 export async function ensureWalletChain(provider: WalletRequester, chain: WalletChainParameters): Promise<number> {
   const expected = Number(chain.chainId);
   if (!/^0x[0-9a-f]+$/i.test(chain.chainId) || !Number.isSafeInteger(expected) || expected <= 0) throw new Error('Invalid target network.');
   const readChain = async () => {
-    const current = await provider.request({ method: 'eth_chainId' });
+    const current = await readWalletChain(provider);
     if (typeof current !== 'string' || !/^0x[0-9a-f]+$/i.test(current)) throw new Error('Your wallet did not report its current network. Open it and select Refresh wallet.');
     return Number(current);
   };
