@@ -10,7 +10,7 @@ import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWallet
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
 import { createRpcReadTransport } from "../scripts/rpc-read-transport.mjs";
 import {
-  CANDIDATE_FUNDING as LEGACY_FUNDING, candidateErrorMessage, candidateFundingChain, candidateChainFor, createCandidateFundingKit, createGuardedMainnetFundingKit, createPublicMainnetFundingKit,
+  CANDIDATE_FUNDING as LEGACY_FUNDING, candidateErrorMessage, candidateFundingChain, candidateChainFor, createCandidateFundingKit, createGuardedMainnetFundingKit, createPublicMainnetFundingKit, createSettledPublicMainnetFundingKit,
   type CandidateDeployment, type CandidateLine, type CandidateOpenInput, type CandidatePending, type CandidatePrepared,
   type CandidateResolution, type CandidateSnapshot,
 } from "./candidateFunding";
@@ -57,19 +57,20 @@ function Field({ label, name, value, onChange, hint, error: fieldError, decimal 
   </div>;
 }
 
-export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: { deployment?: CandidateDeployment; service?: PublicService }) {
+export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mainnetRelease }: { deployment?: CandidateDeployment; service?: PublicService; mainnetRelease?: "settled" | "legacy" }) {
   const location = useLocation();
   const navigate = useNavigate();
   const guided = usesTestnetFundingJourney(deployment, Boolean(service));
   const requestedStep = fundingStep(location.pathname, location.search);
   const CANDIDATE_FUNDING = deployment;
   const mainnet = deployment.chainId === 5042;
+  const releaseQuery = mainnetRelease ? `&deployment=${mainnetRelease}` : "";
   const guardedTestnet = !mainnet && deployment.drawBoundRepayment === true;
   const chain = useMemo(() => candidateChainFor(deployment), [deployment]);
   const network = mainnet ? 'Arc mainnet' : 'Arc testnet';
   const explorer = chain.blockExplorers.default.url;
   const { createCandidateJournal, executeCandidateCall, prepareCandidateOpen, prepareCandidateReclaim, prepareCandidateRepay, prepareCandidateDefault,
-    readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => (mainnet ? deployment.selfRegistration ? createPublicMainnetFundingKit : createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment), [deployment, mainnet]);
+    readCandidateLine, readCandidateSnapshot, reconcileCandidatePending, prepareCandidateRegistration } = useMemo(() => (mainnet ? deployment.accountingModel === "settled-v1" ? createSettledPublicMainnetFundingKit : deployment.selfRegistration ? createPublicMainnetFundingKit : createGuardedMainnetFundingKit : createCandidateFundingKit)(deployment), [deployment, mainnet]);
   const client = useMemo(() => mainnet ? createPublicClient({ chain, transport: createRpcReadTransport(chain.rpcUrls.default.http[0], {
     timeout: 15_000, fallbackUrls: chain.rpcUrls.default.http.slice(1), expectedChainId: 5042,
     queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -834,7 +835,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         </>}
         {lineDiscoveryStatus === "empty" && <>
           <p role="status">No public testnet funding lines were found for this wallet in the available history. A sponsor must open a line for this wallet first. Share this invitation with your sponsor.</p>
-          <div className="fundingField"><label htmlFor="discovery-agent-invite">Sponsor invitation link</label><input id="discovery-agent-invite" readOnly value={`${window.location.origin}${guided ? "/start/wallet" : window.location.pathname}?agent=${account}`} /></div>
+          <div className="fundingField"><label htmlFor="discovery-agent-invite">Sponsor invitation link</label><input id="discovery-agent-invite" readOnly value={`${window.location.origin}${guided ? "/start/wallet" : window.location.pathname}?agent=${account}${releaseQuery}`} /></div>
         </>}
         {lineDiscoveryStatus === "failed" && <p role="status">The funding line lookup failed. Paste the line ID below to load it.</p>}
       </div>;
@@ -868,7 +869,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
         {(!line.sponsorAllowed || line.spendsPaused) && <p className="fundingCallout">New purchases are currently restricted. You can still repay and reclaim eligible funds.</p>}
         {shareable &&
           <div className="fundingField"><label htmlFor="line-share-link">Send this link to your agent</label>
-          <input id="line-share-link" readOnly aria-describedby="line-share-link-hint" value={`${window.location.origin}${guided ? "/start/line" : window.location.pathname}?line=${line.lineId}`} />
+          <input id="line-share-link" readOnly aria-describedby="line-share-link-hint" value={`${window.location.origin}${guided ? "/start/line" : window.location.pathname}?line=${line.lineId}${releaseQuery}`} />
           <small id="line-share-link-hint">It opens this page with the line filled in. The agent’s page checks the line again before any payment is sent.</small></div>}
         <div className="fundingActions">
           {defaultable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("default")}>Review default</button>}
@@ -983,7 +984,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     {journeyStep === 'fund' && <><section className="fundingPanel"><h2>Your funding plan</h2><dl className="fundingDetails"><div><dt>Agent wallet</dt><dd><code>{form.agent}</code></dd></div><div><dt>Service provider</dt><dd><code>{form.provider}</code></dd></div><div><dt>Reserve to deposit</dt><dd>{form.reserve} test USDC</dd></div><div><dt>Total purchase limit</dt><dd>{form.lineSpendCap} test USDC</dd></div><div><dt>Line daily limit</dt><dd>{form.dailySpendCap} test USDC</dd></div><div><dt>Maximum purchase</dt><dd>{form.providerPerSpendCap} test USDC</dd></div><div><dt>Provider daily limit</dt><dd>{form.providerDailyCap} test USDC</dd></div><div><dt>Funding duration</dt><dd>{form.expiryDays} days</dd></div><div><dt>Repayment window</dt><dd>Up to {form.repaymentHours} hours per purchase</dd></div></dl><details><summary>Service endpoint</summary><code>{form.endpoint}</code></details>
       {riskAcknowledgment}<div className="journeyNext"><button type="button" disabled={Boolean(busy)} onClick={() => goJourney('budget')}>Edit budget</button><button className="fundingPrimary" type="button" disabled={Boolean(busy) || openBlocker !== null || unresolvedPurchase} onClick={() => void review('open')}>Review funding transaction</button></div><p className="journeyHint">{openBlocker ?? 'If an allowance is needed, approve the exact amount first. Opening the line is a separate transaction. A completed allowance stays in place if you cancel the next step.'}</p></section></>}
     {(journeyStep === 'line' || journeyStep === 'purchase') && <>{!account && <section className="fundingPanel"><p>{closedPurchaseView ? 'Connect the wallet used for the purchase to view its saved reports. Viewing history does not request a signature or transaction.' : 'You can look up a line without connecting. Connect when you are ready to sign an action.'}</p>{walletControls}</section>}{account && !correctNetwork && <section className="fundingPanel"><p>Switch to Arc testnet before signing an action.</p><button type="button" disabled={Boolean(busy)} onClick={switchNetwork}>Switch to Arc testnet</button>{networkHelp}</section>}
-      {journeyStep === 'line' && !line && account && <details className="fundingPanel"><summary>Need a sponsor to fund your agent?</summary><p>Share this link with a sponsor. It fills in your connected wallet as the agent. They choose and approve the budget.</p><div className="fundingField"><label htmlFor="agent-invite">Your agent funding link</label><input id="agent-invite" readOnly value={`${window.location.origin}/start/wallet?agent=${account}`} /></div></details>}
+      {journeyStep === 'line' && !line && account && <details className="fundingPanel"><summary>Need a sponsor to fund your agent?</summary><p>Share this link with a sponsor. It fills in your connected wallet as the agent. They choose and approve the budget.</p><div className="fundingField"><label htmlFor="agent-invite">Your agent funding link</label><input id="agent-invite" readOnly value={`${window.location.origin}/start/wallet?agent=${account}${releaseQuery}`} /></div></details>}
       {journeyStep === 'line' && <>{managePanel}{line && <div className="journeyNext"><button className="fundingPrimary" type="button" disabled={Boolean(busy)} onClick={() => goJourney('purchase')}>{line?.stateName === 'CLOSED' ? 'View service reports' : 'Go to service purchase'}</button></div>}</>}
       {journeyStep === 'purchase' && <button type="button" disabled={Boolean(busy)} onClick={() => goJourney('line')}>Back to line overview</button>}
       {journeyStep === 'purchase' && showAgentLineDiscovery && <section className="fundingPanel" aria-labelledby="purchase-discovery-title"><h2 id="purchase-discovery-title">Find your funding line</h2><div className="fundingActions">{lineDiscoveryButtons}</div>{lineDiscoveryResults}</section>}</>}
@@ -1001,6 +1002,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       {walletControls}
     </header>
 
+    {mainnetRelease === "legacy" && <p className="fundingScope">You are managing an earlier mainnet release. Existing lines, saved payments and reports stay with this contract.</p>}
     {networkHelp}
 
     {service && <div role="status">
@@ -1010,7 +1012,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
       </div>}
     </div>}
 
-    <p className="fundingScope">{mainnet ? deployment.selfRegistration ? "Real USDC on Arc mainnet. Register your own sponsor wallet, fund a line for yourself or another agent, and approve your own budget. This release is limited to 0.10 USDC reserve and 0.005 USDC total purchases per line. New activity may be paused; repayment and eligible reclaim remain available." : "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : guardedTestnet ? "Test USDC only. This guarded rehearsal is limited to admitted sponsors, a 0.10 test USDC reserve and 0.005 test USDC total purchases per line. Repayment is bound to the exact purchase reviewed. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
+    <p className="fundingScope">{mainnet ? deployment.selfRegistration ? `Register your sponsor wallet, fund a line for yourself or another agent, and approve your budget. The current release allows up to ${usdc(deployment.maxReserve!)} USDC reserve and ${usdc(deployment.maxLineSpend!)} USDC total purchases per line. New activity may be paused; repayment and eligible reclaim remain available.` : "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : guardedTestnet ? "Test USDC only. This guarded rehearsal is limited to admitted sponsors, a 0.10 test USDC reserve and 0.005 test USDC total purchases per line. Repayment is bound to the exact purchase reviewed. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
     {mainnet && <p className="fundingScope">This contract has not undergone an independent human security audit. Automated reviews and tests have been completed, but do not guarantee security. Repayment is unsecured: the sponsor bears the risk of unpaid spent principal.</p>}
     {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase. Repayment needs separate test USDC from the repaying wallet. The line’s reserve cannot repay its own debt.</p>}
     {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
@@ -1021,7 +1023,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     {service && account && <section className="fundingPanel" aria-labelledby="agent-invite-title" hidden={role === "sponsor"}>
       <h2 id="agent-invite-title">Ask a sponsor to fund your agent</h2>
       <p>Share this link with your sponsor. It includes your connected wallet as the agent; they review the address and choose the budget themselves.</p>
-      <div className="fundingField"><label htmlFor="agent-funding-link">Your agent funding link</label><input id="agent-funding-link" readOnly value={`${window.location.origin}${guided ? "/start/wallet" : window.location.pathname}?agent=${account}`} /></div>
+      <div className="fundingField"><label htmlFor="agent-funding-link">Your agent funding link</label><input id="agent-funding-link" readOnly value={`${window.location.origin}${guided ? "/start/wallet" : window.location.pathname}?agent=${account}${releaseQuery}`} /></div>
       <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); setMode("open"); setRole(null); }}>Use my wallet as the agent</button>
     </section>}
     <div className="fundingModes" aria-label="Funding actions" hidden={role === "agent"}>
@@ -1049,7 +1051,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service }: {
     </form> : managePanel}
 
     {purchasePanel}
-    <footer className="fundingFoot">{service && !mainnet && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · {network}</p>
+    <footer className="fundingFoot">{mainnetRelease && <p>{busy || prepared ? <span>Finish the current wallet action before changing releases.</span> : <Link className="fundingReleaseLink" to={mainnetRelease === "settled" ? "/mainnet?deployment=legacy" : "/mainnet"}>{mainnetRelease === "settled" ? "Manage earlier mainnet lines" : "Open the current mainnet release"}</Link>}</p>}{service && !mainnet && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · {network}</p>
       <p>Looking for the earlier integration? <Link to="/builders/v2">Open Float V2 tools</Link>.</p></footer>
 
     {transactionDialog}

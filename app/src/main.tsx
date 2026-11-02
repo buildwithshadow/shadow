@@ -2,7 +2,7 @@ import { arcTestnetRpcUrl, arcTestnetWalletParameters } from "../arcTestnetNetwo
 import routeMetadata from "../routeMetadata.json" with { type: "json" };
 import { useEffect, useMemo, useState } from "react";
 import { CircleWalletDiagnostic } from "./CircleWalletDiagnostic";
-import { PUBLIC_MAINNET, PUBLIC_MAINNET_SERVICE } from "./publicMainnet";
+import { MainnetFundingPage } from "./MainnetFundingPage";
 import { GUARDED_TESTNET, GUARDED_TESTNET_SERVICE } from "./guardedTestnet";
 import { PUBLIC_TESTNET, PUBLIC_TEST_SERVICE } from "./publicTestnet";
 import { HomePage } from "./HomePage";
@@ -1791,7 +1791,7 @@ function App() {
         <Route path="/builders" element={buildersPage} />
         <Route path="/builders/v2" element={floatV2ToolsPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
-        {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<CandidateFundingDesk key="public-mainnet" deployment={PUBLIC_MAINNET} service={PUBLIC_MAINNET_SERVICE} />} />}
+        {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<MainnetFundingPage />} />}
         {import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true" && <Route path="/guarded-testnet" element={<CandidateFundingDesk key="guarded-testnet" deployment={GUARDED_TESTNET} service={GUARDED_TESTNET_SERVICE} />} />}
         <Route path="/start/*" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />

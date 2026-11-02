@@ -6,7 +6,7 @@ import {createPublicClient,createTestClient,createWalletClient,decodeFunctionDat
 import {account,startAnvil,e2eSkip} from './float-mainnet-e2e.mjs'
 import {CANDIDATE_FUNDING as TESTNET_FUNDING,candidateFundingAbi,candidateFundingChain as testnetFundingChain,guardedMainnetChain,createCandidateFundingKit,createGuardedMainnetFundingKit,createPublicMainnetFundingKit,type CandidateWalletClient,type CandidateOpenInput} from '../src/candidateFunding.ts'
 import {GUARDED_MAINNET} from '../src/guardedMainnet.ts'
-import {PUBLIC_MAINNET} from '../src/publicMainnet.ts'
+import {LEGACY_PUBLIC_MAINNET as PUBLIC_MAINNET} from '../src/legacyPublicMainnet.ts'
 import {GUARDED_TESTNET} from '../src/guardedTestnet.ts'
 const existingGuardedArtifact=JSON.parse(readFileSync(new URL('../../contracts/out/ShadowFloatMainnetGuarded.sol/ShadowFloatMainnetGuarded.json',import.meta.url),'utf8'))
 const input: CandidateOpenInput = { agent:account(2).address,provider:account(3).address,endpoint:'https://provider.example/result',reserve:'0.10',lineSpendCap:'0.15',dailySpendCap:'0.10',providerPerSpendCap:'0.05',providerDailyCap:'0.10',expiryDays:'7',repaymentHours:'24'}

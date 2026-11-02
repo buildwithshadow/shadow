@@ -1,6 +1,6 @@
 import { SETTLED_MAINNET_CANDIDATE } from './settledMainnetCandidate.mjs';
 
-// Prepared release profile, not a live deployment or provider admission claim.
+// Deployed release profile. Importing it does not enable onchain activity.
 // Runtime verification, monitoring and explicit spending consent remain required.
 export const SETTLED_MAINNET = Object.freeze({
   ...SETTLED_MAINNET_CANDIDATE,
@@ -9,7 +9,7 @@ export const SETTLED_MAINNET = Object.freeze({
   maxReserve: 100000n, maxLineSpend: 50000n, maxDailySpend: 50000n, maxPerSpend: 50000n,
   drawBoundRepayment: true, selfRegistration: true, accountingModel: 'settled-v1',
 });
-// Dedicated report route must be configured and admitted before any purchase.
+// The dedicated report route still requires healthy monitoring before any purchase.
 export const SETTLED_MAINNET_SERVICE = Object.freeze({
   name: 'Shadow Arc wallet balance report',
   provider: '0x3b233d4b9126e6020D3A5fb6a215846916050498',
