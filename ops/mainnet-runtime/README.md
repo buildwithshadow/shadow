@@ -21,3 +21,19 @@ result and timer activity rather than treating that normal state as an outage.
 Never relax a hold, delete a journal or reset an execution budget to make a
 restart appear healthy. Rotation of wallet/provider credentials and a change in
 Safe threshold require separate procedures and are not performed by this file.
+
+## Approved monitoring phase changes
+
+The provider pins the manifest and baseline hashes at startup. A healthy
+observer does not establish that an older provider process accepts the current
+policy. After verifying the exact onchain transition, install its approved
+baseline atomically while preserving the previous file and its owner, group
+and permissions. Restart the observer to load that phase. Require a complete
+healthy sample; if a transition incident is latched, acknowledge only its exact
+ID using the supported monitor command after the healthy sample exists.
+
+Restart the signing provider against the same approved phase during an idle
+window and verify its actual admission guard, not just its process status or
+an existing paid receipt lookup. Admission verification must not sign a new
+acceptance or submit a payment. Preserve the original store, witness and
+journals. Do not reload policy from a snapshot, suppress drift, or bypass holds.

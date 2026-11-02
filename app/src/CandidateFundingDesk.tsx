@@ -25,7 +25,7 @@ import { startLineRefresh } from "./lineRefresh";
 import publicTestnetManifest from "../../contracts/deployments/public-testnet/arc-testnet.manifest.json" with { type: "json" };
 import { discoverAgentLineIds, MAX_AGENT_LINE_DISCOVERY_RESULTS, type AgentLineDiscoveryProgress } from "./agentLineDiscovery";
 import { getAgentLineDiscoveryContinuationCursor, hasResumableDiscoveryProgress, mergeAgentLineDiscoveryCache, refreshAgentLineDiscoveryCachePage, type AgentLineDiscoveryCache } from "./agentLineDiscoveryCache";
-import { ensureWalletChain, walletRequestHelp } from "./walletNetwork";
+import { ensureWalletChain, readWalletChain, walletRequestHelp } from "./walletNetwork";
 
 const legacyClient = createPublicClient({ chain: candidateFundingChain, transport: createRpcReadTransport(ARC_TESTNET_RPC_URL, {
   timeout: 15_000, queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 },
@@ -462,7 +462,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     const refreshWallet = async () => {
       const sequence = ++walletReadSequence.current;
       try {
-        const [accounts, network] = await Promise.all([provider.request({ method: "eth_accounts" }), provider.request({ method: "eth_chainId" })]);
+        const [accounts, network] = await Promise.all([provider.request({ method: "eth_accounts" }), readWalletChain(provider)]);
         if (!active || walletReadSequence.current !== sequence) return;
         invalidate();
         const first = Array.isArray(accounts) && typeof accounts[0] === "string" && isAddress(accounts[0]) ? getAddress(accounts[0]) : null;
@@ -535,7 +535,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       const sequence = ++walletReadSequence.current;
       const [accounts, network] = await Promise.all([
         window.ethereum.request({ method: "eth_accounts" }),
-        window.ethereum.request({ method: "eth_chainId" }),
+        readWalletChain(window.ethereum),
       ]);
       if (sequence !== walletReadSequence.current) return;
       if (!Array.isArray(accounts) || !isAddress(accounts[0])) throw new Error("No account was shared. Choose an account in your wallet.");
@@ -569,6 +569,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   async function review(action: "register" | "open" | "repay" | "default" | "reclaim", event?: FormEvent) {
     event?.preventDefault();
     if (!account || !canWrite) return;
+    if (action === "reclaim" && unresolvedPurchase) { setError("Check and resolve the saved purchase before reviewing reclaim. This avoids closing a line while its payment status is uncertain."); return; }
     if (action === "open" && !providerAgreed) { setError("Read and acknowledge the repayment risk before funding."); return; }
     if (guided && action === "open") { const issue = budgetIssue(form, snapshotCurrent && snapshot ? snapshot : undefined); if (issue) { setError(issue); return; } }
     const currentRevision = revision.current;
@@ -874,7 +875,8 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
         <div className="fundingActions">
           {defaultable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("default")}>Review default</button>}
           {repayable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("repay")}>Review full repayment</button>}
-          {reclaimable && <button className="fundingPrimary" type="button" disabled={!canWrite} aria-describedby={lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("reclaim")}>{line.stateName === "DEFAULTED" ? "Review recovery claim" : "Review close and reclaim"}</button>}
+          {reclaimable && <button className="fundingPrimary" type="button" disabled={!canWrite || unresolvedPurchase} aria-describedby={unresolvedPurchase ? "funding-reclaim-purchase-hint" : lineBlocker ? "funding-line-action-hint" : undefined} onClick={() => void review("reclaim")}>{line.stateName === "DEFAULTED" ? "Review recovery claim" : "Review close and reclaim"}</button>}
+          {reclaimable && unresolvedPurchase && <small id="funding-reclaim-purchase-hint">Check and resolve the saved purchase before reviewing reclaim. Use “Check payment &amp; recover result” above.</small>}
           <button type="button" disabled={Boolean(busy)} onClick={() => void lookup()}>Refresh line</button>
           {line.stateName === "OPEN" && line.principalOutstanding === 0n && !isSponsor && <small>Only the sponsor can close this line and reclaim its reserve.</small>}
           {(defaultable || repayable || reclaimable) && lineBlocker && <small id="funding-line-action-hint">{lineBlocker}</small>}
