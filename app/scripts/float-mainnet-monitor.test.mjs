@@ -485,6 +485,76 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
     } finally { await testClient.revert({ id: saved }); }
   });
 
+  test("snapshot reads each sponsor once per pinned scan and never reuses permissions across scans", async () => {
+    const saved = await testClient.snapshot(); let server;
+    try {
+      if (!seen.lineA) {
+        await ok("owner", ["allow-sponsor", "--sponsor", sponsor.address, "--execute"], OWNER);
+        seen.lineA = (await ok("sponsor", openArgs(agentA), SPONSOR)).lineId;
+        seen.lineB = (await ok("sponsor", openArgs(agentB), SPONSOR)).lineId;
+      }
+      const unused = account(8).address;
+      await ownerCall("setSponsorAllowed", [unused, true]);
+      let calls = []; let requests = []; let failUnused = false;
+      server = createServer(async (request, response) => {
+        try {
+          let raw = ""; for await (const chunk of request) raw += chunk;
+          const body = JSON.parse(raw); requests.push(body.method);
+          response.setHeader("content-type", "application/json");
+          if (body.method === "eth_call" && body.params[0].to.toLowerCase() === float.toLowerCase()) {
+            const decoded = decodeFunctionData({ abi: floatAbi, data: body.params[0].data });
+            if (decoded.functionName === "sponsorAllowed") {
+              const address = decoded.args[0].toLowerCase(); calls.push({ address, block: body.params[1] });
+              if (failUnused && address === unused.toLowerCase()) {
+                response.end(JSON.stringify({ jsonrpc: "2.0", id: body.id, error: { code: -32602, message: "injected unused sponsor failure" } }));
+                return;
+              }
+            }
+          }
+          const upstream = await fetch(RPC, { method: "POST", headers: { "content-type": "application/json" }, body: raw });
+          response.end(await upstream.text());
+        } catch { response.statusCode = 500; response.end(); }
+      });
+      await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+      const env = { ARC_RPC_URL: `http://127.0.0.1:${server.address().port}` };
+      const verifyCounts = snapshot => {
+        assert.deepEqual(calls.map(call => call.address).sort(), [sponsor.address, unused].map(address => address.toLowerCase()).sort());
+        assert(calls.every(call => BigInt(call.block) === BigInt(snapshot.observedAt.blockNumber)), "all permissions must use the snapshot block");
+      };
+      const expected = await monitor(["snapshot"]);
+      const first = await cli("monitor", ["snapshot"], env);
+      assert.equal(first.status, 0); assert.deepEqual(first.json, expected);
+      verifyCounts(first.json);
+      assert.equal(first.json.lines.length, 2);
+      assert(first.json.sponsors.find(entry => entry.sponsor === unused).allowed);
+
+      // A permission change must be read again, and false is still a cached
+      // value within that scan rather than a cache miss for every line.
+      await ownerCall("setSponsorAllowed", [sponsor.address, false]);
+      const changedExpected = await monitor(["snapshot"]);
+      calls = [];
+      const changed = await cli("monitor", ["snapshot"], env);
+      assert.equal(changed.status, 0); assert.deepEqual(changed.json, changedExpected);
+      verifyCounts(changed.json);
+      assert(changed.json.lines.every(line => line.sponsorAllowed === false));
+      assert.equal(changed.json.sponsors.find(entry => entry.sponsor === sponsor.address).allowed, false);
+      assert.equal(changed.json.alerts.filter(entry => entry.code === "SPONSOR_REMOVED").length, 2);
+
+      // An unused sponsor still matters to admission. Its read failure cannot
+      // be hidden by previously observed permissions or later accounting work.
+      failUnused = true; calls = []; requests = [];
+      const failed = await cli("monitor", ["snapshot"], env);
+      assert.equal(failed.status, 1); assert.equal(failed.json.ok, false);
+      assert.match(failed.json.error.message, /injected unused sponsor failure/);
+      assert.equal(calls.length, 2);
+      assert.equal(requests.at(-1), "eth_call");
+      assert.equal(failed.json.executionAudit, undefined);
+    } finally {
+      if (server) { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+      await testClient.revert({ id: saved });
+    }
+  });
+
   test("snapshot recovers a pruned hash index from block bodies and refuses missing or reorganized history", async () => {
     const saved = await testClient.snapshot(); let server; let mode = "pruned-index"; let fullReads = 0;
     try {

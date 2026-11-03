@@ -128,6 +128,8 @@ Run the notifier through a separately configured scheduler at a cadence suitable
 Upgrade consideration: this policy examines all role-enable history from deployment. An older baseline that used a later execution start to omit a historical role incident may now hold again. Review that history explicitly; do not delete monitor state or automatically acknowledge an existing incident during rollout.
 
 
+Sponsor permissions are read once per distinct sponsor within each complete scan, at that scan's pinned block. The same observation feeds line capacity and sponsor discovery. Sponsors without a funding line are still read, and revoked permissions are retained as false values. These observations are discarded after the scan: a later scan must read permissions again. This does not change the canonical block checks, history coverage, freshness bounds or admission requirements.
+
 ## Optional approved immutable history
 
 Default discovery remains a complete RPC replay from the deployment block. An external index remains diagnostic and cannot replace that replay.

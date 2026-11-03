@@ -207,12 +207,19 @@ async function check(values, { snapshot = false } = {}) {
     );
   }
 
+  // This cache lives only inside this scan, at its single pinned block.
+  // Reuse the same permission observation for lines and sponsor discovery;
+  // unused sponsors still require their own read, including false values.
   const sponsorAllowedBy = new Map();
+  const sponsorAllowedAt = async sponsor => {
+    const key = sponsor.toLowerCase();
+    if (!sponsorAllowedBy.has(key)) sponsorAllowedBy.set(key, await at("sponsorAllowed", [sponsor]));
+    return sponsorAllowedBy.get(key);
+  };
   const lines = [];
   for (const lineId of only ?? found.lineIds) {
     const line = await readLine(connection, lineId, pinned.number);
-    if (!sponsorAllowedBy.has(line.sponsor)) sponsorAllowedBy.set(line.sponsor, await at("sponsorAllowed", [line.sponsor]));
-    const sponsorAllowed = sponsorAllowedBy.get(line.sponsor);
+    const sponsorAllowed = await sponsorAllowedAt(line.sponsor);
     const state = stateName(line);
     const live = state === "OPEN" || state === "DRAWN";
     const drawn = state === "DRAWN";
@@ -311,7 +318,7 @@ async function check(values, { snapshot = false } = {}) {
   if (snapshot) {
     const sponsors = [];
     for (const sponsor of [...new Set(found.sponsorSets.map((entry) => entry.args.sponsor))]) {
-      sponsors.push({ sponsor, allowed: await at("sponsorAllowed", [sponsor]), set: found.sponsorSets
+      sponsors.push({ sponsor, allowed: await sponsorAllowedAt(sponsor), set: found.sponsorSets
         .filter((entry) => entry.args.sponsor === sponsor)
         .map(({ args, blockNumber, transactionHash }) => ({ allowed: args.allowed, blockNumber, transactionHash })) });
     }
