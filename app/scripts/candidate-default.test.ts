@@ -211,7 +211,9 @@ test('a reduced default confirms only for the exact transaction, contract and li
   const blockNumber = f.state.block.number + 1n
   f.state.transactions.set(txHash, { hash: txHash, from: sponsor, to: prepared.to, input: prepared.data, value: 0n, nonce: pending.nonce, chainId: pending.chainId, blockHash, blockNumber })
   f.state.receipts.set(txHash, { status: 'success', transactionHash: txHash, blockNumber, blockHash, logs: [defaultedLog(lineId, 40_000n, f.state.line.dueAt)] })
-  assert.equal((await f.kit.reconcileCandidatePending(f.client, pending)).status, 'confirmed')
+  const confirmed = await f.kit.reconcileCandidatePending(f.client, pending)
+  assert.equal(confirmed.status, 'confirmed')
+  assert.equal(confirmed.confirmedBlock, blockNumber)
   const receipt = f.state.receipts.get(txHash)!
   for (const log of [defaultedLog(otherLineId, 40_000n, f.state.line.dueAt), { ...defaultedLog(lineId, 40_000n, f.state.line.dueAt), address: other }]) {
     f.state.receipts.set(txHash, { ...receipt, logs: [log] })
@@ -442,3 +444,13 @@ test('settled mainnet browser requires its own pinned deployment and keeps legac
   }
   assert.throws(()=>createPublicMainnetFundingKit({...deployment,maxLineSpend:5000n,maxDailySpend:5000n,maxPerSpend:5000n}))
 })
+
+
+test('post confirmation line reads refuse a lagging RPC without showing stale balances', async () => {
+  const f=fixture();
+  await assert.rejects(f.kit.readCandidateLine(f.client,lineId,101n),/not reached the confirmed transaction block/);
+  f.state.block.number=101n;
+  const line=await f.kit.readCandidateLine(f.client,lineId,101n);
+  assert.equal(line.observedBlock,101n);
+  assert.equal(f.state.sends,0);
+});

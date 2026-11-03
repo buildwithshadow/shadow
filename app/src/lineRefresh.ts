@@ -1,5 +1,5 @@
 /** Read-only polling. A slow request cannot overlap another tick or focus event. */
-export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarget, visibilityTarget, intervalMs = 15_000 }: {
+export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarget, visibilityTarget, intervalMs = 15_000, immediate = false }: {
   read: () => Promise<T>;
   onValue: (value: T) => void;
   onError: (error: unknown) => void;
@@ -7,6 +7,7 @@ export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarg
   focusTarget: EventTarget;
   visibilityTarget: EventTarget;
   intervalMs?: number;
+  immediate?: boolean;
 }) {
   let stopped = false;
   let reading = false;
@@ -37,7 +38,8 @@ export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarg
   const resume = () => { void refresh(); };
   focusTarget.addEventListener("focus", resume);
   visibilityTarget.addEventListener("visibilitychange", resume);
-  schedule();
+  if (immediate) void refresh();
+  else schedule();
   return () => {
     stopped = true;
     clearTimeout(timer);

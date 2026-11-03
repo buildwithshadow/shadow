@@ -60,7 +60,7 @@ export interface CandidatePending {
 export interface CandidateStorage { getItem(key: string): string | null; setItem(key: string, value: string): void; removeItem(key: string): void }
 export interface CandidateJournal { key: string; load(): CandidatePending | null; save(pending: CandidatePending): void; clear(): void }
 export interface CandidateSession { publicClient: CandidateReadClient; walletClient: CandidateWalletClient; account: Address; journal: CandidateJournal; onStage?: (pending: CandidatePending) => void; onProgress?: (message: string) => void }
-export type CandidateResolution = { status: 'confirmed' | 'reverted' | 'replaced' | 'unknown'; txHash: Hash | null; message: string; lineId?: Hash }
+export type CandidateResolution = { status: 'confirmed' | 'reverted' | 'replaced' | 'unknown'; txHash: Hash | null; message: string; lineId?: Hash; confirmedBlock?: bigint }
 
 export interface CandidateDeployment {
   chainId: number; address: Address; usdc: Address; runtimeHash: Hash; signatureTtl: bigint;
@@ -192,10 +192,11 @@ async function lineAt(client: CandidateReadClient, lineId: Hash, block: { number
   return { ...fields, lineId, sponsor, agent: address(raw.agent), state, stateName: states[state], observedBlock: block.number, observedTimestamp: block.timestamp, sponsorAllowed: Boolean(sponsorAllowed), spendsPaused: Boolean(spendsPaused), drawDigest } as CandidateLine
 }
 
-async function readCandidateLine(client: CandidateReadClient, rawLineId: string): Promise<CandidateLine> {
+async function readCandidateLine(client: CandidateReadClient, rawLineId: string, minimumBlock = 0n): Promise<CandidateLine> {
   const lineId = hash(rawLineId)
   await verifyCandidate(client)
   const block = await client.getBlock()
+  if (block.number < minimumBlock) throw new Error('The RPC has not reached the confirmed transaction block. Balances are still updating; no new transaction is needed.')
   return lineAt(client, lineId, block)
 }
 
@@ -592,7 +593,7 @@ async function reconcileCandidatePending(client: CandidateReadClient, rawPending
       repay: 'Repayment', default: 'Default declaration', close: 'Close', 'claim-defaulted': 'Recovery claim',
     }
     const lineLabel = pending.lineId ? ` for line ${pending.lineId.slice(0, 8)}…${pending.lineId.slice(-4)}` : ''
-    return { status: 'confirmed', txHash, message: `${action[pending.kind]}${lineLabel} is confirmed onchain.`, ...(pending.lineId ? { lineId: pending.lineId } : {}) }
+    return { status: 'confirmed', txHash, confirmedBlock: receipt.blockNumber, message: `${action[pending.kind]}${lineLabel} is confirmed onchain.`, ...(pending.lineId ? { lineId: pending.lineId } : {}) }
   } catch {
     return unknown('Confirmation is pending or the chain could not be read reliably. Keep this transaction record and check again; nothing has been resent.')
   }
