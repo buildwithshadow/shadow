@@ -3,7 +3,9 @@ import { test } from 'node:test';
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { keccak256 } from 'viem';
+import { createServer } from 'node:http';
+import { decodeFunctionData, encodeAbiParameters, keccak256, toBytes } from 'viem';
+import { connectCandidate, floatAbi, SPEND_INTENT_TYPE_STRING } from './float-mainnet-config.mjs';
 import { approvedHistoryIdentity } from './float-mainnet-approved-history.mjs';
 import { buildNormalizedContent, hashBytes } from './float-mainnet-history-validation.mjs';
 import { compareHistoryRenewal } from './float-mainnet-history-renewal.mjs';
@@ -41,7 +43,7 @@ function fixture() {
   const hashOf = n => s.hashes.get(n) ?? hash(Number(n));
   const forbidden = () => { s.writes++; throw Error('write attempted'); };
   const connection = { chainId: 5042002n, address: address(1), deployBlock: 1n,
-    rpcUrl: `https://rpc.example/v1/${SECRET}`, client: {
+    chain: { rpcUrls: { default: { http: [`https://rpc.example/v1/${SECRET}`] } } }, client: {
       transport: { url: `https://rpc.example/v1/${SECRET}` },
       sendTransaction: forbidden, writeContract: forbidden, sendRawTransaction: forbidden, signTransaction: forbidden,
       getCode: async () => { s.rpc++; return s.code; },
@@ -85,6 +87,39 @@ async function partial(f) {
 }
 const pagePath = (f, i) => join(f.ws, pageName(i));
 
+test('capture supports the actual read only connection constructor shape', async () => {
+  const f = fixture();
+  const server = createServer(async (req, res) => {
+    try {
+      let text = ''; for await (const chunk of req) text += chunk;
+      const r = JSON.parse(text);
+      let result;
+      if (r.method === 'eth_chainId') result = '0x4cef52';
+      else if (r.method === 'eth_getCode') result = RUNTIME;
+      else if (r.method === 'eth_call') {
+        const { functionName } = decodeFunctionData({ abi: floatAbi, data: r.params[0].data });
+        const values = { NAME_HASH: keccak256(toBytes('ShadowFloatMainnet')), VERSION_HASH: keccak256(toBytes('1')),
+          SPEND_INTENT_TYPEHASH: keccak256(toBytes(SPEND_INTENT_TYPE_STRING)), deploymentChainId: 5042002n };
+        result = encodeAbiParameters([{ type: functionName === 'deploymentChainId' ? 'uint256' : 'bytes32' }], [values[functionName]]);
+      } else throw Error('unexpected local method');
+      res.setHeader('Content-Type', 'application/json'); res.end(JSON.stringify({ jsonrpc: '2.0', id: r.id, result }));
+    } catch { res.statusCode = 500; res.end('{}'); }
+  });
+  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  try {
+    const rpcUrl = `http://127.0.0.1:${server.address().port}`;
+    const actual = await connectCandidate({ rpcUrl, expectedChainId: 5042002n, address: address(1), deployBlock: 1n,
+      runtimeHash: keccak256(RUNTIME), readSpacingMs: 0 }, { readOnly: true });
+    assert.equal(Object.hasOwn(actual, 'rpcUrl'), false);
+    assert.equal(actual.chain.rpcUrls.default.http[0], rpcUrl);
+    // Keep the actual constructor metadata and feed deterministic capture reads.
+    const result = await cliRun(f, [], { connect: async () => ({ ...actual, client: f.connection.client }) });
+    assert.equal(result.code, 0, result.stderr.join());
+    assert.equal(JSON.parse(result.stdout[0]).candidateWritten, true);
+    assert.equal(f.s.writes, 0);
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); f.cleanup(); }
+});
+
 test('finalization freshly rechecks earlier event blocks after later windows were fetched', async () => {
   const f = fixture(); try {
     f.s.onLogs = r => { if (r.fromBlock === 12n) f.s.hashes.set(4n, hash(444)); };
@@ -106,7 +141,7 @@ test('CLI refuses endpoint changes within one capture even when the provider lab
     f.s.failFrom = 9n;
     assert.equal((await cliRun(f)).code, 1);
     f.s.failFrom = null; f.reset();
-    f.connection.rpcUrl = 'https://second.example/rpc';
+    f.connection.chain.rpcUrls.default.http[0] = 'https://second.example/rpc';
     const result = await cliRun(f, ['--resume']);
     assert.equal(result.code, 1);
     assert.equal(JSON.parse(result.stderr[0]).error.code, 'HEADER_MISMATCH');

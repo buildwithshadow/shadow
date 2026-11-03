@@ -291,7 +291,9 @@ async function run(connection, manifestPath, rawBaseline, rawOptions, progress) 
   // Bind the actual configured endpoint too, without retaining a URL or key.
   // This prevents accidental source switches, not dishonest provider claims.
   let endpoint;
-  try { endpoint = new URL(connection.rpcUrl); } catch { fail('BAD_PROVIDER', 'a valid configured RPC endpoint is required'); }
+  const configuredEndpoints = connection.chain?.rpcUrls?.default?.http;
+  must(Array.isArray(configuredEndpoints) && configuredEndpoints.length === 1, 'BAD_PROVIDER', 'exactly one configured RPC endpoint is required');
+  try { endpoint = new URL(configuredEndpoints[0]); } catch { fail('BAD_PROVIDER', 'a valid configured RPC endpoint is required'); }
   must(['https:', 'http:'].includes(endpoint.protocol), 'BAD_PROVIDER', 'unsupported RPC endpoint protocol');
   endpoint.hash = '';
   o.providerDigest = sha(`float-resumable-endpoint-v1\0${o.providerDigest}\0${endpoint.href}`);
