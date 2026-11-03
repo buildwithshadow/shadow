@@ -115,6 +115,22 @@ test('CLI refuses endpoint changes within one capture even when the provider lab
     assert.ok(!readFileSync(join(f.ws, 'header.json'), 'utf8').includes(SECRET));
   } finally { f.cleanup(); }
 });
+
+test('a rewritten resume header cannot exceed the whole session page bound', async () => {
+  const f = fixture(); try {
+    f.s.failFrom = 3n;
+    await refuses(f.run(), 'RPC_READ_FAILED');
+    const path = join(f.ws, 'header.json');
+    const header = JSON.parse(readFileSync(path));
+    header.captureAnchor = { blockNumber: '1000', blockHash: hash(1000) };
+    header.pageCount = '333';
+    writeFileSync(path, canonicalJson(header));
+    f.s.failFrom = null; f.s.finalized = 1000n; f.reset();
+    await refuses(f.resume(), 'BOUND_PAGES');
+    assert.equal(f.s.rpc, 0);
+    assert.equal(existsSync(f.out), false);
+  } finally { f.cleanup(); }
+});
 // Rewrites a page with a freshly computed digest and canonical encoding: only
 // local checks other than the digest can catch the change.
 function edit(f, index, mutate) {

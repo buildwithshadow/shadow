@@ -182,6 +182,7 @@ function readHeader(dir, ctx) {
   try { parsed = JSON.parse(bytes.toString('utf8')); } catch { fail('HEADER_INVALID', 'header is not valid JSON'); }
   const a = parsed?.captureAnchor;
   must(exactKeys(a, ['blockNumber', 'blockHash']) && DECIMAL.test(a.blockNumber) && HASH.test(a.blockHash) && BigInt(a.blockNumber) > ctx.prev.blockNumber, 'HEADER_INVALID', 'header anchor is malformed');
+  must(pageCountFor(ctx.first, BigInt(a.blockNumber), ctx.o.pageWidth) <= BigInt(ctx.o.bounds.maxPages), 'BOUND_PAGES', 'saved header exceeds the session page bound');
   const expected = expectedHeader(ctx, { blockNumber: BigInt(a.blockNumber), blockHash: a.blockHash });
   must(Buffer.compare(bytes, encode(expected)) === 0, 'HEADER_MISMATCH', 'session differs from the requested prefix, manifest, baseline, provider, anchor or limits');
   return { header: expected, digest: hashBytes(bytes), anchor: { blockNumber: BigInt(a.blockNumber), blockHash: a.blockHash } };
