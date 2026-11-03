@@ -100,6 +100,31 @@ test('stopping before the first tick prevents any read', async t => {
   f.stop(); t.mock.timers.tick(60_000); await settle(); assert.equal(calls, 0);
 });
 
+test('stopping a refresh aborts its remaining RPC read sequence', async () => {
+  const first = deferred<string>();
+  let signal: AbortSignal | undefined;
+  const calls: string[] = [];
+  const stop = startLineRefresh({
+    immediate: true,
+    read: async (current: AbortSignal) => {
+      signal = current;
+      calls.push('first');
+      await first.promise;
+      current.throwIfAborted();
+      calls.push('second');
+      return 'OLD';
+    },
+    onValue: () => assert.fail('stopped refresh published a result'),
+    onError: () => assert.fail('stopped refresh published an error'),
+    visible: () => true, focusTarget: new EventTarget(), visibilityTarget: new EventTarget(),
+  });
+  stop();
+  assert.equal(signal?.aborted, true);
+  first.resolve('first');
+  await settle();
+  assert.deepEqual(calls, ['first']);
+});
+
 test('becoming hidden cancels a queued resume until the page is visible again', async t => {
   const pending = deferred<string>(); let calls = 0;
   const f = fixture(t, () => ++calls === 1 ? pending.promise : Promise.resolve('CURRENT'));

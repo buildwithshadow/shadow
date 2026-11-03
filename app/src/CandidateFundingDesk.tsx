@@ -5,6 +5,7 @@ import { Link, useLocation, useNavigate } from "react-router-dom";
 import { FundingJourney } from "./FundingJourneyLayout";
 import { FundingNetworkSelector } from "./FundingNetworkSelector";
 import { observeFundingRoute, prepareFundingContinuation } from "./fundingContinuation";
+import { cancellableFundingReads } from "./cancellableFundingReads";
 import { createBusyOwner, withOwnedBusy } from './ownedBusy.mjs';
 import { fundingStep, guardedFundingStep, validAgent, budgetIssue, restoreWalletDraft, writeFundingDraft, fundingPath, usesTestnetFundingJourney, supportsExistingCircleHandoff, type FundingStep } from "./fundingJourney";
 import { createPublicClient, createWalletClient, custom, formatUnits, getAddress, isAddress, type Address, type Hash, type Hex } from "viem";
@@ -243,7 +244,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     if (!loadedLineId || mode !== "manage" || busy || prepared || pending || journalError || gatewayHeld) return;
     const isCurrent = () => revision.current === lineViewRevision;
     return startLineRefresh({
-      read: () => readCandidateLine(client, loadedLineId, minimumLineBlock(loadedLineId)),
+      read: signal => readCandidateLine(cancellableFundingReads(client, signal), loadedLineId, minimumLineBlock(loadedLineId)),
       onValue: value => {
         if (!isCurrent()) return;
         setLine(previous => isCurrent() && (!previous || previous.lineId === value.lineId && value.observedBlock >= previous.observedBlock) ? value : previous);
@@ -510,13 +511,14 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   // Sponsor status has its own read-only recovery loop. A failed line read
   // must not prevent registration or balances from recovering independently.
   useEffect(() => {
+    if (busy || prepared || pending) return;
     setSnapshot(null);
     setSnapshotError("");
     if (!account) return;
     const stop = startLineRefresh({
       immediate: true,
-      read: async () => {
-        const value = await readCandidateSnapshot(client, { sponsor: account });
+      read: async signal => {
+        const value = await readCandidateSnapshot(cancellableFundingReads(client, signal), { sponsor: account });
         const floor = confirmedSponsorFloor.current;
         if (floor?.account === account && value.observedBlock < floor.block) throw new Error("Sponsor balances are still catching up with the confirmed transaction.");
         return value;
@@ -528,7 +530,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       visibilityTarget: document,
     });
     return stop;
-  }, [account, walletSnapshotRevision, sponsorRefreshRevision, client, readCandidateSnapshot]);
+  }, [account, walletSnapshotRevision, sponsorRefreshRevision, busy, prepared, pending, client, readCandidateSnapshot]);
 
   useEffect(() => {
     if (prepared && dialog.current) {
