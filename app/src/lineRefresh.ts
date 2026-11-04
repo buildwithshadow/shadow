@@ -1,6 +1,6 @@
 /** Read-only polling. A slow request cannot overlap another tick or focus event. */
 export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarget, visibilityTarget, intervalMs = 15_000, immediate = false }: {
-  read: () => Promise<T>;
+  read: (signal: AbortSignal) => Promise<T>;
   onValue: (value: T) => void;
   onError: (error: unknown) => void;
   visible: () => boolean;
@@ -10,6 +10,7 @@ export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarg
   immediate?: boolean;
 }) {
   let stopped = false;
+  const controller = new AbortController();
   let reading = false;
   let queued = false;
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -23,7 +24,7 @@ export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarg
     if (reading) { queued = true; return; }
     reading = true;
     try {
-      const value = await read();
+      const value = await read(controller.signal);
       if (!stopped) onValue(value);
     } catch (error) {
       if (!stopped) onError(error);
@@ -42,6 +43,7 @@ export function startLineRefresh<T>({ read, onValue, onError, visible, focusTarg
   else schedule();
   return () => {
     stopped = true;
+    controller.abort();
     clearTimeout(timer);
     focusTarget.removeEventListener("focus", resume);
     visibilityTarget.removeEventListener("visibilitychange", resume);
