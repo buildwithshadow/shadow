@@ -340,6 +340,8 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
   const blocker = !account ? (completedView ? null : 'Connect the agent wallet to continue.') : !correctNetwork ? `Switch to ${network} to continue.`
     : busy ? busy : earlierReadPending && !inFlight.current ? 'Another operation for this wallet is finishing. The original purchase will be checked afterward.' : recordLineClosed ? 'This line is closed. Check the original payment or view its saved report; no new purchase can be signed.' : fundingPending ? 'Resolve the saved funding transaction before a new purchase. You can still check payment and recover or archive this purchase.' : reviewable && (!signingLineVerified || signingLineCheck?.state !== 1) ? 'Verify that the funding line is open before wallet review. If the check failed, refresh this page; payment recovery remains available.' : checkingStatus ? 'Confirm the saved purchase status before wallet review.' : authorizationExpired && reviewable && !paidPending ? 'This authorization has expired. Check and clear the original purchase before reviewing another.' : paidPending ? 'A payment receipt is recorded. Check payment and recover the result before continuing.' : setup.error || null;
   const message = record?.intent.typedData.message;
+  const purchaseLineId = message?.lineId ?? lineId;
+  const differentLinkedLine = Boolean(record && lineId && purchaseLineId.toLowerCase() !== lineId.trim().toLowerCase());
   const lineLoaded = loadedLine?.lineId.toLowerCase() === lineId.trim().toLowerCase();
   const needsLineRead = workspace && Boolean(onInspectLine) && !lineLoaded;
   const workspaceStep = record?.stage === 'delivered' || paidPending ? 3 : record?.stage === 'submitted' || record?.stage === 'accepted' ? 2 : reviewing ? 1 : 0;
@@ -350,8 +352,9 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     {workspace && !completedView && <p>{service.requestKind === 'arc-wallet' ? 'A signed USDC snapshot at a confirmed Arc block.' : 'A signed report from the approved service.'}</p>}
     </div>{workspace && !completedView && <div className="purchaseServicePrice"><span>Service price</span><strong>{formatUnits(BigInt(service.principal), 6)} <small>{currency}</small></strong></div>}</div>
     {workspace && !completedView && <>
-      <dl className="purchaseIdentity"><div><dt>Funding line</dt><dd>{lineId ? <code title={lineId}>{lineId.slice(0,10)}…{lineId.slice(-6)}</code> : 'Enter your sponsor’s line below'}</dd></div><div><dt>Agent wallet</dt><dd>{account ? <code title={account}>{account.slice(0,8)}…{account.slice(-6)}</code> : 'Connect your purchase wallet'}</dd></div></dl>
-      <PurchaseLineSummary line={loadedLine} lineId={message?.lineId ?? lineId} principal={BigInt(service.principal)} currency={currency}
+      <dl className="purchaseIdentity"><div><dt>Funding line</dt><dd>{purchaseLineId ? <code title={purchaseLineId}>{purchaseLineId.slice(0,10)}…{purchaseLineId.slice(-6)}</code> : 'Enter your sponsor’s line below'}</dd></div><div><dt>Agent wallet</dt><dd>{account ? <code title={account}>{account.slice(0,8)}…{account.slice(-6)}</code> : 'Connect your purchase wallet'}</dd></div></dl>
+      {differentLinkedLine && <p role="status">This wallet has an earlier saved purchase on the line shown above. Resolve it before using the different line in your opened link. The linked line’s balance is not shown here.</p>}
+      <PurchaseLineSummary line={loadedLine} lineId={purchaseLineId} principal={BigInt(service.principal)} currency={currency}
         project={!record || Boolean(reviewable && receiptChecked && receiptCheck?.status === 0 && !refused)} />
       <details className="purchaseServiceDetails"><summary>Service, repayment and network details</summary>
         <p>{service.name}. The line pays the service price; your agent wallet pays {network} transaction fees. Your wallet shows its fee quote before approval.</p>

@@ -1,7 +1,7 @@
 import { BaseError } from 'viem';
 import { useState } from 'react';
 import { MemoryRouter, Routes, Route, Link } from 'react-router-dom';
-import { act, cleanup, fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import { afterEach, beforeEach, expect, test, vi } from 'vitest';
 import { PublicPurchase } from '../src/PublicPurchase';
 import { recoverySession } from '../src/purchaseRecoverySession.mjs';
@@ -77,6 +77,19 @@ test('an automatic line lookup cannot launch another lookup or a purchase', asyn
   const button=screen.getByRole('button',{name:'Checking funding line…'}) as HTMLButtonElement;
   expect(button.disabled).toBe(true);fireEvent.click(button);
   expect(inspect).not.toHaveBeenCalled();expect(f.engine.prepare).not.toHaveBeenCalled();
+});
+
+test.each(['', `0x${'66'.repeat(32)}`])('saved purchase identity stays bound to its own line when the link names %s', async (linkedLine) => {
+  const f=fixture(0n), original=f.engine.load();
+  f.engine.recover.mockImplementation(async()=>({record:original,status:'unconfirmed'}));
+  render(<Host client={f.client} lineId={linkedLine} appearance="workspace" loadedLine={linkedLine ? {lineId:linkedLine,stateName:'OPEN',availableReserve:100000n,principalOutstanding:0n,lineSpendCap:50000n,cumulativePrincipalPaid:0n} : null}/>);
+  await screen.findByText('Awaiting confirmation');
+  const identity=screen.getByText('Funding line').parentElement!;
+  expect(within(identity).getByTitle(original.intent.typedData.message.lineId)).toBeTruthy();
+  expect(within(identity).queryByText('Enter your sponsor’s line below')).toBeNull();
+  expect(screen.queryByRole('region',{name:'Projected line balances after payment'})).toBeNull();
+  expect(screen.queryByRole('region',{name:'Observed line balances'})).toBeNull();
+  expect(f.engine.submit).not.toHaveBeenCalled();
 });
 
 test('workspace preparation remains blocked by an unresolved funding transaction', async () => {
