@@ -12,9 +12,9 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { createSelfServicePurchase, createGuardedMainnetPurchase, createSettledMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string; requestKind?: 'arc-wallet' }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, onDeliveryChecked, loadedLine = null, active = true, appearance = 'standard', onInspectLine }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, onDeliveryChecked, loadedLine = null, active = true, appearance = 'standard', onInspectLine, lineReadPending = false }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; onDeliveryChecked?: (check: CycleReportCheck) => void; loadedLine?: PurchaseLineView | null; active?: boolean; appearance?: 'standard' | 'workspace'; onInspectLine?: () => Promise<void>;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; onDeliveryChecked?: (check: CycleReportCheck) => void; loadedLine?: PurchaseLineView | null; active?: boolean; appearance?: 'standard' | 'workspace'; onInspectLine?: () => Promise<void>; lineReadPending?: boolean;
 }) {
   const workspace = appearance === 'workspace';
   const closedLine = loadedLine?.stateName === 'CLOSED' && loadedLine.lineId.toLowerCase() === lineId.trim().toLowerCase();
@@ -372,10 +372,10 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     </ol>}
     </>}
     {blocker && <p id="purchase-blocker" role="status">{blocker}</p>}
-    {!record && !completedView && <form onSubmit={event => { event.preventDefault(); if (needsLineRead) void onInspectLine?.(); else void action('prepare'); }}>
+    {!record && !completedView && <form onSubmit={event => { event.preventDefault(); if (needsLineRead) { if (!lineReadPending) void onInspectLine?.(); } else void action('prepare'); }}>
       <details className="purchaseLineEditor" open={!workspace || !lineLoaded}><summary hidden={!workspace || !lineLoaded}>Change funding line</summary><div className="fundingField"><label htmlFor="purchase-line">Funding line ID</label>
         <input id="purchase-line" value={lineId} onChange={event => onLineIdChange(event.target.value)} required disabled={Boolean(busy)} autoComplete="off" spellCheck={false} />
-      </div></details><div className={workspace ? 'purchasePrepareAction' : undefined}>{workspace && <p>{needsLineRead ? 'Open the line shared by your sponsor to check its balance and spending permission.' : 'Review the exact repayment deadline and signature expiry next. Your wallet then asks for a signature and a separate payment approval.'}</p>}<div><button type="submit" className="fundingPrimary" disabled={needsLineRead ? Boolean(busy || historyBusy) : disabled} aria-describedby={blocker ? 'purchase-blocker' : undefined}>{workspace ? needsLineRead ? 'Check funding line' : 'Prepare purchase' : 'Review service purchase'}</button>{workspace && <small>{needsLineRead ? 'This check sends no wallet request.' : 'Preparation sends no payment.'}</small>}</div></div>
+      </div></details><div className={workspace ? 'purchasePrepareAction' : undefined}>{workspace && <p>{needsLineRead ? 'Open the line shared by your sponsor to check its balance and spending permission.' : 'Review the exact repayment deadline and signature expiry next. Your wallet then asks for a signature and a separate payment approval.'}</p>}<div><button type="submit" className="fundingPrimary" disabled={needsLineRead ? Boolean(busy || historyBusy || lineReadPending) : disabled} aria-describedby={blocker ? 'purchase-blocker' : undefined}>{workspace ? needsLineRead ? lineReadPending ? 'Checking funding line…' : 'Check funding line' : 'Prepare purchase' : 'Review service purchase'}</button>{workspace && <small>{needsLineRead ? 'This check sends no wallet request.' : 'Preparation sends no payment.'}</small>}</div></div>
     </form>}
     {completedView && <dl className="fundingDetails"><div><dt>Closed line</dt><dd><code>{lineId}</code></dd></div></dl>}
     {record && <>

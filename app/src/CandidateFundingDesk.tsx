@@ -935,7 +935,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     </section>;
   const purchasePanel = service && <div className="fundingSlot" ref={purchaseSlot} hidden={guided ? journeyStep !== 'purchase' : role === "sponsor"}><PublicPurchase active={!guided || journeyStep === 'purchase'} account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
       client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} onDeliveryChecked={deliveryChecked} lineId={lineId} onLineIdChange={updateLineId} loadedLine={line}
-      appearance={purchaseOnly ? 'workspace' : 'standard'} onInspectLine={purchaseOnly ? () => lookup() : undefined} /></div>;
+      appearance={purchaseOnly ? 'workspace' : 'standard'} lineReadPending={lineLoading} onInspectLine={purchaseOnly ? () => lookup() : undefined} /></div>;
   const transactionDialog = <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description" tabIndex={-1}
       onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}
       onKeyDown={(event) => {
