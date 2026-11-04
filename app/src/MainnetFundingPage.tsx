@@ -5,7 +5,7 @@ import { LEGACY_PUBLIC_MAINNET, LEGACY_PUBLIC_MAINNET_SERVICE } from './legacyPu
 import { mainnetRelease } from './mainnetRelease';
 
 export function MainnetFundingPage() {
-  const { search } = useLocation();
+  const { search, pathname } = useLocation();
   const release = mainnetRelease(search);
   if (!release) return <section aria-label="Unknown mainnet release" className="routePage fundingDesk">
     <h1>This funding link names an unknown release.</h1>
@@ -13,7 +13,7 @@ export function MainnetFundingPage() {
     <Link to="/mainnet">Open mainnet</Link>
   </section>;
   const legacy = release === 'legacy';
-  return <CandidateFundingDesk key={release} mainnetRelease={release}
+  return <CandidateFundingDesk key={`${release}:${pathname}`} mainnetRelease={release} purchaseOnly={pathname === '/mainnet/purchase'}
     deployment={legacy ? LEGACY_PUBLIC_MAINNET : PUBLIC_MAINNET}
     service={legacy ? LEGACY_PUBLIC_MAINNET_SERVICE : PUBLIC_MAINNET_SERVICE} />;
 }

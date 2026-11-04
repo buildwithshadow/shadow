@@ -58,7 +58,7 @@ function Field({ label, name, value, onChange, hint, error: fieldError, decimal 
   </div>;
 }
 
-export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mainnetRelease }: { deployment?: CandidateDeployment; service?: PublicService; mainnetRelease?: "settled" | "legacy" }) {
+export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mainnetRelease, purchaseOnly = false }: { deployment?: CandidateDeployment; service?: PublicService; mainnetRelease?: "settled" | "legacy"; purchaseOnly?: boolean }) {
   const location = useLocation();
   const navigate = useNavigate();
   const guided = usesTestnetFundingJourney(deployment, Boolean(service));
@@ -84,10 +84,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       queueOptions: { maxAttempts: 3, spacingMs: 150, baseDelayMs: 750, maxDelayMs: 3_000 } }) }) : legacyClient, [deployment, chain, mainnet, guardedTestnet]);
   const publicTestnetDeployment = getAddress(deployment.address) === getAddress(publicTestnetManifest.contract.address);
   const [mode, setMode] = useState<"open" | "manage">(() => {
+    if (purchaseOnly) return "manage";
     const params = new URLSearchParams(window.location.search);
     return params.has("line") || (service && !params.has("agent") && params.get("role") === "agent") ? "manage" : "open";
   });
   const [role, setRole] = useState<"sponsor" | "agent" | null>(() => {
+    if (purchaseOnly) return "agent";
     const params = new URLSearchParams(window.location.search);
     return !service ? null : params.has("agent") ? "sponsor" : params.has("line") ? "agent"
       : params.get("role") === "agent" ? "agent" : params.get("role") === "sponsor" ? "sponsor" : null;
@@ -219,7 +221,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   const lineViewRevision = revision.current;
 
   useEffect(() => {
-    if (!guided || (requestedStep !== 'line' && requestedStep !== 'purchase') || busy || pending || journalError || autoLoadedLink.current === location.key) return;
+    if ((!guided && !purchaseOnly) || (guided && requestedStep !== 'line' && requestedStep !== 'purchase') || busy || pending || journalError || autoLoadedLink.current === location.key) return;
     const id = new URLSearchParams(location.search).get('line');
     if (!id || line?.lineId.toLowerCase() === id.toLowerCase()) return;
     setLineId(id); setLine(null); setLineInputError("");
@@ -235,7 +237,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       .catch(cause => { if (active && revision.current === readRevision) setError(messageOf(cause)); })
       .finally(() => { if (active) { if (revision.current === readRevision) autoLoadedLink.current = location.key; setLineLoading(false); } });
     return () => { active = false; setLineLoading(false); };
-  }, [guided, requestedStep, location.key, location.search, account, walletSnapshotRevision, busy, pending, journalError, client, readCandidateLine]);
+  }, [guided, purchaseOnly, requestedStep, location.key, location.search, account, walletSnapshotRevision, busy, pending, journalError, client, readCandidateLine]);
 
   // A sponsor can be watching while the agent purchases or repays elsewhere.
   // Keep these reads separate from transaction reviews and recovery journals.
@@ -927,11 +929,13 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
             <div><dt>Line daily limit</dt><dd>{usdc(line.dailySpendCap)} USDC</dd></div><div><dt>Line epoch</dt><dd>{line.epoch.toString()}</dd></div></dl>
           <p>{service ? "The agent buys the service below, signing with its own wallet; this line pays the price. This section manages funding, repayment and reclaim." : <>The agent signs a purchase and an executor submits it using the <a href="https://github.com/buildwithshadow/shadow/blob/main/docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md" target="_blank" rel="noreferrer">candidate participant tools</a>. This page manages funding, repayment and reclaim.</>}</p>
         </details>
+        {service && mainnet && <Link className="fundingReleaseLink" to={`/mainnet/purchase?line=${line.lineId}&deployment=${mainnetRelease ?? 'settled'}`}>Open purchase workspace</Link>}
         {service && supportsExistingCircleHandoff(deployment) && <CircleAgentHandoff key={line.lineId} lineId={line.lineId} agent={line.agent} lineState={line.stateName} debt={line.principalOutstanding} spendingAvailable={line.stateName === "OPEN" && line.principalOutstanding === 0n && line.sponsorAllowed && !line.spendsPaused && line.observedTimestamp < line.expiry && line.availableReserve >= BigInt(service.principal) && line.lineSpendCap - line.cumulativePrincipalPaid >= BigInt(service.principal)} route={mainnet ? 'guarded-mainnet' : guardedTestnet ? 'guarded-testnet' : 'public-testnet'} />}
       </div>}
     </section>;
   const purchasePanel = service && <div className="fundingSlot" ref={purchaseSlot} hidden={guided ? journeyStep !== 'purchase' : role === "sponsor"}><PublicPurchase active={!guided || journeyStep === 'purchase'} account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} onDeliveryChecked={deliveryChecked} lineId={lineId} onLineIdChange={updateLineId} loadedLine={line} /></div>;
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} onDeliveryChecked={deliveryChecked} lineId={lineId} onLineIdChange={updateLineId} loadedLine={line}
+      appearance={purchaseOnly ? 'workspace' : 'standard'} lineReadPending={lineLoading} onInspectLine={purchaseOnly ? () => lookup() : undefined} /></div>;
   const transactionDialog = <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description" tabIndex={-1}
       onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}
       onKeyDown={(event) => {
@@ -1005,6 +1009,15 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
         <span>I accept that spent funds are unsecured credit to the agent operator: Shadow cannot enforce repayment or guarantee delivery, and unpaid spent principal cannot be reclaimed. Other sponsors may separately fund the same agent.</span></label>;
 
   const networkSelector = service && (guided || mainnet && deployment.selfRegistration) ? <FundingNetworkSelector selected={mainnet ? "mainnet" : "testnet"} mainnetAvailable={import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true"} locked={Boolean(journeyLocked || prepared)} /> : null;
+  if (purchaseOnly && mainnet && service) return <div className="fundingDesk purchaseWorkspacePage">
+    <header className="purchasePageContext"><Link to={`/mainnet?${lineId ? `line=${encodeURIComponent(lineId)}&` : ''}deployment=${mainnetRelease ?? 'settled'}`}>Back to line</Link><span>{network}</span>{walletControls}</header>
+    {networkHelp}{feedbackPanel}{recoveryPanel}
+    {lineInputError && <p role="alert" className="fundingError">{lineInputError}</p>}
+    {lineLoading && <p role="status" className="purchaseLineLoading">Checking the funding line. No wallet request is being sent.</p>}
+    {lineRefreshError && <p role="status" className="fundingCallout">{lineRefreshError}</p>}
+    {purchasePanel}{transactionDialog}
+    <footer className="purchasePageFoot"><p>Repayment and eligible reclaim stay under line management. No independent human security audit is claimed for this pilot.</p><Link to={`/mainnet?${lineId ? `line=${encodeURIComponent(lineId)}&` : ''}deployment=${mainnetRelease ?? 'settled'}`}>Manage repayment and reclaim</Link></footer>
+  </div>;
   if (guided) return <FundingJourney step={journeyStep} busy={Boolean(busy || prepared)} title={journeyTitle} description={journeyDescription} onNavigate={goJourney} networkSelector={networkSelector}
     wallet={journeyStep !== 'wallet' && account ? <><small>Connected wallet</small><code>{compact(account)}</code><button type="button" disabled={Boolean(busy)} onClick={connect}>Refresh wallet</button></> : undefined}
     summary={['register','agent','budget','fund'].includes(journeyStep) ? <><h2>Your funding plan</h2><dl><div><dt>Sponsor</dt><dd>{account ? <code>{compact(account)}</code> : 'Connect your wallet'}</dd></div><div><dt>Agent</dt><dd>{validAgent(form.agent) ? <code>{compact(form.agent)}</code> : 'Choose next'}</dd></div><div><dt>Reserve</dt><dd>{form.reserve} test USDC</dd></div><div><dt>Maximum per purchase</dt><dd>{form.providerPerSpendCap} test USDC</dd></div><div><dt>Repayment window</dt><dd>Up to {form.repaymentHours} hours per purchase</dd></div></dl><p>Unused eligible funds can be reclaimed. Money already spent is owed by the agent operator and depends on repayment.</p></> : undefined}>
