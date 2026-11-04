@@ -73,7 +73,7 @@ for (const [route, description] of Object.entries(routeMetadata.socialDescriptio
   // Journey invitations keep their step URL, but share /start metadata/canonical.
   const destinations = route === "/start"
     ? [route, ...["wallet", "register", "agent", "budget", "fund", "line", "purchase"].map(step => `/start/${step}`)]
-    : [route];
+    : route === "/mainnet" ? [route, "/mainnet/purchase"] : [route];
   for (const path of destinations) {
     const destination = fileURLToPath(new URL(`./dist${path}/index.html`, import.meta.url));
     await mkdir(dirname(destination), { recursive: true });

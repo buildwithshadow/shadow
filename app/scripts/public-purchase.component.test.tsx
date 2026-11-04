@@ -28,13 +28,13 @@ function fixture(status=2n) {
   const client: any = {getBlock:vi.fn(async()=>({number:123n,timestamp:2000000000n})),readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
-function Host({client, loadedLine = null, lineId = '', onDeliveryChecked, profile = deployment}: {profile?:any; client:any; loadedLine?:any; lineId?:string; onDeliveryChecked?:(check:any)=>void}) {
+function Host({client, loadedLine = null, lineId = '', onDeliveryChecked, profile = deployment, appearance = 'standard', fundingPending = false, onInspectLine}: {profile?:any; client:any; loadedLine?:any; lineId?:string; onDeliveryChecked?:(check:any)=>void; appearance?:'standard'|'workspace'; fundingPending?:boolean; onInspectLine?:()=>Promise<void>}) {
   const [busy,setBusy]=useState('');
   return <MemoryRouter initialEntries={['/start/purchase']}>
     <Link to="/other">Leave funding</Link><Link to="/start/purchase">Return to purchase</Link>
     <Routes><Route path="/other" element={<p>Other page</p>}/><Route path="/start/purchase" element={<PublicPurchase
       account={account} correctNetwork deployment={profile} service={service} client={client} busy={busy} setBusy={setBusy}
-      fundingPending={false} lineId={lineId} loadedLine={loadedLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}} onDeliveryChecked={onDeliveryChecked}/>}/></Routes>
+      fundingPending={fundingPending} lineId={lineId} loadedLine={loadedLine} appearance={appearance} onInspectLine={onInspectLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}} onDeliveryChecked={onDeliveryChecked}/>}/></Routes>
   </MemoryRouter>;
 }
 beforeEach(()=>{
@@ -45,6 +45,37 @@ beforeEach(()=>{
   HTMLDialogElement.prototype.showModal=function(){this.setAttribute('open','');};
 });
 afterEach(()=>{cleanup();vi.useRealTimers();vi.restoreAllMocks();});
+
+test('workspace preparation shows exact UTC terms and cannot submit a payment by itself', async () => {
+  const f=fixture(0n), original={...f.engine.load(),stage:'prepared',intent:{...f.engine.load().intent,typedData:{message:{...f.engine.load().intent.typedData.message,dueAt:'2000003600',signatureExpiry:'2000000300'}}}};
+  f.replaceSaved(null);
+  f.engine.prepare.mockImplementation(async()=>{f.replaceSaved(original);return original;});
+  render(<Host client={f.client} lineId={original.intent.typedData.message.lineId} appearance="workspace"/>);
+  fireEvent.click(screen.getByRole('button',{name:'Prepare purchase'}));
+  await screen.findByRole('heading',{name:'Review this service purchase'});
+  expect(screen.getByText('18 May 2033, 04:33:20 UTC')).toBeTruthy();
+  expect(screen.getByText('18 May 2033, 03:38:20 UTC')).toBeTruthy();
+  expect(f.engine.prepare).toHaveBeenCalledTimes(1);
+  expect(f.engine.submit).not.toHaveBeenCalled();
+  expect(window.ethereum!.request).not.toHaveBeenCalled();
+});
+
+test('checking an unloaded workspace line is read only and does not prepare a purchase', async () => {
+  const f=fixture(0n);f.replaceSaved(null);
+  const inspect=vi.fn(async()=>{});
+  render(<Host client={f.client} lineId={`0x${'55'.repeat(32)}`} appearance="workspace" onInspectLine={inspect}/>);
+  fireEvent.click(screen.getByRole('button',{name:'Check funding line'}));
+  await waitFor(()=>expect(inspect).toHaveBeenCalledTimes(1));
+  expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
+  expect(window.ethereum!.request).not.toHaveBeenCalled();
+});
+
+test('workspace preparation remains blocked by an unresolved funding transaction', async () => {
+  const f=fixture(0n);f.replaceSaved(null);
+  render(<Host client={f.client} lineId={`0x${'55'.repeat(32)}`} appearance="workspace" fundingPending/>);
+  expect((screen.getByRole('button',{name:'Prepare purchase'}) as HTMLButtonElement).disabled).toBe(true);
+  expect(f.engine.prepare).not.toHaveBeenCalled();expect(f.engine.submit).not.toHaveBeenCalled();
+});
 test('a delivered report remains visible after ten complete route unmounts without another recovery or payment',async()=>{
   const f=fixture(),text=`original report ${counter}`;render(<Host client={f.client}/>);
   await screen.findByText(text);expect(f.engine.recover).toHaveBeenCalledTimes(1);
