@@ -1466,8 +1466,7 @@ function App() {
   const isEvidenceRoute = route === "/evidence";
   const usesFloatV2State = isEvidenceRoute || route === "/builders/v2";
   const isGuardedTestnetRoute = route === "/guarded-testnet" && import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true";
-  const isPurchaseWorkspaceRoute = route === "/mainnet/purchase";
-  const isFundingDeskRoute = route === "/funding" || (route === "/start" || route.startsWith("/start/")) || route === "/mainnet" || isPurchaseWorkspaceRoute || isGuardedTestnetRoute;
+  const isFundingDeskRoute = route === "/funding" || (route === "/start" || route.startsWith("/start/")) || route === "/mainnet" || isGuardedTestnetRoute;
   const mainnetAvailable = import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true";
   const fundingEntry = fundingNetworkDestination(selectedFundingNetwork(route, search, mainnetAvailable));
   const [account, setAccount] = useState<Address>();
@@ -1487,7 +1486,7 @@ function App() {
   const [treasuryError, setTreasuryError] = useState<string | null>(null);
 
   useEffect(() => {
-    const metadataKey = route.startsWith("/start/") ? "/start" : route === "/mainnet/purchase" ? "/mainnet" : route;
+    const metadataKey = route.startsWith("/start/") ? "/start" : route;
     const metadataRoute = ROUTE_TITLES[metadataKey] && ROUTE_DESCRIPTIONS[metadataKey] ? metadataKey : "/";
     const title = ROUTE_TITLES[metadataRoute];
     const description = ROUTE_DESCRIPTIONS[metadataRoute];
@@ -1743,13 +1742,13 @@ function App() {
   );
   const roadmapPage = <RoadmapPage />;
   return (
-    <main className={isPurchaseWorkspaceRoute ? "shell candidateShell purchaseWorkspaceShell" : isFundingDeskRoute ? "shell candidateShell" : "shell"}>
+    <main className={isFundingDeskRoute ? "shell candidateShell" : "shell"}>
       <nav className="nav">
         <Link className="brand" to="/" aria-label="Shadow">
           <ShadowMark />
           <span>Shadow</span>
         </Link>
-        {!isPurchaseWorkspaceRoute && <div className="navLinks">
+        <div className="navLinks">
           <Link to="/#how" className="navLink">
             How it works
           </Link>
@@ -1759,8 +1758,8 @@ function App() {
           <NavLink to="/builders" className={({ isActive }) => (isActive ? "navLink active" : "navLink")}>
             Builders
           </NavLink>
-        </div>}
-        {isPurchaseWorkspaceRoute ? <Link to="/builders" className="purchaseHelpLink">Help</Link> : <div className="navActions">
+        </div>
+        <div className="navActions">
           {!isFundingDeskRoute && route !== "/" && <button
             className={account ? "navWallet connected" : "navWallet"}
             onClick={connectWallet}
@@ -1773,7 +1772,7 @@ function App() {
           <Link to={isGuardedTestnetRoute ? "/guarded-testnet" : fundingEntry} className="navCta">
             Fund an agent
           </Link>
-        </div>}
+        </div>
       </nav>
 
       <RouteScroll />
@@ -1793,7 +1792,6 @@ function App() {
         <Route path="/builders/v2" element={floatV2ToolsPage} />
         <Route path="/funding" element={<CandidateFundingDesk key="legacy-candidate" />} />
         {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet" element={<MainnetFundingPage />} />}
-        {import.meta.env.VITE_SHADOW_GUARDED_MAINNET_CANDIDATE === "true" && <Route path="/mainnet/purchase" element={<MainnetFundingPage />} />}
         {import.meta.env.VITE_SHADOW_GUARDED_TESTNET_CANDIDATE === "true" && <Route path="/guarded-testnet" element={<CandidateFundingDesk key="guarded-testnet" deployment={GUARDED_TESTNET} service={GUARDED_TESTNET_SERVICE} />} />}
         <Route path="/start/*" element={<CandidateFundingDesk key="public-testnet" deployment={PUBLIC_TESTNET} service={PUBLIC_TEST_SERVICE} />} />
         <Route path="/roadmap" element={roadmapPage} />
@@ -1801,7 +1799,7 @@ function App() {
         <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
 
-      {!isPurchaseWorkspaceRoute && <SiteFooter />}
+      <SiteFooter />
     </main>
   );
 }

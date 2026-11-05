@@ -33,13 +33,11 @@ omitted:
 
 ## Overview
 
-Shadow helps people fund agent service purchases, set limits, track repayment and reclaim eligible funds. The participant experience leads with the action the person needs to complete. The public site and existing funding surfaces retain their dark visual language. The focused purchase workspace uses the approved light surface with dark text and a restrained mint accent.
+Shadow helps people fund agent service purchases, set limits, track repayment and reclaim eligible funds. The participant experience leads with the action the person needs to complete. The public site and participant app use the same dark visual language.
 
 ## Colors
 
 Use the background and inset surface for page structure, with raised surfaces for forms and contextual information. Use the accent for the primary action, links and focus. Success uses copy, refusal or failure uses block, and unresolved outcomes use warn. Color always accompanies text or an icon that names the state.
-
-Scope the light purchase theme to its workspace and confirmation dialog. Preserve the surrounding product identity and use the existing Shadow mark. Do not apply the purchase theme to funding, legacy releases or the marketing site as a side effect.
 
 Calculate contrast against the actual surface, including composited transparency. Maintain 4.5:1 for body text and 3:1 for large text and information carrying boundaries. New colors and surfaces require measured contrast before release. The existing primary button pair exceeds those requirements.
 
@@ -53,8 +51,6 @@ Every page must work at 320 CSS pixels without horizontal scrolling, lost conten
 
 Give each onboarding stage its own route and one primary action. Completing a stage leads to the next page; browser Back preserves entered details. Show progress and a contextual summary without repeating the full form on every page. Use a compact mobile progress view rather than compressing desktop navigation into unreadable text.
 
-The focused purchase workspace leads with the service and its price, followed by the funding line and agent identity. Present the financial effect in one aligned summary. Keep supporting service and network detail in a native disclosure, without a separate full height instruction rail. On mobile, reduce heading and price sizes so the primary action remains reachable without unnecessary introductory space.
-
 ## Components
 
 The participant journey separates wallet connection, sponsor registration, agent selection, budget settings, funding review and line management. Registration labels must describe the actual sponsor transaction. Registered sponsors can continue without registering again. Agent users can open an existing line without traversing sponsor setup.
@@ -64,8 +60,6 @@ Keep one wallet control per screen. Place network and registration prerequisites
 Advance registration or funding only after confirmed state. Each financial action retains its own review and wallet confirmation. Explain declined and failed prompts without claiming a transaction was not sent when its outcome is unknown. Unknown outcomes show recovery of the original request and block a new payment.
 
 Keep the public self service contract and earlier candidate distinct. A friendly agent label must not replace wallet identity or funding line authorization. Show real chain and service state rather than simulated success.
-
-Purchase projections use the selected line's observed reserve, debt and remaining permission. Hide projections when that line is unavailable, closed or inconsistent with the current purchase. Distinguish projected values after payment from observed current balances. Display the exact repayment deadline and signature expiry in UTC before requesting authorization. Keep the same purchase identity visible through payment uncertainty and recovery.
 
 ## Do's and Don'ts
 
