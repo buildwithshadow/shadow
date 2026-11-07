@@ -145,3 +145,51 @@
 }
 
 .fundingReleaseLink { display: inline-flex; align-items: center; min-height: 44px; padding-block: 8px; }
+
+/* Participant task and contextual summary share one workspace. */
+.participantWorkspace { max-width: 1120px; }
+.participantWorkspace .fundingHead { padding: 20px 0; align-items: center; }
+.participantWorkspace .fundingHead .pageEyebrow { display: none; }
+.participantWorkspace .fundingHead h1 { font-size: clamp(32px, 4vw, 46px); margin: 0 0 12px; }
+.participantWorkspace .fundingWallet { background: none; border: 0; padding: 0; }
+.participantWorkspace > .fundingScope { font-size: 13px; max-width: 90ch; }
+.participantWorkspace .fundingModes { gap: 8px; }
+.participantWorkspace .fundingModes > span { color: var(--ink-soft); font-size: 13px; }
+.participantWorkspace .participantTaskLayout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(240px, 1fr); gap: 44px; align-items: start; margin-top: 28px; }
+.participantWorkspace .participantTask { min-width: 0; }
+.participantWorkspace .fundingPanel { background: transparent; border: 0; border-radius: 0; padding: 0; }
+.participantWorkspace .participantInvite { padding: 14px 0; border-block: 1px solid var(--border-strong); margin: 20px 0; }
+.participantWorkspace .participantInvite summary { font-weight: 600; }
+.participantSummary { border-left: 1px solid var(--border-strong); padding-left: 28px; min-width: 0; }
+.participantSummary h2 { font-size: 23px; margin: 0 0 24px; }
+.participantSummary dl { margin: 0 0 28px; }
+.participantSummary dl > div { display: flex; justify-content: space-between; align-items: baseline; gap: 18px; padding: 12px 0; }
+.participantSummary dt { color: var(--ink-soft); }
+.participantSummary dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.participantSummary p { color: var(--ink-soft); line-height: 1.65; font-size: 14px; }
+.participantSummary strong { color: var(--ink); }
+.participantWorkspace .fundingMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.participantWorkspace .fundingHead p { font-size: 16px; }
+@media (max-width: 780px) {
+  .participantWorkspace .participantTaskLayout { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .participantSummary { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--border-strong); }
+  .participantWorkspace .fundingHead { align-items: stretch; flex-direction: column; }
+}
+.candidateShell:has(.participantWorkspace) > .nav { position: relative; top: auto; }
+.participantWorkspace .fundingGrid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.participantWorkspace .fundingGrid > .fundingField:first-child { grid-column: 1 / -1; }
+@media (max-width: 520px) { .participantWorkspace .fundingGrid { grid-template-columns: minmax(0, 1fr); } }
+.participantWorkspace .fundingScope { border: 0; padding-left: 0; }
+.participantWorkspace .fundingHead { margin: 0; padding-block: 20px; }
+.participantWorkspace .fundingModes { margin-block: 12px; }
+.participantWorkspace .fundingModes > span { display: none; }
+.participantWorkspace .fundingModes button { border: 0; border-bottom: 2px solid transparent; border-radius: 0; background: transparent; padding: 12px 18px; }
+.participantWorkspace .fundingModes button[aria-pressed="true"] { border-bottom-color: var(--accent); background: transparent; }
+.participantWorkspace .participantReleaseDetails { margin: 32px 0 0; }
+.participantWorkspace .fundingPanel + .fundingSlot { margin-top: 32px; }
+.candidateShell:has(.participantWorkspace) > .nav .navActions { display: none !important; }
+@media (max-width: 780px) {
+  .candidateShell:has(.participantWorkspace) > .nav { padding: 12px 16px; gap: 12px; }
+  .candidateShell:has(.participantWorkspace) > .nav .navLinks { display: flex; width: auto; flex: 0 1 auto; gap: 12px; padding: 0; }
+  .candidateShell:has(.participantWorkspace) > .nav .navLink { font-size: 12px; }
+}

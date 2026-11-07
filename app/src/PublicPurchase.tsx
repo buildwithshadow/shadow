@@ -10,9 +10,9 @@ import { assertGatewayFundingResolved, assertCandidateFundingResolved, assertPur
 import { createSelfServicePurchase, createGuardedMainnetPurchase, createSettledMainnetPurchase, type PurchaseRecord } from './selfServicePurchase.mjs';
 
 export interface PublicService { name: string; provider: Address; endpoint: string; providerUrl: string; principal: string; sourcePayment: string; requestKind?: 'arc-wallet' }
-export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, onDeliveryChecked, loadedLine = null, active = true }: {
+export function PublicPurchase({ account, correctNetwork, deployment, service, client, busy, setBusy, fundingPending, lineId, onLineIdChange, onPurchaseChanged, onDeliveryChecked, loadedLine = null, active = true, lineSelectionManaged = false }: {
   account: Address | null; correctNetwork: boolean; deployment: CandidateDeployment; service: PublicService; client: PublicClient;
-  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; onDeliveryChecked?: (check: CycleReportCheck) => void; loadedLine?: Pick<CandidateLine, 'lineId' | 'stateName'> | null; active?: boolean;
+  busy: string; setBusy(value: string): void; fundingPending: boolean; lineId: string; onLineIdChange(value: string): void; onPurchaseChanged(lineId: string, transactionHash?: Hex): Promise<void>; onDeliveryChecked?: (check: CycleReportCheck) => void; loadedLine?: Pick<CandidateLine, 'lineId' | 'stateName'> | null; active?: boolean; lineSelectionManaged?: boolean;
 }) {
   const closedLine = loadedLine?.stateName === 'CLOSED' && loadedLine.lineId.toLowerCase() === lineId.trim().toLowerCase();
   const mainnet = deployment.chainId === 5042;
@@ -351,9 +351,9 @@ export function PublicPurchase({ account, correctNetwork, deployment, service, c
     </ol>}
     {blocker && <p id="purchase-blocker" role="status">{blocker}</p>}
     {!record && !completedView && <form onSubmit={event => { event.preventDefault(); void action('prepare'); }}>
-      <div className="fundingField"><label htmlFor="purchase-line">Funding line ID</label>
+      {!lineSelectionManaged && <div className="fundingField"><label htmlFor="purchase-line">Funding line ID</label>
         <input id="purchase-line" value={lineId} onChange={event => onLineIdChange(event.target.value)} required disabled={Boolean(busy)} autoComplete="off" spellCheck={false} />
-      </div><button type="submit" className="fundingPrimary" disabled={disabled} aria-describedby={blocker ? 'purchase-blocker' : undefined}>Review service purchase</button>
+      </div>}{lineSelectionManaged && <p>Selected line <code>{lineId || "Choose a funding line above"}</code></p>}<button type="submit" className="fundingPrimary" disabled={disabled || !lineId.trim()} aria-describedby={blocker ? 'purchase-blocker' : undefined}>Review service purchase</button>
     </form>}
     {completedView && <dl className="fundingDetails"><div><dt>Closed line</dt><dd><code>{lineId}</code></dd></div></dl>}
     {record && <>

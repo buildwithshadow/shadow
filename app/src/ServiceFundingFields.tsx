@@ -1,10 +1,11 @@
 import { formatUnits, parseUnits } from 'viem';
 import type { CandidateOpenInput } from './candidateFunding';
 
-export function ServiceFundingFields({ form, service, busy, onChange }: {
+export function ServiceFundingFields({ form, service, busy, onChange, prominentPermission = false }: {
   form: CandidateOpenInput;
   service: { name: string; principal: string };
   busy: boolean;
+  prominentPermission?: boolean;
   onChange(key: keyof CandidateOpenInput, value: string): void;
 }) {
   const amount = (value: string) => /^\d+(\.\d{1,6})?$/.test(value) ? parseUnits(value,6) : null;
@@ -28,13 +29,14 @@ export function ServiceFundingFields({ form, service, busy, onChange }: {
     <div className="fundingGrid">
       {field('agent', 'Agent wallet address', 'The wallet that signs purchases. Its operator owes repayment.')}
       {field('reserve', 'USDC to set aside', 'Deposited into the funding line. Keep extra USDC in your wallet for fees.')}
+      {prominentPermission && field('lineSpendCap', 'Lifetime spending permission (USDC)', 'Total purchases allowed, including purchases already repaid.')}
       {field('repaymentHours', 'Repayment window (hours)', 'Each purchase sets its due time within this window. Repayment is not guaranteed.')}
     </div>
     <p>{totalLimit !== null && totalLimit > 0n ? <>This line permits up to <strong>{form.lineSpendCap} USDC</strong> in total purchases.</> : <>Set a valid total purchase limit in advanced settings.</>} Repayment restores available funds but does not reset this permission.</p>
     {reserve !== null && totalLimit !== null && totalLimit > 0n && reserve > totalLimit && <p className="fundingCallout" role="status">You are setting aside more than this line can spend in total. The extra reserve stays unused until you reclaim it.</p>}
     <details><summary>Advanced spending limits and service details</summary>
       <div className="fundingGrid">
-        {field('lineSpendCap', 'Total purchase limit (USDC)', 'Cumulative across this line, including purchases already repaid.')}
+        {!prominentPermission && field('lineSpendCap', 'Total purchase limit (USDC)', 'Cumulative across this line, including purchases already repaid.')}
         {field('dailySpendCap', 'Line daily limit (USDC)', 'Resets at midnight UTC.')}
         {field('providerPerSpendCap', 'Maximum purchase (USDC)')}
         {field('providerDailyCap', 'Provider daily limit (USDC)')}

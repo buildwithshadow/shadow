@@ -9,9 +9,9 @@ const initial: CandidateOpenInput = {
   endpoint:'https://example.com/report', reserve:'0.005', lineSpendCap:'0.005', dailySpendCap:'0.005',
   providerPerSpendCap:'0.005', providerDailyCap:'0.005', expiryDays:'7', repaymentHours:'24',
 };
-function Host({busy=false, form=initial}: {busy?:boolean; form?:CandidateOpenInput}) {
+function Host({busy=false, form=initial, prominentPermission=false}: {prominentPermission?:boolean; busy?:boolean; form?:CandidateOpenInput}) {
   const [value,setValue] = useState(form);
-  return <ServiceFundingFields form={value} busy={busy} service={{name:'Wallet report',principal:'5000'}}
+  return <ServiceFundingFields prominentPermission={prominentPermission} form={value} busy={busy} service={{name:'Wallet report',principal:'5000'}}
     onChange={(key,next)=>setValue(previous=>({...previous,[key]:next}))}/>;
 }
 afterEach(cleanup);
@@ -52,4 +52,15 @@ test('an invalid advanced value reopens its disclosure so native validation can 
   details.open=false;
   fireEvent.invalid(input);
   expect(details.open).toBe(true);
+});
+
+
+test('workspace permission edits do not silently change reserve or purchase caps',()=>{
+  render(<Host prominentPermission/>);
+  const permission=screen.getByLabelText('Lifetime spending permission (USDC)');
+  expect(permission.closest('details')).toBeNull();
+  fireEvent.change(permission,{target:{value:'0.01'}});
+  expect(screen.getByLabelText('USDC to set aside').getAttribute('value')).toBe('0.005');
+  expect(screen.getByLabelText('Maximum purchase (USDC)').getAttribute('value')).toBe('0.005');
+  expect(screen.queryByLabelText('Total purchase limit (USDC)')).toBeNull();
 });
