@@ -173,3 +173,13 @@ test('public mainnet never offers Circle commands pinned to the earlier deployme
   assert.equal(supportsExistingCircleHandoff({chainId:5042,selfRegistration:false}),true)
   assert.equal(supportsExistingCircleHandoff({chainId:5042002,selfRegistration:true}),true)
 })
+
+test('matching mainnet invitation restores edits while a new invitation selects its new agent',()=>{
+  const edited='0x4444444444444444444444444444444444444444';
+  const next='0x5555555555555555555555555555555555555555';
+  const raw=writeFundingDraft({...form,agent:edited},agent);
+  assert.equal(restoreWalletDraft(()=>raw,form,agent,true).form.agent,edited);
+  assert.equal(restoreWalletDraft(()=>raw,form,next,true).form.agent,next);
+  assert.equal(restoreWalletDraft(()=>JSON.stringify({version:1,invitation:agent}),{...form,agent:''},agent,true).form.agent,agent);
+  assert.equal(restoreWalletDraft(()=>raw,form,agent).form.agent,agent);
+});
