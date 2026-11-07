@@ -538,13 +538,17 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     return () => window.removeEventListener("storage", changed);
   }, [account, walletSnapshotRevision, client]);
 
+  // The agent line view does not use sponsor-only wallet state. Keep that
+  // background batch out of its RPC queue; every transaction preparation still
+  // performs its own fresh verification when the user reviews an action.
+  const sponsorSnapshotNeeded = !(workspace && role === 'agent' && mode === 'manage');
   // Sponsor status has its own read-only recovery loop. A failed line read
   // must not prevent registration or balances from recovering independently.
   useEffect(() => {
     if (busy || prepared || pending) return;
     setSnapshot(null);
     setSnapshotError("");
-    if (!account) return;
+    if (!account || !sponsorSnapshotNeeded) return;
     const stop = startLineRefresh({
       immediate: true,
       read: async signal => {
@@ -560,7 +564,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       visibilityTarget: document,
     });
     return stop;
-  }, [account, walletSnapshotRevision, sponsorRefreshRevision, busy, prepared, pending, client, readCandidateSnapshot]);
+  }, [account, walletSnapshotRevision, sponsorRefreshRevision, sponsorSnapshotNeeded, busy, prepared, pending, client, readCandidateSnapshot]);
 
   useEffect(() => {
     if (prepared && dialog.current) {
