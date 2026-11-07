@@ -83,3 +83,59 @@ test('account changes clear review consent and require the new sponsor status',a
   await waitFor(()=>expect((consent as HTMLInputElement).checked).toBe(false));
   expect((screen.getByRole('button',{name:'Review funding transaction'}) as HTMLButtonElement).disabled).toBe(true);
 });
+
+test('mainnet restores only budget inputs for the same wallet and deployment after remount',async()=>{
+  mount('/mainnet?deployment=settled');
+  await screen.findByText('Arc mainnet connected');
+  fireEvent.change(screen.getByLabelText('Agent wallet address'),{target:{value:account}});
+  fireEvent.change(screen.getByLabelText('USDC to set aside'),{target:{value:'0.01'}});
+  await waitFor(()=>expect(window.sessionStorage.getItem(`shadow:funding-draft:5042:${mainnet.address.toLowerCase()}:${account}`)).toContain('0.01'));
+  cleanup();
+  mount('/mainnet?deployment=settled&step=review');
+  await screen.findByText('Arc mainnet connected');
+  await waitFor(()=>expect(screen.getByText('0.01 USDC')).toBeTruthy());
+  expect((screen.getByRole('checkbox') as HTMLInputElement).checked).toBe(false);
+});
+
+test('a different wallet draft cannot override the mainnet defaults',async()=>{
+  window.sessionStorage.setItem(`shadow:funding-draft:5042:${mainnet.address.toLowerCase()}:0x4444444444444444444444444444444444444444`,JSON.stringify({version:1,form:{reserve:'0.09'}}));
+  mount('/mainnet?deployment=settled');
+  await screen.findByText('Arc mainnet connected');
+  expect((screen.getByLabelText('USDC to set aside') as HTMLInputElement).value).toBe('0.005');
+});
+
+test('a shared mainnet line loads automatically but a manual edit supersedes its pending read',async()=>{
+  let finish!:(value:any)=>void;
+  h.line.mockImplementation(()=>new Promise(resolve=>{finish=resolve;}));
+  mount(`/mainnet?deployment=settled&line=${lineId}`);
+  await waitFor(()=>expect(h.line).toHaveBeenCalled());
+  const other=`0x${'66'.repeat(32)}`;
+  fireEvent.change(screen.getByLabelText('Funding line ID'),{target:{value:other}});
+  await act(async()=>finish(line));
+  expect((screen.getByLabelText('Funding line ID') as HTMLInputElement).value).toBe(other);
+  expect(screen.getByText('Loaded reserve: none')).toBeTruthy();
+});
+
+test('self funding shortcut creates a setup URL that Back can restore',async()=>{
+  mount('/mainnet?deployment=settled');
+  await screen.findByText('Arc mainnet connected');
+  fireEvent.click(screen.getByRole('button',{name:'I am the agent'}));
+  const summary=screen.getByText('Ask a sponsor to fund your agent');
+  (summary.closest('details') as HTMLDetailsElement).open=true;
+  fireEvent.click(screen.getByRole('button',{name:'Use my wallet as the agent'}));
+  await screen.findByLabelText('USDC to set aside');
+  expect(screen.getByTestId('path').textContent).toContain('role=sponsor');
+  expect(screen.getByTestId('path').textContent).toContain(`agent=${account}`);
+  expect(screen.getByTestId('path').textContent).not.toContain('view=line');
+  fireEvent.click(screen.getByRole('button',{name:'Review funding plan'}));
+  await screen.findByRole('heading',{name:'Review your funding plan'});
+  fireEvent.click(screen.getByRole('button',{name:'Browser Back'}));
+  await screen.findByLabelText('USDC to set aside');
+});
+
+test('shared mainnet line shows the onchain overview without a load click or wallet prompt',async()=>{
+  mount(`/mainnet?deployment=settled&line=${lineId}`);
+  await screen.findByText('Loaded reserve: 100000');
+  expect(h.line.mock.calls.some(call=>call[1]===lineId)).toBe(true);
+  expect((window.ethereum!.request as any).mock.calls.every(([r]:any)=>['eth_accounts','eth_chainId'].includes(r.method))).toBe(true);
+});
