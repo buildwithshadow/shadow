@@ -167,3 +167,12 @@ test('refreshing an unfinished invitation budget preserves its edited agent',asy
   await screen.findByText('Arc mainnet connected');
   await waitFor(()=>expect((screen.getByLabelText('Agent wallet address') as HTMLInputElement).value).toBe(chosen));
 });
+
+test('agent line reads do not compete with unused sponsor state, which loads on sponsor entry',async()=>{
+  mount(`/mainnet?deployment=settled&line=${lineId}`);
+  await screen.findByText('Loaded reserve: 100000');
+  expect(h.snapshot).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole('button',{name:'I am sponsoring'}));
+  await screen.findByText('1 USDC available');
+  expect(h.snapshot).toHaveBeenCalled();
+});
