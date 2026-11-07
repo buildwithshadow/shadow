@@ -65,6 +65,20 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   const requestedStep = fundingStep(location.pathname, location.search);
   const CANDIDATE_FUNDING = deployment;
   const mainnet = deployment.chainId === 5042;
+  const workspace = mainnet && deployment.selfRegistration === true && Boolean(service);
+  const fundingReviewPage = workspace && new URLSearchParams(location.search).get('step') === 'review';
+  function workspacePage(next: 'setup' | 'review' | 'line' | 'agent', selectedAgent?: string) {
+    if (busy || prepared || submitting.current) return;
+    invalidate(); setProviderAgreed(false);
+    const query = new URLSearchParams(location.search);
+    query.delete('step'); query.delete('role'); query.delete('view');
+    if (selectedAgent) query.set('agent', selectedAgent);
+    if (next === 'setup' || next === 'review') {
+      query.delete('line'); query.set('role','sponsor');
+      if (next === 'review') query.set('step','review');
+    } else { query.set('role', next === 'agent' ? 'agent' : 'sponsor'); query.set('view','line'); }
+    navigate(`${location.pathname}?${query}`);
+  }
   const releaseQuery = mainnetRelease ? `&deployment=${mainnetRelease}` : "";
   const guardedTestnet = !mainnet && deployment.drawBoundRepayment === true;
   const chain = useMemo(() => candidateChainFor(deployment), [deployment]);
@@ -94,10 +108,12 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   });
   const [account, setAccount] = useState<Address | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
-  const [form, setForm] = useState(() => ({ ...initialForm,
-    agent: service ? new URLSearchParams(window.location.search).get("agent") || "" : "",
+  const formDefaults = useMemo(() => ({ ...initialForm,
     ...(service ? { provider: service.provider, endpoint: service.endpoint } : {}),
     ...(mainnet || guardedTestnet ? { reserve: '0.005', lineSpendCap: '0.005', dailySpendCap: '0.005', providerPerSpendCap: '0.005', providerDailyCap: '0.005' } : {}),
+  }), [service, mainnet, guardedTestnet]);
+  const [form, setForm] = useState(() => ({ ...formDefaults,
+    agent: service ? new URLSearchParams(location.search).get('agent') || '' : '',
   }));
   const [draftOwner, setDraftOwner] = useState<string | null>(null);
   const [draftWarning, setDraftWarning] = useState("");
@@ -187,18 +203,31 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     navigate(fundingPath(next, form.agent, lineId));
   }
   useEffect(() => {
-    if (!guided || !draftKey) return;
+    if (!workspace) return;
+    if (!submitting.current) invalidate();
     setProviderAgreed(false);
-    const restored = restoreWalletDraft(() => window.sessionStorage.getItem(draftKey), { ...initialForm, provider: service!.provider, endpoint: service!.endpoint }, new URLSearchParams(window.location.search).get('agent'));
+    document.getElementById('workspace-funding-title')?.focus();
+    const query = new URLSearchParams(location.search);
+    const agentRole = query.get('role') === 'agent' || query.has('line') && query.get('role') !== 'sponsor';
+    setRole(agentRole ? 'agent' : 'sponsor');
+    setMode(agentRole || query.has('line') || query.get('view') === 'line' ? 'manage' : 'open');
+  }, [workspace, location.key]);
+  useEffect(() => {
+    if (workspace) setProviderAgreed(false);
+  }, [workspace, account, chainId]);
+  useEffect(() => {
+    if ((!guided && !workspace) || !draftKey) return;
+    setProviderAgreed(false);
+    const restored = restoreWalletDraft(() => window.sessionStorage.getItem(draftKey), formDefaults, new URLSearchParams(location.search).get('agent'));
     setForm(restored.form);
     setDraftOwner(restored.persisted ? draftKey : null);
     setDraftWarning(restored.persisted ? "" : "This browser cannot save your draft. Keep this page open until you finish.");
-  }, [guided, draftKey, service]);
+  }, [guided, workspace, draftKey, formDefaults]);
   useEffect(() => {
-    if (!guided || !draftKey || draftOwner !== draftKey) return;
+    if ((!guided && !workspace) || !draftKey || draftOwner !== draftKey) return;
     try { window.sessionStorage.setItem(draftKey, writeFundingDraft(form)); }
     catch { setDraftWarning("Your latest edits could not be saved. Keep this page open until you finish."); }
-  }, [guided, draftKey, draftOwner, form]);
+  }, [guided, workspace, draftKey, draftOwner, form]);
   useEffect(() => {
     if (!guided) return;
     if (previousRoute.current !== location.key) {
@@ -219,7 +248,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   const lineViewRevision = revision.current;
 
   useEffect(() => {
-    if (!guided || (requestedStep !== 'line' && requestedStep !== 'purchase') || busy || pending || journalError || autoLoadedLink.current === location.key) return;
+    if ((!guided && !workspace || guided && requestedStep !== 'line' && requestedStep !== 'purchase') || busy || pending || journalError || autoLoadedLink.current === location.key) return;
     const id = new URLSearchParams(location.search).get('line');
     if (!id || line?.lineId.toLowerCase() === id.toLowerCase()) return;
     setLineId(id); setLine(null); setLineInputError("");
@@ -235,7 +264,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       .catch(cause => { if (active && revision.current === readRevision) setError(messageOf(cause)); })
       .finally(() => { if (active) { if (revision.current === readRevision) autoLoadedLink.current = location.key; setLineLoading(false); } });
     return () => { active = false; setLineLoading(false); };
-  }, [guided, requestedStep, location.key, location.search, account, walletSnapshotRevision, busy, pending, journalError, client, readCandidateLine]);
+  }, [guided, workspace, requestedStep, location.key, location.search, account, walletSnapshotRevision, busy, pending, journalError, client, readCandidateLine]);
 
   // A sponsor can be watching while the agent purchases or repays elsewhere.
   // Keep these reads separate from transaction reviews and recovery journals.
@@ -794,6 +823,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     : snapshot?.sponsorAllowed === false ? (deployment.selfRegistration ? "Register this wallet above before funding." : "This wallet is not approved as a sponsor yet.")
     : !snapshotCurrent ? "Checking this wallet’s sponsor status…"
     : !providerAgreed ? "Read and acknowledge the repayment risk to continue." : null;
+  const setupBlocker = openBlocker === "Read and acknowledge the repayment risk to continue." ? null : openBlocker;
   const lineBlocker = !account ? "Connect your wallet to repay." : !correctNetwork ? `Switch to ${network} to continue.`
     : gatewayHeld ? "Resolve Gateway funding above before continuing." : pending ? "Check the previous transaction above before continuing." : journalError ? "Transaction recovery is unavailable in this browser. See the message above." : null;
   const cachedLineDiscovery = account ? discoveredLinesByAccount.current.get(account.toLowerCase()) : undefined;
@@ -1057,21 +1087,22 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase. Repayment needs separate test USDC from the repaying wallet. The line’s reserve cannot repay its own debt.</p>}
     {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
       <span id="funding-role-title">Which are you?</span>
-      <button type="button" aria-pressed={role === "sponsor"} onClick={() => setRole("sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
-      <button type="button" aria-pressed={role === "agent"} onClick={() => { if (role !== "agent") { invalidate(); setMode("manage"); setRole("agent"); } }} disabled={Boolean(busy)}>I am the agent</button>
+      <button type="button" aria-pressed={role === "sponsor"} onClick={() => workspace ? workspacePage("setup") : setRole("sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
+      <button type="button" aria-pressed={role === "agent"} onClick={() => { if (workspace) workspacePage("agent"); else if (role !== "agent") { invalidate(); setMode("manage"); setRole("agent"); } }} disabled={Boolean(busy)}>I am the agent</button>
     </div>}
     {service && account && <details className="fundingPanel participantInvite" aria-labelledby="agent-invite-title" hidden={role === "sponsor"}>
       <summary id="agent-invite-title">Ask a sponsor to fund your agent</summary>
       <p>Share this link with your sponsor. It includes your connected wallet as the agent; they review the address and choose the budget themselves.</p>
       <div className="fundingField"><label htmlFor="agent-funding-link">Your agent funding link</label><input id="agent-funding-link" readOnly value={`${window.location.origin}${guided ? "/start/wallet" : window.location.pathname}?agent=${account}${releaseQuery}`} /></div>
-      <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); setMode("open"); setRole("sponsor"); }}>Use my wallet as the agent</button>
+      <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); if (workspace) workspacePage("setup", account); else { setMode("open"); setRole("sponsor"); } }}>Use my wallet as the agent</button>
     </details>}
     <div className="fundingModes" aria-label="Funding actions" hidden={role === "agent"}>
-      <button type="button" aria-pressed={mode === "open"} onClick={() => { invalidate(); setMode("open"); }} disabled={Boolean(busy)}>Open a funding line</button>
-      <button type="button" aria-pressed={mode === "manage"} onClick={() => { invalidate(); setMode("manage"); }} disabled={Boolean(busy)}>Manage a line</button>
+      <button type="button" aria-pressed={mode === "open"} onClick={() => { if (workspace) workspacePage("setup"); else { invalidate(); setMode("open"); } }} disabled={Boolean(busy)}>Open a funding line</button>
+      <button type="button" aria-pressed={mode === "manage"} onClick={() => { if (workspace) workspacePage("line"); else { invalidate(); setMode("manage"); } }} disabled={Boolean(busy)}>Manage a line</button>
     </div>
 
     {feedbackPanel}
+    {draftWarning && <p className="fundingCallout" role="status">{draftWarning}</p>}
     {snapshotError && !snapshot && <p className="fundingCallout" role="alert">{snapshotError}</p>}
 
     {recoveryPanel}
@@ -1079,16 +1110,23 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     {gatewayPanel}
 
     <div className="participantTaskLayout"><div className="participantTask">
-    {mode === "open" ? <form className="fundingPanel" onSubmit={(event) => void review("open", event)}>
-      <div className="fundingPanelHead"><div><h2>Set the purchase budget</h2><p>One agent, one approved provider, one outstanding purchase at a time.</p></div>
+    {mode === "open" ? <form className="fundingPanel" onSubmit={(event) => {
+      if (!workspace || fundingReviewPage) { void review("open", event); return; }
+      event.preventDefault();
+      const issue = budgetIssue(form, snapshotCurrent && snapshot ? snapshot : undefined);
+      if (issue) { setError(issue); return; }
+      if (!validAgent(form.agent)) { setError('Enter a valid, nonzero agent wallet address.'); return; }
+      workspacePage('review');
+    }}>
+      <div className="fundingPanelHead"><div><h2 id="workspace-funding-title" tabIndex={-1}>{fundingReviewPage ? "Review your funding plan" : "Set the purchase budget"}</h2><p>One agent, one approved provider, one outstanding purchase at a time.</p></div>
         {snapshot && <span className="fundingBalance">{usdc(snapshot.balance)} USDC available</span>}
       </div>
       {snapshot && !snapshot.sponsorAllowed && <p className="fundingCallout">{deployment.selfRegistration ? <>Register this wallet before funding. No token approval or transfer is included. <button type="button" disabled={!canWrite || snapshot.openingsPaused} onClick={() => void review("register")}>Review sponsor registration</button></> : "This wallet is not approved as a sponsor yet. Ask the Shadow operator to approve its public address. You can still inspect a line under “Manage a line.”"}</p>}
       {snapshot?.openingsPaused && <p className="fundingCallout">New lines are currently paused. Existing repayment and eligible reclaim remain available.</p>}
-      {service ? <ServiceFundingFields prominentPermission={mainnet && deployment.selfRegistration} form={form} service={service} busy={Boolean(busy)} onChange={updateForm} /> : <>{agentFields}{budgetFields}{timeFields}</>}
-      {riskAcknowledgment}
-      <div className="fundingActions"><button className="fundingPrimary" type="submit" disabled={Boolean(busy) || openBlocker !== null} aria-describedby="funding-open-hint">Review funding line</button>
-        <small id="funding-open-hint">{openBlocker ?? (!snapshot && !snapshotError ? "Checking this wallet’s sponsor status…" : "Review first. Any USDC approval and funding transaction need separate wallet confirmations.")}</small></div>
+      {fundingReviewPage ? <><p>Two separate wallet actions may be needed: first the exact USDC allowance, then funding the line. An allowance alone does not move the reserve.</p><dl className="fundingDetails"><div><dt>Agent wallet</dt><dd><code>{form.agent}</code></dd></div><div><dt>Approved provider</dt><dd><code>{form.provider}</code></dd></div><div><dt>Maximum purchase</dt><dd>{form.providerPerSpendCap} USDC</dd></div><div><dt>Funding duration</dt><dd>{form.expiryDays} days</dd></div></dl><button type="button" disabled={Boolean(busy || prepared)} onClick={() => workspacePage('setup')}>Edit budget</button></> : service ? <ServiceFundingFields prominentPermission={mainnet && deployment.selfRegistration} form={form} service={service} busy={Boolean(busy)} onChange={updateForm} /> : <>{agentFields}{budgetFields}{timeFields}</>}
+      {(!workspace || fundingReviewPage) && riskAcknowledgment}
+      <div className="fundingActions"><button className="fundingPrimary" type="submit" disabled={Boolean(busy) || (workspace && !fundingReviewPage ? setupBlocker !== null : openBlocker !== null)} aria-describedby="funding-open-hint">{workspace && !fundingReviewPage ? "Review funding plan" : "Review funding transaction"}</button>
+        <small id="funding-open-hint">{workspace && !fundingReviewPage && openBlocker === "Read and acknowledge the repayment risk to continue." ? "Review the plan before either wallet step." : openBlocker ?? (!snapshot && !snapshotError ? "Checking this wallet’s sponsor status…" : "Review first. Any USDC approval and funding transaction need separate wallet confirmations.")}</small></div>
     </form> : managePanel}
 
     {purchasePanel}
