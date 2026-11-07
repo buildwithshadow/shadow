@@ -155,8 +155,8 @@
 .participantWorkspace > .fundingScope { font-size: 13px; max-width: 90ch; }
 .participantWorkspace .fundingModes { gap: 8px; }
 .participantWorkspace .fundingModes > span { color: var(--ink-soft); font-size: 13px; }
-.participantTaskLayout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(240px, 1fr); gap: 44px; align-items: start; margin-top: 28px; }
-.participantTask { min-width: 0; }
+.participantWorkspace .participantTaskLayout { display: grid; grid-template-columns: minmax(0, 1.65fr) minmax(240px, 1fr); gap: 44px; align-items: start; margin-top: 28px; }
+.participantWorkspace .participantTask { min-width: 0; }
 .participantWorkspace .fundingPanel { background: transparent; border: 0; border-radius: 0; padding: 0; }
 .participantWorkspace .participantInvite { padding: 14px 0; border-block: 1px solid var(--border-strong); margin: 20px 0; }
 .participantWorkspace .participantInvite summary { font-weight: 600; }
@@ -171,7 +171,7 @@
 .participantWorkspace .fundingMetrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .participantWorkspace .fundingHead p { font-size: 16px; }
 @media (max-width: 780px) {
-  .participantTaskLayout { grid-template-columns: minmax(0, 1fr); gap: 32px; }
+  .participantWorkspace .participantTaskLayout { grid-template-columns: minmax(0, 1fr); gap: 32px; }
   .participantSummary { padding: 24px 0 0; border-left: 0; border-top: 1px solid var(--border-strong); }
   .participantWorkspace .fundingHead { align-items: stretch; flex-direction: column; }
 }
