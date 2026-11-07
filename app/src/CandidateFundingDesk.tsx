@@ -1085,7 +1085,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       </div>
       {snapshot && !snapshot.sponsorAllowed && <p className="fundingCallout">{deployment.selfRegistration ? <>Register this wallet before funding. No token approval or transfer is included. <button type="button" disabled={!canWrite || snapshot.openingsPaused} onClick={() => void review("register")}>Review sponsor registration</button></> : "This wallet is not approved as a sponsor yet. Ask the Shadow operator to approve its public address. You can still inspect a line under “Manage a line.”"}</p>}
       {snapshot?.openingsPaused && <p className="fundingCallout">New lines are currently paused. Existing repayment and eligible reclaim remain available.</p>}
-      {service ? <ServiceFundingFields form={form} service={service} busy={Boolean(busy)} onChange={updateForm} /> : <>{agentFields}{budgetFields}{timeFields}</>}
+      {service ? <ServiceFundingFields prominentPermission={mainnet && deployment.selfRegistration} form={form} service={service} busy={Boolean(busy)} onChange={updateForm} /> : <>{agentFields}{budgetFields}{timeFields}</>}
       {riskAcknowledgment}
       <div className="fundingActions"><button className="fundingPrimary" type="submit" disabled={Boolean(busy) || openBlocker !== null} aria-describedby="funding-open-hint">Review funding line</button>
         <small id="funding-open-hint">{openBlocker ?? (!snapshot && !snapshotError ? "Checking this wallet’s sponsor status…" : "Review first. Any USDC approval and funding transaction need separate wallet confirmations.")}</small></div>
