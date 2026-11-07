@@ -28,13 +28,13 @@ function fixture(status=2n) {
   const client: any = {getBlock:vi.fn(async()=>({number:123n,timestamp:2000000000n})),readContract:vi.fn(async({functionName}:any)=>functionName==='getLine'?{state:1n}:status)};
   return {engine,client,digest,delivered,archived,replaceSaved:(record:any)=>{saved=record;}};
 }
-function Host({client, loadedLine = null, lineId = '', onDeliveryChecked, profile = deployment}: {profile?:any; client:any; loadedLine?:any; lineId?:string; onDeliveryChecked?:(check:any)=>void}) {
+function Host({client, loadedLine = null, lineId = '', onDeliveryChecked, profile = deployment, lineSelectionManaged = false}: {lineSelectionManaged?: boolean; profile?:any; client:any; loadedLine?:any; lineId?:string; onDeliveryChecked?:(check:any)=>void}) {
   const [busy,setBusy]=useState('');
   return <MemoryRouter initialEntries={['/start/purchase']}>
     <Link to="/other">Leave funding</Link><Link to="/start/purchase">Return to purchase</Link>
     <Routes><Route path="/other" element={<p>Other page</p>}/><Route path="/start/purchase" element={<PublicPurchase
       account={account} correctNetwork deployment={profile} service={service} client={client} busy={busy} setBusy={setBusy}
-      fundingPending={false} lineId={lineId} loadedLine={loadedLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}} onDeliveryChecked={onDeliveryChecked}/>}/></Routes>
+      lineSelectionManaged={lineSelectionManaged} fundingPending={false} lineId={lineId} loadedLine={loadedLine} onLineIdChange={()=>{}} onPurchaseChanged={async()=>{}} onDeliveryChecked={onDeliveryChecked}/>}/></Routes>
   </MemoryRouter>;
 }
 beforeEach(()=>{
@@ -376,4 +376,17 @@ test('settled and earlier mainnet receipt recovery use their matching purchase e
   await screen.findByText(`original report ${counter}`);
   expect(h.guarded).toHaveBeenCalledTimes(1);
   expect(f.engine.submit).not.toHaveBeenCalled();
+});
+
+
+test('workspace owns line selection while purchase review waits for a selected line', async () => {
+  const f = fixture();
+  f.replaceSaved(null);
+  render(<Host client={f.client} lineSelectionManaged />);
+  expect(screen.queryByLabelText('Funding line ID')).toBeNull();
+  expect(screen.getByText('Choose a funding line above')).toBeTruthy();
+  const review = screen.getByRole('button', { name: 'Review service purchase' }) as HTMLButtonElement;
+  expect(review.disabled).toBe(true);
+  fireEvent.click(review);
+  expect(f.engine.prepare).not.toHaveBeenCalled();
 });

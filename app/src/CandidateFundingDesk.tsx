@@ -90,7 +90,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   const [role, setRole] = useState<"sponsor" | "agent" | null>(() => {
     const params = new URLSearchParams(window.location.search);
     return !service ? null : params.has("agent") ? "sponsor" : params.has("line") ? "agent"
-      : params.get("role") === "agent" ? "agent" : params.get("role") === "sponsor" ? "sponsor" : null;
+      : params.get("role") === "agent" ? "agent" : params.get("role") === "sponsor" ? "sponsor" : mainnet && deployment.selfRegistration ? "sponsor" : null;
   });
   const [account, setAccount] = useState<Address | null>(null);
   const [chainId, setChainId] = useState<number | null>(null);
@@ -931,7 +931,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       </div>}
     </section>;
   const purchasePanel = service && <div className="fundingSlot" ref={purchaseSlot} hidden={guided ? journeyStep !== 'purchase' : role === "sponsor"}><PublicPurchase active={!guided || journeyStep === 'purchase'} account={account} correctNetwork={correctNetwork} deployment={deployment} service={service}
-      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} onDeliveryChecked={deliveryChecked} lineId={lineId} onLineIdChange={updateLineId} loadedLine={line} /></div>;
+      client={client} busy={busy} setBusy={setBusy} fundingPending={Boolean(pending || journalError || gatewayHeld)} onPurchaseChanged={refreshPurchaseLine} onDeliveryChecked={deliveryChecked} lineId={lineId} onLineIdChange={updateLineId} loadedLine={line} lineSelectionManaged={mainnet && deployment.selfRegistration} /></div>;
   const transactionDialog = <dialog ref={dialog} className="fundingDialog" role="alertdialog" aria-labelledby="funding-review-title" aria-describedby="funding-review-description" tabIndex={-1}
       onCancel={(event) => { if (submitting.current) event.preventDefault(); else setPrepared(null); }}
       onKeyDown={(event) => {
@@ -1034,11 +1034,11 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     {gatewayPanel}
     {transactionDialog}
   </FundingJourney>;
-  return <div className="routePage fundingDesk">
+  return <div className={`routePage fundingDesk${mainnet && deployment.selfRegistration ? " participantWorkspace" : ""}`}>
     {networkSelector}
     <header className="fundingHead">
       <div><p className="pageEyebrow">{mainnet ? deployment.selfRegistration ? "Arc mainnet · Self service agent funding" : "Arc mainnet · Controlled participant candidate" : guardedTestnet ? "Arc testnet · Guarded funding rehearsal" : service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
-        <h1>{service ? <>Fund an agent.<br />Keep the limits.</> : "Earlier candidate"}</h1>
+        <h1>{service ? <>{mainnet && deployment.selfRegistration ? role === "agent" ? "Use your funding line" : mode === "manage" ? "Manage your funding line" : "Fund an agent" : <>Fund an agent.<br />Keep the limits.</>}</> : "Earlier candidate"}</h1>
         <p>{service ? "Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet." : <>Shadow’s earlier testnet contract. Approved sponsors can open lines here and manage existing ones. To fund an agent without operator approval and buy a service, use <Link to="/start">Fund an agent</Link>.</>}</p>
       </div>
       {walletControls}
@@ -1054,20 +1054,18 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
       </div>}
     </div>}
 
-    <p className="fundingScope">{mainnet ? deployment.selfRegistration ? `Register your sponsor wallet, fund a line for yourself or another agent, and approve your budget. The current release allows up to ${usdc(deployment.maxReserve!)} USDC reserve and ${usdc(deployment.maxLineSpend!)} USDC total purchases per line. New activity may be paused; repayment and eligible reclaim remain available.` : "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : guardedTestnet ? "Test USDC only. This guarded rehearsal is limited to admitted sponsors, a 0.10 test USDC reserve and 0.005 test USDC total purchases per line. Repayment is bound to the exact purchase reviewed. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
-    {mainnet && <p className="fundingScope">This contract has not undergone an independent human security audit. Automated reviews and tests have been completed, but do not guarantee security. Repayment is unsecured: the sponsor bears the risk of unpaid spent principal.</p>}
     {service && !mainnet && <p className="fundingScope">Need test USDC? <a href="https://faucet.circle.com" target="_blank" rel="noreferrer">Open Circle’s faucet</a> and choose Arc testnet. The sponsor needs funds for its budget and gas; the agent needs gas to submit a purchase. Repayment needs separate test USDC from the repaying wallet. The line’s reserve cannot repay its own debt.</p>}
     {service && <div className="fundingModes" role="group" aria-labelledby="funding-role-title">
       <span id="funding-role-title">Which are you?</span>
-      <button type="button" aria-pressed={role === "sponsor"} onClick={() => setRole(role === "sponsor" ? null : "sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
-      <button type="button" aria-pressed={role === "agent"} onClick={() => { if (role === "agent") setRole(null); else { invalidate(); setMode("manage"); setRole("agent"); } }} disabled={Boolean(busy)}>I am the agent</button>
+      <button type="button" aria-pressed={role === "sponsor"} onClick={() => setRole("sponsor")} disabled={Boolean(busy)}>I am sponsoring</button>
+      <button type="button" aria-pressed={role === "agent"} onClick={() => { if (role !== "agent") { invalidate(); setMode("manage"); setRole("agent"); } }} disabled={Boolean(busy)}>I am the agent</button>
     </div>}
-    {service && account && <section className="fundingPanel" aria-labelledby="agent-invite-title" hidden={role === "sponsor"}>
-      <h2 id="agent-invite-title">Ask a sponsor to fund your agent</h2>
+    {service && account && <details className="fundingPanel participantInvite" aria-labelledby="agent-invite-title" hidden={role === "sponsor"}>
+      <summary id="agent-invite-title">Ask a sponsor to fund your agent</summary>
       <p>Share this link with your sponsor. It includes your connected wallet as the agent; they review the address and choose the budget themselves.</p>
       <div className="fundingField"><label htmlFor="agent-funding-link">Your agent funding link</label><input id="agent-funding-link" readOnly value={`${window.location.origin}${guided ? "/start/wallet" : window.location.pathname}?agent=${account}${releaseQuery}`} /></div>
-      <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); setMode("open"); setRole(null); }}>Use my wallet as the agent</button>
-    </section>}
+      <button type="button" disabled={Boolean(busy)} onClick={() => { invalidate(); setForm(previous => ({ ...previous, agent: account })); setMode("open"); setRole("sponsor"); }}>Use my wallet as the agent</button>
+    </details>}
     <div className="fundingModes" aria-label="Funding actions" hidden={role === "agent"}>
       <button type="button" aria-pressed={mode === "open"} onClick={() => { invalidate(); setMode("open"); }} disabled={Boolean(busy)}>Open a funding line</button>
       <button type="button" aria-pressed={mode === "manage"} onClick={() => { invalidate(); setMode("manage"); }} disabled={Boolean(busy)}>Manage a line</button>
@@ -1080,6 +1078,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
 
     {gatewayPanel}
 
+    <div className="participantTaskLayout"><div className="participantTask">
     {mode === "open" ? <form className="fundingPanel" onSubmit={(event) => void review("open", event)}>
       <div className="fundingPanelHead"><div><h2>Set the purchase budget</h2><p>One agent, one approved provider, one outstanding purchase at a time.</p></div>
         {snapshot && <span className="fundingBalance">{usdc(snapshot.balance)} USDC available</span>}
@@ -1093,6 +1092,15 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     </form> : managePanel}
 
     {purchasePanel}
+    </div>{mainnet && deployment.selfRegistration && <aside className="participantSummary" aria-labelledby="participant-summary-title">
+      <h2 id="participant-summary-title">{mode === "open" ? "Your funding plan" : "What these amounts mean"}</h2>
+      {mode === "open" ? <dl><div><dt>Set aside</dt><dd>{form.reserve} USDC</dd></div><div><dt>Lifetime spending permission</dt><dd>{form.lineSpendCap} USDC</dd></div><div><dt>One report</dt><dd>{service ? usdc(BigInt(service.principal)) : "—"} USDC</dd></div><div><dt>Repayment window</dt><dd>Up to {form.repaymentHours} hours</dd></div></dl> : <dl><div><dt>Reserve</dt><dd>Funds held in the line</dd></div><div><dt>Debt</dt><dd>Spent funds still owed</dd></div><div><dt>Lifetime permission</dt><dd>Total spending still allowed</dd></div></dl>}
+      <p><strong>Repayment depends on the agent operator.</strong> Unpaid spent funds cannot be reclaimed. Payment does not guarantee service delivery.</p><p>Repayment restores reserve. It does not reset lifetime spending permission.</p>
+    </aside>}</div>
+    <details className="participantReleaseDetails"><summary>Funding limits and security</summary>
+    <p className="fundingScope">{mainnet ? deployment.selfRegistration ? `Register your sponsor wallet, fund a line for yourself or another agent, and approve your budget. The current release allows up to ${usdc(deployment.maxReserve!)} USDC reserve and ${usdc(deployment.maxLineSpend!)} USDC total purchases per line. New activity may be paused; repayment and eligible reclaim remain available.` : "Real USDC on Arc mainnet. This controlled candidate is limited to admitted sponsors, 0.10 USDC reserve and 0.005 USDC total purchases per line. Funding and purchases may be paused; repayment and eligible reclaim remain available." : guardedTestnet ? "Test USDC only. This guarded rehearsal is limited to admitted sponsors, a 0.10 test USDC reserve and 0.005 test USDC total purchases per line. Repayment is bound to the exact purchase reviewed. Funding and purchases may be paused; repayment and eligible reclaim remain available." : service ? "Use test USDC to fund an agent and buy a service. Register and approve your own budget from a browser wallet; no operator enrollment is needed. Testnet gas is paid by each wallet." : "Test USDC only. Approved sponsors can fund lines here. Circle smart wallets can be the agent; funding and repayment here use a browser wallet."}</p>
+    {mainnet && <p className="fundingScope">This contract has not undergone an independent human security audit. Automated reviews and tests have been completed, but do not guarantee security. Repayment is unsecured: the sponsor bears the risk of unpaid spent principal.</p>}
+    </details>
     <footer className="fundingFoot">{mainnetRelease && <p>{busy || prepared ? <span>Finish the current wallet action before changing releases.</span> : <Link className="fundingReleaseLink" to={mainnetRelease === "settled" ? "/mainnet?deployment=legacy" : "/mainnet"}>{mainnetRelease === "settled" ? "Manage earlier mainnet lines" : "Open the current mainnet release"}</Link>}</p>}{service && !mainnet && <p><Link to="/funding">Manage a line on the earlier candidate</Link></p>}<p>Contract: <a href={`${explorer}/address/${CANDIDATE_FUNDING.address}`} target="_blank" rel="noreferrer">{compact(CANDIDATE_FUNDING.address)}</a> · {network}</p>
       <p>Looking for the earlier integration? <Link to="/builders/v2">Open Float V2 tools</Link>.</p></footer>
 

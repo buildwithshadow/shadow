@@ -53,6 +53,8 @@ Give each onboarding stage its own route and one primary action. Completing a st
 
 ## Components
 
+The participant workspace uses the approved task and summary composition. Keep sponsor setup and agent purchasing distinct. Place the funding plan beside the active task on desktop and below it on narrow screens. One visible control owns funding line selection; purchase review uses that selected line. Use compact role navigation and task headings rather than a marketing hero inside the workspace. Show available reserve, debt and remaining lifetime spending permission as distinct values.
+
 The participant journey separates wallet connection, sponsor registration, agent selection, budget settings, funding review and line management. Registration labels must describe the actual sponsor transaction. Registered sponsors can continue without registering again. Agent users can open an existing line without traversing sponsor setup.
 
 Keep one wallet control per screen. Place network and registration prerequisites before funding fields. Give disconnected, loading, paused, pending and failed states a specific explanation and next action. Show repayment terms, provider identity and sponsor risk at the funding decision.
