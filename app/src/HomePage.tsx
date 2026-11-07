@@ -40,14 +40,14 @@ export function HomePage({ mainnetAvailable = false }: { mainnetAvailable?: bool
           when the sponsor closes the line.
         </p>
         <div className="homeActions">
-          <Link className="homeCta" to={fundingUrl}>
+          <Link className="homeCta" to={`${fundingUrl}?role=sponsor`}>
             Fund an agent
           </Link>
           <Link className="homeAgentLink" to={`${fundingUrl}?role=agent`}>
             I run an agent
           </Link>
         </div>
-        <p className="homeNote">{network === "mainnet" ? "Capped public release: up to 0.10 USDC reserve and 0.005 USDC total purchases per line. No independent human security audit yet. Sponsors bear unpaid repayment risk." : "Practice the full flow with test USDC before using real funds. Testnet tokens have no monetary value."}</p>
+        <p className="homeNote">{network === "mainnet" ? `Capped public release: up to ${formatUnits(PUBLIC_MAINNET.maxReserve!, 6)} USDC reserve and ${formatUnits(PUBLIC_MAINNET.maxLineSpend!, 6)} USDC total purchases per line. No independent human security audit yet. Sponsors bear unpaid repayment risk.` : "Practice the full flow with test USDC before using real funds. Testnet tokens have no monetary value."}</p>
       </section>
 
       <section
