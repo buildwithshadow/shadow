@@ -139,3 +139,31 @@ test('shared mainnet line shows the onchain overview without a load click or wal
   expect(h.line.mock.calls.some(call=>call[1]===lineId)).toBe(true);
   expect((window.ethereum!.request as any).mock.calls.every(([r]:any)=>['eth_accounts','eth_chainId'].includes(r.method))).toBe(true);
 });
+
+test('edited invitation agent remains selected after reviewing and reloading the plan',async()=>{
+  mount(`/mainnet?deployment=settled&agent=${account}`);
+  await screen.findByText('Arc mainnet connected');
+  const chosen='0x4444444444444444444444444444444444444444';
+  fireEvent.change(screen.getByLabelText('Agent wallet address'),{target:{value:chosen}});
+  fireEvent.click(screen.getByRole('button',{name:'Review funding plan'}));
+  await screen.findByRole('heading',{name:'Review your funding plan'});
+  const path=screen.getByTestId('path').textContent!;
+  expect(path).toContain(`agent=${chosen}`);
+  cleanup(); mount(path);
+  await screen.findByText('Arc mainnet connected');
+  expect(screen.getByText(chosen)).toBeTruthy();
+  fireEvent.click(screen.getByRole('button',{name:'Edit budget'}));
+  await screen.findByLabelText('Agent wallet address');
+  expect((screen.getByLabelText('Agent wallet address') as HTMLInputElement).value).toBe(chosen);
+});
+
+test('refreshing an unfinished invitation budget preserves its edited agent',async()=>{
+  const path=`/mainnet?deployment=settled&agent=${account}`;
+  mount(path); await screen.findByText('Arc mainnet connected');
+  const chosen='0x4444444444444444444444444444444444444444';
+  fireEvent.change(screen.getByLabelText('Agent wallet address'),{target:{value:chosen}});
+  await waitFor(()=>expect(window.sessionStorage.getItem(`shadow:funding-draft:5042:${mainnet.address.toLowerCase()}:${account}`)).toContain(chosen));
+  cleanup(); mount(path);
+  await screen.findByText('Arc mainnet connected');
+  await waitFor(()=>expect((screen.getByLabelText('Agent wallet address') as HTMLInputElement).value).toBe(chosen));
+});

@@ -72,8 +72,9 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     invalidate(); setProviderAgreed(false);
     const query = new URLSearchParams(location.search);
     query.delete('step'); query.delete('role'); query.delete('view');
-    if (selectedAgent) query.set('agent', selectedAgent);
     if (next === 'setup' || next === 'review') {
+      const agent = selectedAgent ?? form.agent;
+      if (validAgent(agent)) query.set('agent', agent.trim()); else query.delete('agent');
       query.delete('line'); query.set('role','sponsor');
       if (next === 'review') query.set('step','review');
     } else { query.set('role', next === 'agent' ? 'agent' : 'sponsor'); query.set('view','line'); }
@@ -218,14 +219,14 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
   useEffect(() => {
     if ((!guided && !workspace) || !draftKey) return;
     setProviderAgreed(false);
-    const restored = restoreWalletDraft(() => window.sessionStorage.getItem(draftKey), formDefaults, new URLSearchParams(location.search).get('agent'));
+    const restored = restoreWalletDraft(() => window.sessionStorage.getItem(draftKey), formDefaults, new URLSearchParams(location.search).get('agent'), workspace);
     setForm(restored.form);
     setDraftOwner(restored.persisted ? draftKey : null);
     setDraftWarning(restored.persisted ? "" : "This browser cannot save your draft. Keep this page open until you finish.");
   }, [guided, workspace, draftKey, formDefaults]);
   useEffect(() => {
     if ((!guided && !workspace) || !draftKey || draftOwner !== draftKey) return;
-    try { window.sessionStorage.setItem(draftKey, writeFundingDraft(form)); }
+    try { window.sessionStorage.setItem(draftKey, writeFundingDraft(form, workspace ? new URLSearchParams(location.search).get('agent') : undefined)); }
     catch { setDraftWarning("Your latest edits could not be saved. Keep this page open until you finish."); }
   }, [guided, workspace, draftKey, draftOwner, form]);
   useEffect(() => {

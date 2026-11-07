@@ -146,9 +146,10 @@ export function readFundingDraft(
     return defaults;
   }
 }
-export function writeFundingDraft(form: CandidateOpenInput): string {
+export function writeFundingDraft(form: CandidateOpenInput, invitation?: string | null): string {
   return JSON.stringify({
     version: 1,
+    ...(invitation !== undefined ? { invitation } : {}),
     form: Object.fromEntries(
       draftKeys.map((key) => [key, form[key].slice(0, 100)]),
     ),
@@ -158,16 +159,22 @@ export function restoreWalletDraft(
   read: () => string | null,
   defaults: CandidateOpenInput,
   invitation: string | null,
+  preserveMatchingInvitation = false,
 ) {
   let form: CandidateOpenInput;
   let persisted = true;
+  let sameInvitation = false;
   try {
-    form = readFundingDraft(read(), { ...defaults });
+    const raw = read();
+    form = readFundingDraft(raw, { ...defaults });
+    if (preserveMatchingInvitation && raw && raw.length <= 4096) {
+      try { const saved = JSON.parse(raw); sameInvitation = saved.version === 1 && typeof saved.form?.agent === 'string' && saved.form.agent.length <= 100 && Object.hasOwn(saved, 'invitation') && saved.invitation === invitation; } catch { /* Invalid drafts use defaults. */ }
+    }
   } catch {
     form = { ...defaults };
     persisted = false;
   }
-  if (invitation !== null) form.agent = invitation;
+  if (invitation !== null && !sameInvitation) form.agent = invitation;
   return { form, persisted };
 }
 
