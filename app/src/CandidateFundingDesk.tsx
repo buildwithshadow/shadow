@@ -1039,7 +1039,7 @@ export function CandidateFundingDesk({ deployment = LEGACY_FUNDING, service, mai
     <header className="fundingHead">
       <div><p className="pageEyebrow">{mainnet ? deployment.selfRegistration ? "Arc mainnet · Self service agent funding" : "Arc mainnet · Controlled participant candidate" : guardedTestnet ? "Arc testnet · Guarded funding rehearsal" : service ? "Arc testnet · Agent funding" : "Arc testnet · Earlier candidate"}</p>
         <h1>{service ? <>{mainnet && deployment.selfRegistration ? role === "agent" ? "Use your funding line" : mode === "manage" ? "Manage your funding line" : "Fund an agent" : <>Fund an agent.<br />Keep the limits.</>}</> : "Earlier candidate"}</h1>
-        <p>{service ? "Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet." : <>Shadow’s earlier testnet contract. Approved sponsors can open lines here and manage existing ones. To fund an agent without operator approval and buy a service, use <Link to="/start">Fund an agent</Link>.</>}</p>
+        <p>{service ? role === "agent" ? "Choose your funded line to buy a service, recover a report or repay a purchase." : "Set aside USDC for an agent’s purchases. Track what it owes and reclaim eligible funds from your own wallet." : <>Shadow’s earlier testnet contract. Approved sponsors can open lines here and manage existing ones. To fund an agent without operator approval and buy a service, use <Link to="/start">Fund an agent</Link>.</>}</p>
       </div>
       {walletControls}
     </header>

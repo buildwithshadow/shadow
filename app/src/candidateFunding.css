@@ -187,3 +187,9 @@
 .participantWorkspace .fundingModes button[aria-pressed="true"] { border-bottom-color: var(--accent); background: transparent; }
 .participantWorkspace .participantReleaseDetails { margin: 32px 0 0; }
 .participantWorkspace .fundingPanel + .fundingSlot { margin-top: 32px; }
+.candidateShell:has(.participantWorkspace) > .nav .navActions { display: none; }
+@media (max-width: 780px) {
+  .candidateShell:has(.participantWorkspace) > .nav { padding: 12px 16px; gap: 12px; }
+  .candidateShell:has(.participantWorkspace) > .nav .navLinks { display: flex; width: auto; flex: 0 1 auto; gap: 12px; padding: 0; }
+  .candidateShell:has(.participantWorkspace) > .nav .navLink { font-size: 12px; }
+}
