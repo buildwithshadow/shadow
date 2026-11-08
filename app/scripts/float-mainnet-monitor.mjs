@@ -16,7 +16,7 @@ import {
   stateName,
 } from "./float-mainnet-cli.mjs";
 import { readIndexFile } from "./float-mainnet-indexer.mjs";
-import { isEntrypoint } from "./float-mainnet-preflight.mjs";
+import { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
 import { readExecutionTransaction } from "./float-mainnet-monitor-execution-transaction.mjs";
 import { readDirectExecutionAttribution } from "./float-mainnet-monitor-direct-execution.mjs";
 import { readCircleExecutionAttribution } from "./float-mainnet-monitor-circle-execution.mjs";

@@ -35,6 +35,11 @@ import { createFileProviderStore } from "./file-store.mjs";
 
 const KEY = "FLOAT_PROVIDER_PRIVATE_KEY";
 const MAX_BODY_BYTES = 65_536;
+function createNodeProviderHttpServer(options, listener, connectionLimit) {
+  const server = createServer(options, listener);
+  server.maxConnections = connectionLimit;
+  return server;
+}
 
 class HttpError extends Error {
   constructor(message, status = 400) {
@@ -90,7 +95,8 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null, serverFactory = createNodeProviderHttpServer }) {
+  if (typeof serverFactory !== "function") throw new Error("serverFactory must be a function");
   if (admissionGuard !== null && typeof admissionGuard !== "function") throw new Error("admissionGuard must be a function");
   const assertAdmission = async () => {
     if (!admissionGuard) return;
@@ -533,7 +539,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     return remote.toLowerCase();
   }
-  const server = createServer({ maxHeaderSize: 8192, requestTimeout: 15000, connectionsCheckingInterval: 1000, headersTimeout: 10000, keepAliveTimeout: 5000 }, async (request, response) => {
+  const server = serverFactory({ maxHeaderSize: 8192, requestTimeout: 15000, connectionsCheckingInterval: 1000, headersTimeout: 10000, keepAliveTimeout: 5000 }, async (request, response) => {
     response.setHeader('cache-control', 'no-store');
     response.setHeader('x-content-type-options', 'nosniff');
     if (publicOrigin) {
@@ -623,9 +629,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       const remaining = (callerActive.get(activeKey) || 1) - 1;
       if (remaining) callerActive.set(activeKey, remaining); else callerActive.delete(activeKey);
     }
-  });
-  // Service slots plus both eight-connection body-ingress pools.
-  server.maxConnections = Math.max(32, maxConcurrent + 16);
+  }, Math.max(32, maxConcurrent + 16));
   return server;
 }
 

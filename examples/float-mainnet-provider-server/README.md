@@ -310,3 +310,21 @@ stale scan. Paid result retrieval does not acquire new purchase capacity.
 This interface is preparation for asynchronous persistence. It does not deploy a
 Cloudflare provider, configure storage capacity reservations or replace the
 monitoring service. Those integrations require separate runtime validation.
+
+### HTTP runtime compatibility
+
+The optional `serverFactory(options, listener, connectionLimit)` lets an embedded
+runtime construct its HTTP server without changing protocol handling. The default
+Node factory still configures the original connection ceiling and HTTP options.
+`createCompatibleProviderHttpServer` in `compatible-http.mjs` targets runtimes
+that reject Node connection options: it bounds aggregate header bytes before
+protocol dispatch and bounds active dispatched requests, returning capacity when
+a response finishes or closes. The provider's body deadlines, ingress pools,
+normal admission and paid recovery lanes remain in the common listener.
+
+This factory is not a complete public Worker. Cloudflare manages TCP connections;
+the compatible factory bounds dispatched requests rather than idle TCP sockets.
+An embedding Worker must route each identity through one coordinator, establish
+trusted caller identity, preserve independent storage and monitoring, and validate
+its own platform limits before accepting payments. Do not use its request bound
+as evidence that Node socket behavior is identical on Workers.
