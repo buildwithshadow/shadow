@@ -120,6 +120,7 @@ on:
       - "app/scripts/rpc-read-queue*"
       - "app/scripts/rpc-read-transport*"
       - "examples/float-mainnet-provider-server/**"
+      - "app/scripts/provider-file-store.test.mjs"
       - "app/scripts/shadow-url-migration.test.mjs"
       - "app/scripts/circle-candidate-probe.test.mjs"
       - "app/scripts/circle-payable-intent.test.mjs"
@@ -181,7 +182,7 @@ jobs:
       - name: Test settled Circle repayment receipt attribution
         run: node --test app/scripts/circle-agent-guarded-execution.test.mjs
       - name: Test provider store rollback and crash holds
-        run: node --test app/scripts/provider-store-witness.test.mjs
+        run: node --test app/scripts/provider-store-witness.test.mjs app/scripts/provider-file-store.test.mjs
       - name: Test public testnet observer failure and recovery
         run: node --test app/scripts/public-testnet-observer.test.mjs app/scripts/public-testnet-observer-alerts.test.mjs
       - name: Test candidate funding and browser transaction recovery
