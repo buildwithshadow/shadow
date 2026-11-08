@@ -1,7 +1,11 @@
+import { redactUrl, scrubUrls, errorMessage, stableStringify, sameJson } from "./float-mainnet-format.mjs";
+export { redactUrl, scrubUrls, errorMessage, stableStringify, sameJson } from "./float-mainnet-format.mjs";
+import { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
+export { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
 import { execFileSync } from "node:child_process";
 import { arcRpcUrlForChain } from "../arcTestnetNetwork.mjs";
 import { createHash } from "node:crypto";
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -184,17 +188,6 @@ function validateLimits(prefix, value, maxima, errors) {
   }
 }
 
-export function redactUrl(value) {
-  if (!URL.canParse(value)) return "[unparseable url]";
-  const url = new URL(value);
-  const hidden = url.username || url.password || url.search || url.hash || url.pathname !== "/";
-  return `${url.protocol}//${url.host}${hidden ? "/[redacted]" : ""}`;
-}
-
-export function scrubUrls(text) {
-  return String(text).replace(/https?:\/\/[^\s"'<>]+/g, (match) => redactUrl(match));
-}
-
 export function createRpc(url, label) {
   const name = `${label} ${redactUrl(url)}`;
   const client = createPublicClient({ transport: http(url, { timeout: 20_000, retryCount: 0 }) });
@@ -219,11 +212,6 @@ export async function readOptional(rpc, label, request) {
     if (missing) return { exposed: false, value: null };
     throw error;
   }
-}
-
-export function errorMessage(error) {
-  const message = error && typeof error === "object" ? error.shortMessage || error.message || error.details : error;
-  return scrubUrls(message || "unknown error");
 }
 
 export function loadArtifact() {
@@ -275,30 +263,6 @@ export function readSourceState(artifact) {
 export function pinnedLineageMismatches(files) {
   const paths = new Set([...Object.keys(files), ...Object.keys(PINNED_SOURCE_BLOBS)]);
   return [...paths].sort().filter((path) => files[path]?.gitBlob !== PINNED_SOURCE_BLOBS[path]);
-}
-
-// import.meta.main exists from Node 24.2; older Node leaves it undefined. Node
-// resolves symlinks in the main module's URL, so compare real paths.
-export function isEntrypoint(meta, argv = process.argv) {
-  if (meta.main !== undefined) return meta.main;
-  return argv[1] !== undefined && existsSync(argv[1]) && realpathSync(argv[1]) === realpathSync(fileURLToPath(meta.url));
-}
-
-export function stableStringify(value) {
-  return JSON.stringify(sortKeys(value), null, 2);
-}
-
-function sortKeys(value) {
-  if (typeof value === "bigint") return value.toString();
-  if (Array.isArray(value)) return value.map(sortKeys);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, sortKeys(value[key])]));
-  }
-  return value;
-}
-
-export function sameJson(a, b) {
-  return stableStringify(a) === stableStringify(b);
 }
 
 async function observeRpc(rpc, config) {

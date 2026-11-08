@@ -1,11 +1,11 @@
 import { createServer } from "node:http";
 import { isIP } from "node:net";
-import { createRequire } from "node:module";
 import { inspect, parseArgs } from "node:util";
 import { parseAddress, parseBytes32, parseUint, read } from "../../app/scripts/float-mainnet-cli.mjs";
 import { RECEIPT_STATUSES, connectCandidate, endpointHashFrom, readDeployment, walletFromEnv } from "../../app/scripts/float-mainnet-config.mjs";
 import { checkSignature, validateIntentFile } from "../../app/scripts/float-mainnet-intent.mjs";
-import { errorMessage, isEntrypoint, scrubUrls, stableStringify } from "../../app/scripts/float-mainnet-preflight.mjs";
+import { errorMessage, scrubUrls, stableStringify } from "../../app/scripts/float-mainnet-format.mjs";
+import { isEntrypoint } from "../../app/scripts/float-mainnet-entrypoint.mjs";
 import {
   ACCEPTANCE_KIND,
   DELIVERY_KIND,
@@ -16,6 +16,7 @@ import {
   deliverResult,
   requestIdHashOf,
   resultRefHashOf,
+  resultHashOf,
   validateReceiptFile,
 } from "../../app/scripts/float-mainnet-provider.mjs";
 
@@ -28,11 +29,6 @@ import {
 // holds. Everything is kept by digest in a store directory, so a retry, a
 // second request id or a restart gets the stored answer, not new work or a new
 // signature (README.md, "Limits", says when the service can run twice).
-
-// The example has no install of its own; keccak256 comes from the viem the kit uses.
-const { keccak256 } = createRequire(new URL("../../app/package.json", import.meta.url))("viem");
-
-import { configureProviderAdmission } from "../../app/scripts/float-mainnet-provider-monitor-guard.mjs";
 
 import { ProviderStoreHold } from "./store-witness.mjs";
 import { createFileProviderStore } from "./file-store.mjs";
@@ -413,7 +409,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       throw new HttpError(`the provider's stored service marker for digest ${digest} disagrees with its acceptance; the provider has to repair it`, 500);
     }
     if (delivered) {
-      if (typeof earlier?.result !== "string" || keccak256(Buffer.from(earlier.result, "base64")) !== delivered.typedData.message.resultHash.toLowerCase()) {
+      if (typeof earlier?.result !== "string" || resultHashOf(Buffer.from(earlier.result, "base64")) !== delivered.typedData.message.resultHash.toLowerCase()) {
         throw new HttpError(
           `the provider's stored result for digest ${digest} is missing or does not match its signed delivery; the provider has to restore it before the digest can be served`,
           500,
@@ -449,7 +445,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const deliveryAccount = store.witnessed ? { address: account.address, signTypedData: typed => { store.assertConsistent(); return account.signTypedData(typed); } } : account;
     const { delivery } = await deliverResult(connection, {
       acceptance,
-      resultHash: keccak256(Buffer.from(produced.result, "base64")),
+      resultHash: resultHashOf(Buffer.from(produced.result, "base64")),
       resultRef: produced.resultRef ?? undefined,
       account: deliveryAccount,
       transactionHash: verified.payment.providerPaid.transactionHash,
@@ -607,6 +603,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
 }
 
 async function main() {
+  const { configureProviderAdmission } = await import("../../app/scripts/float-mainnet-provider-monitor-guard.mjs");
   const { values } = parseArgs({ options: { manifest: { type: "string" }, "recovery-only": { type: "boolean", default: false }, provider: { type: "string" } }, strict: true, allowPositionals: false });
   const env = process.env;
   const recoveryOnly = values["recovery-only"];
