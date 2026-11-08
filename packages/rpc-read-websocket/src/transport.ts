@@ -318,6 +318,9 @@ export function createReadonlyTransport(options: TransportOptions): ReadonlyTran
    * hung connection plus any number of aborted requests retains nothing beyond the live (slot-bounded) ones.
    */
   const acquire = (signal: AbortSignal | undefined, release: () => void): Promise<SocketLike> => {
+    // CLOSING/CLOSED may precede the close event. Retire that socket and its
+    // outstanding reads before adoption can replace the live identity.
+    if (live && live.socket.readyState !== OPEN) drop(live.socket, 'connection-lost');
     if (live && live.socket.readyState === OPEN) return Promise.resolve(live.socket);
     if (!connecting) {
       connecting = true;

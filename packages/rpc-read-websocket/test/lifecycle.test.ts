@@ -248,3 +248,17 @@ test('the request deadline is per request and starts when it is sent', async () 
   assert.equal(timers.outstanding, 0);
   transport.close();
 });
+
+for(const state of [2,3])test(`a live socket in state ${state} is torn down before replacement without waiting for its close event`,async()=>{
+ const {transport,f,timers}=setup();
+ const lost=rejection(transport.request({method:'eth_getLogs',params:[{}]}));
+ await tick();const old=f.sockets[0];old.readyState=state;
+ const fresh=transport.request({method:'eth_chainId'});fresh.catch(()=>{});
+ try{
+  await tick();assert.equal(f.sockets.length,2);assert.equal(old.listenerCount(),0);assert.equal(transport.stats().pending,1);assert.equal(transport.stats().slots,1);
+  const error=await lost;assert.equal(error.reason,'connection-lost');assert.equal(error.sent,true);assert.equal(old.sent.length,1);
+  const next=f.sockets[1];assert.deepEqual(next.methods(),['eth_chainId']);old.serverClose();
+  next.reply(next.ids()[0],'0x13b2');assert.equal(await fresh,'0x13b2');assert.equal(timers.outstanding,0);
+ }finally{transport.close();timers.advance(30000);await lost;await fresh.catch(()=>{});}
+ assert.equal(old.listenerCount(),0);assert.equal(f.sockets[1].listenerCount(),0);
+});
