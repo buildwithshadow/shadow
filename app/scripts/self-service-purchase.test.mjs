@@ -34,7 +34,7 @@ const acceptanceTypes = {
     return { name, type };
   }),
 };
-function setup({mainnet=false,providerCode='0x',bindingVersion=2n,acceptanceResponses=[],onProgress=()=>{},wait=async()=>{}}={}) {
+function setup({mainnet=false,providerCode='0x',bindingVersion=2n,acceptanceResponses=[],onProgress=()=>{},wait=async()=>{},monotonicNow=()=>performance.now(),onAcceptanceRequest=()=>{}}={}) {
   const selectedConfig = mainnet ? {...config,chainId:5042,principal:'5000'} : config;
   const data = new Map();
   const acceptanceRequests = [];
@@ -96,6 +96,7 @@ function setup({mainnet=false,providerCode='0x',bindingVersion=2n,acceptanceResp
   const fetchImpl = async (url, request) => {
     assert(url.endsWith("/accept"));
     acceptanceRequests.push(request.body);
+    onAcceptanceRequest();
     if (acceptanceResponses.length) {
       const response = acceptanceResponses.shift();
       if (response) return response;
@@ -133,6 +134,7 @@ function setup({mainnet=false,providerCode='0x',bindingVersion=2n,acceptanceResp
       fetchImpl,
       onProgress,
       wait,
+      monotonicNow,
       withLock,
       random: () => new Uint8Array(32).fill(8),
     });
@@ -163,7 +165,7 @@ test("temporary provider readiness hold continues the same signed mainnet purcha
   assert.equal(h.acceptanceRequests[0], h.acceptanceRequests[1]);
   assert.equal(flow.load().intent.digest, prepared.intent.digest);
   assert.deepEqual(delays, [10000]);
-  assert.match(progress[0], /Waiting for provider readiness/);
+  assert.match(progress[0], /Waiting for provider checks/);
   assert.match(progress.at(-1), /separate purchase transaction/);
 });
 test("presentation errors cannot interrupt readiness continuation or manufacture an unknown payment", async () => {
@@ -177,17 +179,17 @@ test("presentation errors cannot interrupt readiness continuation or manufacture
 });
 test("persistent readiness holds stop within the wait budget without requesting a payment", async () => {
   const delays = [];
-  const h = setup({acceptanceResponses:Array.from({length:7},()=>new Response('',{status:503})),
+  const h = setup({acceptanceResponses:Array.from({length:19},()=>new Response('',{status:503})),
     wait:async milliseconds=>delays.push(milliseconds)});
   const flow = h.create(); await flow.prepare(lineId,'readiness-still-held');
   await assert.rejects(flow.submit(), /still temporarily unavailable/);
   assert.deepEqual(h.counts(), {signs:1,sends:0});
-  assert.equal(h.acceptanceRequests.length,7);
-  assert.equal(delays.reduce((sum,value)=>sum+value,0),60000);
+  assert.equal(h.acceptanceRequests.length,18);
+  assert.equal(delays.reduce((sum,value)=>sum+value,0),180000);
   assert.equal(flow.load().stage,'prepared');
 });
 test("provider cooldown beyond the wait budget is respected without a second request", async () => {
-  for (const retryAfter of ['120',new Date(Date.now()+120000).toUTCString()]) {
+  for (const retryAfter of ['240',new Date(Date.now()+240000).toUTCString()]) {
     const h = setup({acceptanceResponses:[new Response('',{status:503,headers:{'retry-after':retryAfter}})],
       wait:async()=>assert.fail('must not wait past the budget')});
     const flow=h.create();await flow.prepare(lineId,'readiness-cooldown');
@@ -468,4 +470,26 @@ test("settled mainnet pins its deployment and keeps legacy purchase caps isolate
     await assert.rejects(()=>flow.prepare(lineId,"undeployed"),/approved release/);
     assert.equal(signs,0);assert.equal(sends,0);
   }
+});
+
+test("a full monitor cycle longer than sixty seconds continues the identical signed purchase",async()=>{
+ const delays=[];const h=setup({mainnet:true,acceptanceResponses:Array.from({length:11},()=>new Response('',{status:503})),wait:async ms=>delays.push(ms)});
+ const flow=h.create();await flow.prepare(lineId,'readiness-full-monitor-cycle');await flow.submit();
+ assert.equal(h.acceptanceRequests.length,12);assert.equal(new Set(h.acceptanceRequests).size,1);assert.deepEqual(h.counts(),{signs:1,sends:1});assert.equal(delays.reduce((a,b)=>a+b,0),110000);
+});
+test("real elapsed provider time consumes the readiness budget without another request or payment",async()=>{
+ let clock=0;const h=setup({acceptanceResponses:[new Response('',{status:503})],monotonicNow:()=>clock,onAcceptanceRequest:()=>{clock=180001;},wait:async()=>assert.fail('expired wait must not run')});
+ const flow=h.create();await flow.prepare(lineId,'readiness-real-time-budget');await assert.rejects(flow.submit(),/still temporarily unavailable/);
+ assert.equal(h.acceptanceRequests.length,1);assert.deepEqual(h.counts(),{signs:1,sends:0});assert.equal(flow.load().stage,'prepared');
+});
+test("a receipt discovered after a long readiness wait prevents another request and transaction",async()=>{
+ let h,waited=0;h=setup({acceptanceResponses:Array.from({length:12},()=>new Response('',{status:503})),wait:async ms=>{waited+=ms;if(waited>=100000)h.paidStatus(2);}});
+ const flow=h.create();await flow.prepare(lineId,'readiness-long-wait-paid');await assert.rejects(flow.submit(),/recorded outcome/);
+ assert.equal(h.acceptanceRequests.length,10);assert.deepEqual(h.counts(),{signs:1,sends:0});
+});
+
+test("late provider success beyond the readiness deadline cannot request a payment",async()=>{
+ let clock=0;const h=setup({monotonicNow:()=>clock,onAcceptanceRequest:()=>{clock=180001;}});
+ const flow=h.create();await flow.prepare(lineId,'readiness-late-success');await assert.rejects(flow.submit(),/still temporarily unavailable/);
+ assert.equal(h.acceptanceRequests.length,1);assert.deepEqual(h.counts(),{signs:1,sends:0});assert.equal(flow.load().stage,'prepared');
 });

@@ -100,6 +100,7 @@ function createPurchase({
   storage,
   fetchImpl = fetch,
   onProgress = () => {},
+  monotonicNow = () => performance.now(),
   wait = (milliseconds) => new Promise(resolve => setTimeout(resolve, milliseconds)),
   withLock = async (key, work) => {
     assert(
@@ -277,9 +278,17 @@ function createPurchase({
     // Only a pre-payment 503 may wait and retry. Every retry uses the exact
     // original signed intent and request ID; no wallet transaction is replayed.
     const payload = serial(body);
+    const budgetMs = 180000;
+    const started = monotonicNow();
     let waited = 0;
+    const remaining = () => Math.max(0, budgetMs - Math.max(waited, monotonicNow() - started));
+    const unavailable = "The provider is still temporarily unavailable. This attempt requested no payment transaction. Keep the saved purchase and review it again when the provider is ready.";
     for (let attempt = 0; ; attempt++) {
-      if (beforeAcceptance) await beforeAcceptance();
+      if (beforeAcceptance) {
+        assert(remaining() > 0, unavailable);
+        await beforeAcceptance();
+        assert(remaining() > 0, unavailable);
+      }
       const response = await fetchImpl(
         `${config.providerUrl.replace(/\/$/, "")}${path}`,
         {
@@ -287,18 +296,21 @@ function createPurchase({
           headers: { "content-type": "application/json" },
           body: payload,
           redirect: "error",
-          signal: AbortSignal.timeout(20000),
+          signal: AbortSignal.timeout(beforeAcceptance ? Math.max(1,Math.floor(Math.min(20000,remaining()))) : 20000),
         },
       );
+      if (beforeAcceptance && remaining() <= 0) {
+        await response.body?.cancel();
+        assert(false, unavailable);
+      }
       if (beforeAcceptance && response.status === 503) {
         await response.body?.cancel();
         const retryAfter = response.headers.get("retry-after");
         const retryDate = retryAfter ? Date.parse(retryAfter) : NaN;
         const delay = Math.max(1000, retryAfter && /^\d+$/.test(retryAfter)
           ? Number(retryAfter) * 1000 : Number.isFinite(retryDate) ? retryDate - Date.now() : 10000);
-        assert(attempt < 6 && waited + delay <= 60000,
-          "The provider is still temporarily unavailable. This attempt requested no payment transaction. Keep the saved purchase and review it again when the provider is ready.");
-        progress("Waiting for provider readiness. No payment transaction has been requested. Continuing the same purchase shortly…");
+        assert(attempt < 18 && delay <= remaining(), unavailable);
+        progress("Waiting for provider checks. This can take up to three minutes. No payment transaction has been requested. Continuing the same purchase…");
         await wait(delay);
         waited += delay;
         continue;
