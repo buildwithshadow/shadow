@@ -488,3 +488,116 @@ test('settled monitor startup requires matching explicit manifest and baseline m
     assert.equal(loadContext({baselinePath,manifestPath,stateDir:f.context.stateDir}).baseline.accountingModel,'settled-v1');
   } finally {f.cleanup();}
 });
+
+function durableFixture() {
+  const f = stateFixture();
+  const records = new Map();
+  const backend = {
+    has: key => records.has(key),
+    read: key => { if (!records.has(key)) throw Error("missing"); return records.get(key); },
+    write: (key, bytes) => { assert.equal(typeof bytes, "string"); records.set(key, bytes); },
+    remove: (key, force) => { if (!records.delete(key) && !force) throw Error("missing"); },
+    acquire: (key, bytes) => { if (records.has(key)) return false; records.set(key, bytes); return true; },
+    release: (key, token) => { assert.equal(JSON.parse(records.get(key)).token, token); records.delete(key); },
+  };
+  f.context.stateBackend = backend;
+  return { ...f, records, backend };
+}
+
+test("synchronous durable backend preserves healthy, failure, recovery and exact acknowledgement semantics", async () => {
+  const f = durableFixture();
+  try {
+    const scan = collect => runMonitorOnce(f.context, { now: () => NOW, collect });
+    assert.equal((await scan(async () => f.snapshot)).ok, true);
+    assert.equal(heartbeatStatus(f.context, NOW).ok, true);
+    assert.equal(f.records.has("runner.lock"), false);
+    assert.equal(f.records.has("publication.json"), false);
+    const failed = await scan(async () => { throw Error("unavailable"); });
+    assert.equal(failed.hold, true);
+    const recovered = await scan(async () => f.snapshot);
+    assert.equal(recovered.hold, true);
+    assert.throws(() => acknowledgeHold(f.context, "00000000-0000-4000-8000-000000000000", NOW), /exact incident/);
+    assert.equal(acknowledgeHold(f.context, recovered.incidentId, NOW).ok, true);
+    assert.equal(heartbeatStatus(f.context, NOW).ok, true);
+    assert.equal(f.records.has("hold.json"), false);
+  } finally { f.cleanup(); }
+});
+
+test("durable checking is externally held and a second run cannot overlap collection", async () => {
+  const f = durableFixture();
+  try {
+    await runMonitorOnce(f.context, { now: () => NOW, collect: async () => f.snapshot });
+    await runMonitorOnce(f.context, { now: () => NOW, collect: async () => {
+      assert.equal(heartbeatStatus(f.context, NOW).hold, true);
+      await assert.rejects(runMonitorOnce(f.context, { collect: async () => { assert.fail("overlap"); } }), /runner lock exists/);
+      return f.snapshot;
+    } });
+    assert.equal(heartbeatStatus(f.context, NOW).ok, true);
+  } finally { f.cleanup(); }
+});
+
+test("a durable crash before checking cannot reveal the previous healthy heartbeat", async () => {
+  const f = durableFixture();
+  try {
+    await runMonitorOnce(f.context, { now: () => NOW, collect: async () => f.snapshot });
+    const write = f.backend.write;
+    f.backend.write = () => { throw Error("storage failed"); };
+    await assert.rejects(runMonitorOnce(f.context, { now: () => NOW, collect: async () => { assert.fail("network after failed checking"); } }), /storage failed/);
+    assert.equal(JSON.parse(f.records.get("heartbeat.json")).ok, true);
+    assert.equal(f.records.has("runner.lock"), true);
+    // Rebuild context from durable bytes, with no process-local run state.
+    const rebuilt = { ...f.context, stateBackend: { ...f.backend, write } };
+    assert.equal(heartbeatStatus(rebuilt, NOW).hold, true);
+    assert.ok(codes(heartbeatStatus(rebuilt, NOW)).includes("CHECK_IN_PROGRESS"));
+  } finally { f.cleanup(); }
+});
+
+for (const stage of ["afterCheckingPublished", "afterSnapshotPublished", "afterHoldLatched"]) {
+  test(`durable interruption at ${stage} remains held after context reconstruction`, async () => {
+    const f = durableFixture();
+    try {
+      await assert.rejects(runMonitorOnce(f.context, { now: () => NOW,
+        collect: async () => { if (stage === "afterHoldLatched") throw Error("offline"); return f.snapshot; },
+        [stage]: async () => { throw Error("interrupted"); },
+      }), /interrupted/);
+      assert.equal(f.records.has("runner.lock"), true);
+      assert.equal(heartbeatStatus({ ...f.context }, NOW).hold, true);
+      await assert.rejects(runMonitorOnce(f.context), /runner lock exists/);
+    } finally { f.cleanup(); }
+  });
+}
+
+test("durable backend rejects asynchronous writes and retains a hold", async () => {
+  const f = durableFixture();
+  try {
+    f.backend.write = async () => { throw Error("late failed write"); };
+    await assert.rejects(runMonitorOnce(f.context, { now: () => NOW, collect: async () => { assert.fail("no collect"); } }), /must be synchronous/);
+    assert.equal(heartbeatStatus(f.context, NOW).hold, true);
+    assert.equal(f.records.has("runner.lock"), true);
+  } finally { f.cleanup(); }
+});
+
+test("durable backend rejects ambiguous existence and stale heartbeat samples", async () => {
+  const f = durableFixture();
+  try {
+    await runMonitorOnce(f.context, { now: () => NOW, collect: async () => f.snapshot });
+    assert.equal(heartbeatStatus(f.context, NOW + 10001).hold, true);
+    f.backend.has = () => Promise.resolve(false);
+    assert.ok(codes(heartbeatStatus(f.context, NOW)).includes("LOCAL_STATE_INVALID"));
+  } finally { f.cleanup(); }
+});
+
+test("durable acknowledgement that removes a hold then fails cannot expose healthy status", async () => {
+  const f = durableFixture();
+  try {
+    await runMonitorOnce(f.context, { now: () => NOW, collect: async () => { throw Error("offline"); } });
+    const recovered = await runMonitorOnce(f.context, { now: () => NOW, collect: async () => f.snapshot });
+    const remove = f.backend.remove;
+    f.backend.remove = (key, force) => { remove(key, force); if (key === "hold.json") throw Error("durability failed after removal"); };
+    assert.throws(() => acknowledgeHold(f.context, recovered.incidentId, NOW), /durability failed/);
+    assert.equal(f.records.has("hold.json"), false);
+    assert.equal(JSON.parse(f.records.get("heartbeat.json")).ok, true);
+    assert.equal(f.records.has("runner.lock"), true);
+    assert.equal(heartbeatStatus({ ...f.context }, NOW).hold, true);
+  } finally { f.cleanup(); }
+});
