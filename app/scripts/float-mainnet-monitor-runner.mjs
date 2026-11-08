@@ -80,7 +80,7 @@ function stateAcquire(context) {
   if (acquired !== true) throw new Error("runner lock exists; inspect the process before recovering a stale lock");
   return () => backendCall(context, "release", "runner.lock", token);
 }
-export function loadContext({ baselinePath, manifestPath, stateDir, indexPath, groupReadableStatus = false }) {
+export function loadContext({ baselinePath, manifestPath, stateDir, indexPath, groupReadableStatus = false, approvedHistoryRuntimeFile = null }) {
   if (typeof groupReadableStatus !== "boolean") throw new Error("groupReadableStatus must be a boolean");
   const baseline = validateBaseline(readJson(baselinePath));
   const rawManifest = readFileSync(manifestPath);
@@ -88,8 +88,8 @@ export function loadContext({ baselinePath, manifestPath, stateDir, indexPath, g
   if (baseline.schemaVersion === 2 && (manifest.publicRegistration !== true || manifest.repaymentBindingVersion !== 2)) throw new Error("Public observation requires an explicitly bound public repayment deployment manifest");
   if (manifest.ok !== true) throw new Error("manifest must have ok:true");
   if (accountingModel(manifest.contract?.accountingModel) !== accountingModel(baseline.accountingModel)) throw new Error("Manifest and baseline accounting models differ");
-  validateConfiguredHistory(baseline, manifestPath);
-  return { baseline, baselineHash: digestJson(baseline), manifestHash: createHash("sha256").update(rawManifest).digest("hex"), manifestPath: resolve(manifestPath), stateDir: resolve(stateDir), indexPath: indexPath ? resolve(indexPath) : undefined, groupReadableStatus };
+  validateConfiguredHistory(baseline, manifestPath, { runtimeFile: approvedHistoryRuntimeFile });
+  return { baseline, baselineHash: digestJson(baseline), manifestHash: createHash("sha256").update(rawManifest).digest("hex"), manifestPath: resolve(manifestPath), stateDir: resolve(stateDir), indexPath: indexPath ? resolve(indexPath) : undefined, groupReadableStatus, ...(approvedHistoryRuntimeFile === null ? {} : { approvedHistoryRuntimeFile }) };
 }
 function identity(context) {
   const { baseline, baselineHash, manifestHash } = context;
@@ -139,8 +139,8 @@ export async function collectSnapshot(context, { rpcUrl = process.env.ARC_RPC_UR
   if (b.schemaVersion === 2) args.push("--public-admission-audit");
   if (context.indexPath) args.push("--index", context.indexPath);
   if (b.approvedHistory) {
-    validateConfiguredHistory(b, context.manifestPath);
-    args.push("--approved-history", b.approvedHistory.file, "--approved-history-digest", b.approvedHistory.sha256);
+    validateConfiguredHistory(b, context.manifestPath, { runtimeFile: context.approvedHistoryRuntimeFile ?? null });
+    args.push("--approved-history", context.approvedHistoryRuntimeFile ?? b.approvedHistory.file, "--approved-history-digest", b.approvedHistory.sha256);
   }
   return new Promise((resolveResult, reject) => {
     const child = spawn(process.execPath, args, { env: childEnv, stdio: ["ignore", "pipe", "pipe"] });

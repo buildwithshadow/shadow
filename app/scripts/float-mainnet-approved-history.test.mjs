@@ -7,7 +7,7 @@ import { encodeAbiParameters, encodeEventTopics, decodeEventLog } from 'viem';
 import { floatEventAbi } from './float-mainnet-config.mjs';
 import { buildNormalizedContent, hashBytes } from './float-mainnet-history-validation.mjs';
 import { approvedHistoryIdentity, discoverApprovedHistory, validateConfiguredHistory } from './float-mainnet-approved-history.mjs';
-import { validateBaseline, evaluateSnapshot } from './float-mainnet-monitor-policy.mjs';
+import { validateBaseline, evaluateSnapshot, digestJson } from './float-mainnet-monitor-policy.mjs';
 import { loadContext } from './float-mainnet-monitor-runner.mjs';
 
 const addr = n => `0x${n.toString(16).padStart(40, '0')}`;
@@ -116,3 +116,35 @@ test('invalid optional binding is rejected instead of silently choosing full rep
 
 // Read only fixture helper; no live chain or wallet is used.
 import { readFileSync as requireManifest } from 'node:fs';
+
+
+test('runtime history location preserves the original protected baseline and exact byte approval', () => {
+ const f=fixture();try {
+  const baseline={...f.baseline,approvedHistory:{...f.history,file:'/etc/shadow/nonexistent-protected-history.json'}};
+  const baselinePath=join(f.directory,'baseline.json');writeFileSync(baselinePath,JSON.stringify(baseline));
+  const options={baselinePath,manifestPath:f.manifestPath,stateDir:join(f.directory,'state')};
+  assert.throws(()=>loadContext(options),/ENOENT/);
+  const before=JSON.stringify(baseline);
+  const context=loadContext({...options,approvedHistoryRuntimeFile:f.history.file});
+  assert.equal(context.baselineHash,digestJson(validateBaseline(baseline)));
+  assert.equal(context.baseline.approvedHistory.file,baseline.approvedHistory.file);
+  assert.equal(context.approvedHistoryRuntimeFile,f.history.file);
+  assert.equal(JSON.stringify(baseline),before);
+  const history=validateConfiguredHistory(baseline,f.manifestPath,{runtimeFile:f.history.file});
+  assert.deepEqual(history.bytes,f.original.bytes);
+  writeFileSync(f.history.file,JSON.stringify({...f.original.parsed,logs:[]}));
+  assert.throws(()=>loadContext({...options,approvedHistoryRuntimeFile:f.history.file}),/digest/);
+ }finally{f.cleanup();}
+});
+
+test('runtime history mapping cannot approve history or bypass manifest and anchor bindings',()=>{
+ const f=fixture();try {
+  const noApproval={...f.baseline};delete noApproval.approvedHistory;
+  assert.throws(()=>validateConfiguredHistory(noApproval,f.manifestPath,{runtimeFile:f.history.file}),/externally approved/);
+  assert.throws(()=>validateConfiguredHistory({...f.baseline,approvedHistory:{...f.history,anchorHash:hash(99)}},f.manifestPath,{runtimeFile:f.history.file}),/anchor differs/);
+  for(const runtimeFile of ['',false,0,{},'relative.json','/tmp/bad\nfile','/tmp/bad\0file','/'+'x'.repeat(4096)])
+   assert.throws(()=>validateConfiguredHistory(f.baseline,f.manifestPath,{runtimeFile}),/bounded absolute/);
+  writeFileSync(f.manifestPath,requireManifest(f.manifestPath,'utf8')+' ');
+  assert.throws(()=>validateConfiguredHistory(f.baseline,f.manifestPath,{runtimeFile:f.history.file}),/manifest|identity/i);
+ }finally{f.cleanup();}
+});
