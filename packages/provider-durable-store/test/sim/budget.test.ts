@@ -146,3 +146,13 @@ for(const terminal of ['delivery','released'])test(`late ${terminal} retries can
  w.restartRecords();assert.deepEqual(w.records.reserveBudget(w.identity,digest(1),PER_DIGEST.records,PER_DIGEST.bytes),{reserved:false});
  assert.deepEqual(w.records.budgetUsage(w.identity),before);
 });
+
+test('a failed claim insert does not consume reserved capacity',async()=>{
+ const w=await World.ready([],{maxRecords:8,maxTotalBytes:800});
+ w.records.reserveBudget(w.identity,digest(1),8,800);
+ const before=w.records.budgetUsage(w.identity),file=name(1,'result');
+ w.recordsStorage.tamper(`CREATE TRIGGER fail_claim BEFORE INSERT ON records WHEN NEW.name = '${file}' BEGIN SELECT RAISE(ABORT,'injected claim failure'); END`);
+ await assert.rejects(w.records.putOnce(w.identity,file,rec()),/injected claim failure/);
+ assert.deepEqual(w.records.budgetUsage(w.identity),before);
+ await w.records.assertConsistent(w.identity);
+});

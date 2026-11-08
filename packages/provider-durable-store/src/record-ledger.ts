@@ -228,12 +228,16 @@ export class RecordLedger {
         await flight.catch(noop); // the winner decides; re-evaluate afterwards
         continue;
       }
-      this.admit(name, bytes.byteLength, budgetDigest); // capacity check and budget draw, in this same synchronous section
       const claimId = crypto.randomUUID();
-      this.storage.sql.exec(
-        "INSERT INTO records (name, state, sha256, size, bytes, claim_id) VALUES (?, 'pending', ?, ?, ?, ?)",
-        name, digest, bytes.byteLength, bindable(bytes), claimId,
-      );
+      this.storage.transactionSync(() => {
+        // Capacity accounting and the durable claim either both commit or
+        // both roll back, including a storage/constraint failure on INSERT.
+        this.admit(name, bytes.byteLength, budgetDigest);
+        this.storage.sql.exec(
+          "INSERT INTO records (name, state, sha256, size, bytes, claim_id) VALUES (?, 'pending', ?, ?, ?, ?)",
+          name, digest, bytes.byteLength, bindable(bytes), claimId,
+        );
+      });
       this.epoch++;
       const flight: Promise<void> = this.publish(identity, name, digest, claimId).finally(() => {
         if (this.inflight.get(name) === flight) this.inflight.delete(name);
