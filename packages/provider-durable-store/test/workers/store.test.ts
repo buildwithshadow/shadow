@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest';
 import { ProviderStoreAdmin, ProviderStoreService } from '../../src/worker.ts';
 import { bootstrapStore } from '../../src/admin.ts';
 import { sha256Hex } from '../../src/bytes.ts';
-import { inventoryFingerprint, storeObjectName, type ProviderStoreIdentity } from '../../src/identity.ts';
+import { inventoryFingerprint, reconcileFingerprint, storeObjectName, type ProviderStoreIdentity } from '../../src/identity.ts';
 
 // These run in workerd against the real Durable Object classes and SQLite storage.
 // They do not reach any Cloudflare account, network or chain.
@@ -151,5 +151,23 @@ describe('Durable Object runtime', () => {
     const surface = (cls: { prototype: object }) => Object.getOwnPropertyNames(cls.prototype).filter(n => n !== 'constructor').sort();
     expect(surface(ProviderStoreService)).toEqual(['check', 'list', 'putOnce', 'read']);
     expect(surface(ProviderStoreAdmin)).toEqual(['bootstrap', 'completeFromWitness', 'inspect']);
+    // The operator entrypoint must forward both reservation policy and the
+    // request alias attribution through actual Durable Object RPC.
+    const s=await stubs(), digest=`0x${hex64(91)}`, admission=`${digest}.admission.json`, alias=`request-0x${hex64(91)}.json`;
+    const bytes=utf8('{"reconcile":true}\n');
+    await s.records.reserveBudget(identity,digest,8,800);
+    await s.records.putOnce(identity,admission,bytes);
+    await s.records.putOnce(identity,alias,bytes,{budgetDigest:digest});
+    await runInDurableObject(s.records,(_i,state)=>{
+      state.storage.sql.exec('DROP TRIGGER records_no_delete');
+      state.storage.sql.exec('DELETE FROM records WHERE name IN (?,?)',admission,alias);
+      state.storage.sql.exec('DELETE FROM budgets WHERE digest = ?',digest);
+    });
+    const approve=async(n:string)=>reconcileFingerprint(identity,n,await sha256Hex(bytes));
+    expect(await failure(admin.completeFromWitness(admission,bytes,await approve(admission)))).toContain('reservation');
+    await admin.completeFromWitness(admission,bytes,await approve(admission),{perDigest:{records:8,bytes:800}});
+    await admin.completeFromWitness(alias,bytes,await approve(alias),{budgetDigest:digest});
+    expect((await s.records.budgetUsage(identity)).reserved.records).toBe(6);
+    await service.check({deep:true});
   });
 });

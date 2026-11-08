@@ -16,6 +16,8 @@ export interface Capacity { maxRecords: number; maxTotalBytes: number }
 /** Records and bytes one admitted digest may still need: request binding, admission, prepared, acceptance, started, result, payment, delivery|released. */
 export interface DigestBudget { records: number; bytes: number }
 export interface PutOptions { budgetDigest?: string }
+/** Operator-approved remaining envelope, including a missing record being restored. */
+export interface ReconcileOptions { budgetDigest?: string; perDigest?: DigestBudget }
 export interface BudgetUsage {
   capacity: Capacity; records: number; bytes: number; budgets: number;
   reserved: DigestBudget; free: DigestBudget;
@@ -478,10 +480,17 @@ export class RecordLedger {
    * It cannot create a record the witness has not seen, cannot change a
    * committed record, and does nothing about a record without a witness.
    */
-  async completeFromWitness(identityIn: ProviderStoreIdentity, name: string, bytesIn: Uint8Array, approvedFingerprint: string): Promise<{ completed: boolean }> {
+  async completeFromWitness(identityIn: ProviderStoreIdentity, name: string, bytesIn: Uint8Array, approvedFingerprint: string, options?: ReconcileOptions): Promise<{ completed: boolean }> {
     assertRecordName(name);
     const identity = normalizeIdentity(identityIn);
     const bytes = ownRecordBytes(bytesIn); // copy before the first await
+    const budgetDigest = options?.budgetDigest ?? null;
+    const perDigest = options?.perDigest ? { records: options.perDigest.records, bytes: options.perDigest.bytes } : null;
+    const namedDigest = DIGEST_PREFIX.exec(name)?.[1] ?? null;
+    if (budgetDigest !== null && (typeof budgetDigest !== 'string' || !DIGEST.test(budgetDigest) || (namedDigest !== null && namedDigest !== budgetDigest))) throw new ProviderStoreInvalid('Malformed or conflicting reconciliation budget digest');
+    if (perDigest && (!Number.isSafeInteger(perDigest.records) || perDigest.records < 1 || !Number.isSafeInteger(perDigest.bytes) || perDigest.bytes < 0)) throw new ProviderStoreInvalid('Malformed reconciliation reservation');
+    const attributedDigest = budgetDigest ?? namedDigest;
+    if (perDigest && attributedDigest === null) throw new ProviderStoreInvalid('Reconciliation budget needs explicit request attribution');
     const digest = await sha256Hex(bytes);
     if (!SHA256_HEX.test(approvedFingerprint ?? '') || await reconcileFingerprint(identity, name, digest) !== approvedFingerprint) {
       throw new ProviderStoreHold('reconciliation lacks its independently approved fingerprint');
@@ -491,6 +500,14 @@ export class RecordLedger {
     if (!witnessed || witnessed.sha256 !== digest) throw new ProviderStoreHold(`supplied bytes do not match the witness digest for ${name}`);
     if (this.inflight.has(name)) throw new ProviderStoreBusy(`publication of ${name} is still in flight`);
     return this.storage.transactionSync(() => {
+      // A rollback may precede the original reservation. Do not restore an
+      // outstanding acceptance as healthy while leaving its delivery unreserved.
+      const outstandingSlot = /\.(?:admission|prepared|acceptance)\.json$/.test(name);
+      const terminal = attributedDigest !== null && ['delivery', 'released'].some(slot => this.row(`${attributedDigest}.${slot}.json`)?.state === 'committed');
+      if (attributedDigest !== null && !terminal && !this.budgetRow(attributedDigest) && (outstandingSlot || budgetDigest !== null || perDigest !== null)) {
+        if (!perDigest) throw new ProviderStoreHold('restoring outstanding work requires an operator-approved remaining reservation');
+        this.reserveBudget(identity, attributedDigest, perDigest.records, perDigest.bytes);
+      }
       const row = this.row(name);
       if (row?.state === 'committed') {
         if (row.sha256 !== digest) throw new ProviderStoreHold(`committed record differs from the supplied bytes: ${name}`);
@@ -502,7 +519,7 @@ export class RecordLedger {
         this.releaseOnTerminal(name);
         return { completed: true };
       }
-      this.admit(name, bytes.byteLength, null);
+      this.admit(name, bytes.byteLength, budgetDigest);
       this.storage.sql.exec(
         "INSERT INTO records (name, state, sha256, size, bytes, claim_id) VALUES (?, 'committed', ?, ?, ?, ?)",
         name, digest, bytes.byteLength, bindable(bytes), `reconcile:${witnessed.claimId}`,

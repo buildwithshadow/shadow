@@ -20,6 +20,7 @@ export const assertFull = (p: Promise<unknown> | (() => unknown), pattern?: RegE
 export const flush = (): Promise<void> => new Promise(resolve => setImmediate(resolve));
 
 export async function until(condition: () => boolean, label: string): Promise<void> {
-  for (let i = 0; i < 200; i++) { if (condition()) return; await flush(); }
+  const deadline = performance.now() + 5000;
+  while (performance.now() < deadline) { if (condition()) return; await new Promise(resolve => setTimeout(resolve, 1)); }
   assert.fail(`timed out waiting for: ${label}`);
 }

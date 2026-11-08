@@ -1,6 +1,6 @@
 import { DurableObject } from 'cloudflare:workers';
 import { normalizeIdentity, storeObjectName, type ProviderStoreIdentity } from './identity.ts';
-import { RecordLedger } from './record-ledger.ts';
+import { RecordLedger, type ReconcileOptions } from './record-ledger.ts';
 import type { WitnessEntry, WitnessPeer } from './witness-ledger.ts';
 
 /** Reaches the witness namespace. The record store never writes witness state any other way. */
@@ -45,7 +45,7 @@ export class RecordStoreDO extends DurableObject<Env> {
   }
   isEmpty() { return this.ledger.isEmpty(); }
   commitBootstrap(identity: ProviderStoreIdentity, nonce: string) { return this.ledger.commitBootstrap(identity, nonce); }
-  completeFromWitness(identity: ProviderStoreIdentity, name: string, bytes: Uint8Array, approvedFingerprint: string) {
-    return this.ledger.completeFromWitness(identity, name, bytes, approvedFingerprint);
+  completeFromWitness(identity: ProviderStoreIdentity, name: string, bytes: Uint8Array, approvedFingerprint: string, options?: ReconcileOptions) {
+    return this.ledger.completeFromWitness(identity, name, bytes, approvedFingerprint, options);
   }
 }

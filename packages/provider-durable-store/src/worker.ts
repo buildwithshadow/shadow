@@ -5,6 +5,7 @@ import { snapshotRecords } from './snapshot.ts';
 import { rehydrate } from './errors.ts';
 import { storeObjectName, normalizeIdentity, type ProviderStoreIdentity } from './identity.ts';
 import { LIMITS } from './limits.ts';
+import type { ReconcileOptions } from './record-ledger.ts';
 
 export { RecordStoreDO } from './do-records.ts';
 export { StoreWitnessDO } from './do-witness.ts';
@@ -62,10 +63,11 @@ export class ProviderStoreAdmin extends WorkerEntrypoint<Env> {
     } catch (error) { throw rehydrate(error); }
   }
   async inspect() { const s = await stubs(this.env); return s.records.inspect(s.identity); }
-  async completeFromWitness(name: string, bytesIn: Uint8Array, approvedFingerprint: string) {
+  async completeFromWitness(name: string, bytesIn: Uint8Array, approvedFingerprint: string, options?: ReconcileOptions) {
+    const policy = options ? {budgetDigest:options.budgetDigest,perDigest:options.perDigest ? {...options.perDigest}:undefined}:undefined;
     const bytes = ownRecordBytes(bytesIn);
     const s = await stubs(this.env);
-    return s.records.completeFromWitness(s.identity, name, bytes, approvedFingerprint);
+    return s.records.completeFromWitness(s.identity, name, bytes, approvedFingerprint, policy);
   }
 }
 

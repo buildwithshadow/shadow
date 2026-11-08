@@ -47,7 +47,7 @@ export class SimStorage implements StorageLike {
   /** Whole-database copy, as a point-in-time restore would produce. */
   snapshot(): Snapshot {
     const out: Snapshot = {};
-    for (const t of ['meta', this.table]) out[t] = this.db.prepare(`SELECT * FROM ${t}`).all().map(r => ({ ...r }));
+    for (const t of ['meta', this.table, ...(this.kind === 'records' ? ['budgets'] : [])]) out[t] = this.db.prepare(`SELECT * FROM ${t}`).all().map(r => ({ ...r }));
     return out;
   }
 
