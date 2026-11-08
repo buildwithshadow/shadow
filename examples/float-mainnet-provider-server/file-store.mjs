@@ -24,6 +24,7 @@ export function createFileProviderStore({ directory, identity, witnessDirectory 
   const persist = witness ? witness.storeOnce : storeOnce;
   return Object.freeze({
     witnessed: witness !== null,
+    describe(name) { return pathOf(name); },
     assertConsistent() { witness?.assertConsistent(); },
     list() { return readdirSync(directory); },
     has(name) { return existsSync(pathOf(name)); },

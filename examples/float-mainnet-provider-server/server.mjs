@@ -212,8 +212,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const stored = readStored(file);
     if (!stored) return null;
     const receipt = validateReceiptFile(stored, connection, kind);
-    if (receipt.message.provider !== provider) throw new Error(`${file} holds provider ${receipt.message.provider}'s receipt, not ${provider}'s`);
-    if (receipt.message.digest !== digest) throw new Error(`${file} holds the receipt of digest ${receipt.message.digest}, not ${digest}`);
+    if (receipt.message.provider !== provider) throw new Error(`${store.describe(file)} holds provider ${receipt.message.provider}'s receipt, not ${provider}'s`);
+    if (receipt.message.digest !== digest) throw new Error(`${store.describe(file)} holds the receipt of digest ${receipt.message.digest}, not ${digest}`);
     return stored;
   }
 
