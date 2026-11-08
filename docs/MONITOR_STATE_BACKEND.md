@@ -20,3 +20,11 @@ A durable backend must persist the lock before collection begins. Status remains
 The same runner retains publication generation checks, snapshot binding, baseline changes, stale samples, head regression, incident latching and exact fresh acknowledgement. A storage adapter must preserve those semantics. An adapter with asynchronous durability must finish its durable commit barriers before exposing status or beginning external work. Synchronous method return alone does not prove durable replication.
 
 This boundary does not install an alarm, migrate existing state, implement a Cloudflare backend, configure notifications or establish production readiness. Embeddings must supply their own bounded collector instead of the default Node subprocess. Monitor script path resolution is deferred until that default collector is called.
+
+## Notification reads
+
+`monitorStateRecord(context, name)` provides a read-only record view using the selected backend. It returns `{ exists, value }`, preserving a corrupt or unreadable record as existing with a null value. Storage exceptions cannot turn an unreadable incident latch into an absent one. Keys use the same restricted monitor state namespace.
+
+The operational notifier reads these records through the shared backend when selected. Existing generation consistency, bounded scan suppression, incident fingerprints, reminder timing, delivery acknowledgement and recovery rules remain unchanged. Its default CLI still reads the filesystem and holds its process lock. The Telegram CLI dependency loads only in the CLI entry point, so embedding the notification policy does not initialize testnet observer tooling.
+
+The embedding remains responsible for serializing notification delivery and persisting the successful delivery record before another attempt. This change does not provide a remote notification sink or schedule it.

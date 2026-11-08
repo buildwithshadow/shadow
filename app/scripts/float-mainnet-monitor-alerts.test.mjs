@@ -6,7 +6,7 @@ import { join } from 'node:path';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
-import { acknowledgeHold, runMonitorOnce } from './float-mainnet-monitor-runner.mjs';
+import { acknowledgeHold, runMonitorOnce, monitorStateRecord } from './float-mainnet-monitor-runner.mjs';
 import { loadMainnetContext, notificationState, notifyMainnet } from './float-mainnet-monitor-alerts.mjs';
 
 const now = 1800000000000;
@@ -573,3 +573,77 @@ for (const signal of ['SIGTERM', 'SIGKILL']) {
   }
  });
 }
+
+function durableNotificationFixture(filesystem = false) {
+  const f = fixture(); const records = new Map();
+  if (!filesystem) f.context.stateBackend = {
+    has: key => records.has(key),
+    read: key => { if (!records.has(key)) throw Error('missing'); return records.get(key); },
+    write: (key, bytes) => records.set(key, bytes),
+    remove: (key, force) => { if (!records.delete(key) && !force) throw Error('missing'); },
+    acquire: (key, bytes) => { if (records.has(key)) return false; records.set(key, bytes); return true; },
+    release: (key, token) => { assert.equal(JSON.parse(records.get(key)).token, token); records.delete(key); },
+  };
+  let previous; const messages = [];
+  const notify = (time = now, overrides = {}) => notifyMainnet({context:f.context, previous, destinationId:'123', now:time,
+    send:async message => messages.push(message), save:async value => { previous = value; }, ...overrides});
+  return {...f, records, messages, notify, previous:()=>previous};
+}
+
+for (const filesystem of [false, true]) test(`${filesystem ? 'filesystem' : 'durable'} notifier preserves failure, acknowledgement, recovery and restart deduplication`, async () => {
+  const f = durableNotificationFixture(filesystem);
+  try {
+    await f.run(); assert.equal((await f.notify()).sent, true); assert.match(f.messages.at(-1), /CONNECTED/);
+    assert.equal((await f.notify()).sent, false);
+    await f.run(now, async () => { throw Error('offline'); });
+    assert.equal((await f.notify()).sent, true); assert.match(f.messages.at(-1), /ATTENTION/);
+    const result = await f.run(); assert.equal(result.hold, true);
+    // Completed recovery changes validation codes but does not acknowledge the hold.
+    assert.equal((await f.notify()).sent, true); assert.match(f.messages.at(-1), /ATTENTION/);
+    assert.equal((await f.notify()).sent, false);
+    acknowledgeHold(f.context, result.incidentId, now);
+    assert.equal((await f.notify()).sent, true); assert.match(f.messages.at(-1), /RECOVERED/);
+    const persisted = JSON.parse(JSON.stringify(f.previous()));
+    assert.equal((await f.notify(now, {previous:persisted,context:{...f.context}})).sent, false);
+    assert.equal(f.messages.length, 4);
+  } finally {f.cleanup();}
+});
+
+for (const filesystem of [false, true]) test(`${filesystem ? 'filesystem' : 'durable'} notifier stays quiet during bounded ordinary and known incident scans`, async () => {
+  const f = durableNotificationFixture(filesystem);
+  try {
+    await runMonitorOnce(f.context, {now:()=>now, collect:async()=>{
+      assert.equal(notificationState(f.context, now), null);
+      assert.equal((await f.notify()).sent, false); return f.snapshot;
+    }});
+    await f.notify();
+    await f.run(now, async()=>{throw Error('offline');}); await f.notify();
+    const before = f.messages.length;
+    await runMonitorOnce(f.context, {now:()=>now, collect:async()=>{
+      const result=await f.notify(); assert.equal(result.sent,false); return f.snapshot;
+    }});
+    assert.equal((await f.notify()).sent,true); assert.match(f.messages.at(-1), /ATTENTION/);
+    assert.equal((await f.notify()).sent,false); assert.equal(f.messages.length,before+1);
+  } finally {f.cleanup();}
+});
+
+test('durable record view preserves corrupt or unreadable hold existence', async () => {
+  const f = durableNotificationFixture();
+  try {
+    await f.run(); f.records.set('hold.json','{');
+    assert.deepEqual(monitorStateRecord(f.context,'hold.json'),{exists:true,value:null});
+    assert.equal(notificationState(f.context,now).ok,false);
+    f.context.stateBackend.has=()=>Promise.resolve(false);
+    assert.deepEqual(monitorStateRecord(f.context,'hold.json'),{exists:true,value:null});
+    assert.equal(notificationState(f.context,now).ok,false);
+    assert.throws(()=>monitorStateRecord(f.context,'../outside.json'),/invalid monitor state key/);
+  } finally {f.cleanup();}
+});
+
+test('durable delivery failures do not save a notification acknowledgement',async()=>{
+ const f=durableNotificationFixture();
+ try {
+  await f.run(); await assert.rejects(f.notify(now,{send:async()=>{throw Error('delivery failed');}}),/delivery failed/);
+  assert.equal(f.previous(),undefined); assert.equal((await f.notify()).sent,true);
+ } finally {f.cleanup();}
+});

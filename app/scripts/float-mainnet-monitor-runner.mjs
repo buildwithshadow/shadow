@@ -64,6 +64,23 @@ function stateRead(context, path) {
   // Own the returned value; a backend cannot mutate an already inspected record.
   return JSON.parse(backendCall(context, "read", stateKey(context, path)));
 }
+// A read-only record view for the notifier. Distinguish missing data from
+// corruption, without converting a storage failure into an absent hold.
+export function monitorStateRecord(context, name) {
+  const path = resolve(context.stateDir, name);
+  stateKey(context, path);
+  if (context.stateBackend) {
+    try {
+      if (!stateHas(context, path)) return { exists: false, value: null };
+      return { exists: true, value: stateRead(context, path) };
+    } catch { return { exists: true, value: null }; }
+  }
+  let raw;
+  try { raw = readFileSync(path, "utf8"); }
+  catch (error) { return { exists: error.code !== "ENOENT", value: null }; }
+  try { return { exists: true, value: JSON.parse(raw) }; }
+  catch { return { exists: true, value: null }; }
+}
 function stateOptional(context, path) { return stateHas(context, path) ? stateRead(context, path) : null; }
 function stateWrite(context, path, value, mode = 0o600) {
   if (!context.stateBackend) return atomicJson(path, value, mode);
