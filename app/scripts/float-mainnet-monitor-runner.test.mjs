@@ -586,3 +586,18 @@ test("durable backend rejects ambiguous existence and stale heartbeat samples", 
     assert.ok(codes(heartbeatStatus(f.context, NOW)).includes("LOCAL_STATE_INVALID"));
   } finally { f.cleanup(); }
 });
+
+test("durable acknowledgement that removes a hold then fails cannot expose healthy status", async () => {
+  const f = durableFixture();
+  try {
+    await runMonitorOnce(f.context, { now: () => NOW, collect: async () => { throw Error("offline"); } });
+    const recovered = await runMonitorOnce(f.context, { now: () => NOW, collect: async () => f.snapshot });
+    const remove = f.backend.remove;
+    f.backend.remove = (key, force) => { remove(key, force); if (key === "hold.json") throw Error("durability failed after removal"); };
+    assert.throws(() => acknowledgeHold(f.context, recovered.incidentId, NOW), /durability failed/);
+    assert.equal(f.records.has("hold.json"), false);
+    assert.equal(JSON.parse(f.records.get("heartbeat.json")).ok, true);
+    assert.equal(f.records.has("runner.lock"), true);
+    assert.equal(heartbeatStatus({ ...f.context }, NOW).hold, true);
+  } finally { f.cleanup(); }
+});

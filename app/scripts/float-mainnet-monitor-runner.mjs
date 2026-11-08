@@ -302,17 +302,23 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
 export function acknowledgeHold(context, incidentId, nowMs = Date.now()) {
   if (typeof incidentId !== "string" || !/^[0-9a-f-]{36}$/.test(incidentId)) throw new Error("the exact incident-id is required");
   const release = stateAcquire(context);
+  let mutating = false;
+  let completedAcknowledgement = false;
   try {
     const file = paths(context); const hold = stateRead(context, file.hold); const heartbeat = stateRead(context, file.heartbeat); const snapshot = stateRead(context, file.snapshot);
     const age = nowMs - Date.parse(heartbeat.startedAt);
     const completed = Date.parse(heartbeat.completedAt);
     if (hold.incidentId !== incidentId || heartbeat.baselineHash !== context.baselineHash || heartbeat.manifestHash !== context.manifestHash || heartbeat.snapshotHash !== digestJson(snapshot) || heartbeat.checks?.snapshotHealthy !== true || !Number.isFinite(completed) || completed > nowMs || completed < Date.parse(heartbeat.startedAt) || !Number.isFinite(age) || age < 0 || age > context.baseline.policy.maxHeartbeatAgeMs || !evaluateSnapshot(context.baseline, snapshot, nowMs).ok) throw new Error("acknowledgement requires the exact incident and a fresh complete healthy sample for this baseline");
+    mutating = true;
     event(context, { acknowledgedAt: new Date(nowMs).toISOString(), incidentId, baselineHash: context.baselineHash });
     const acknowledged = { ...heartbeat, ok: true, hold: false, status: "healthy", alerts: [], incidentId: null, acknowledgedAt: new Date(nowMs).toISOString() };
     atomicStatusJson(context, file.heartbeat, acknowledged);
     stateRemove(context, file.hold); // If interrupted before this removal, status still holds.
+    completedAcknowledgement = true;
     return acknowledged;
-  } finally { release(); }
+  } finally {
+    if (!context.stateBackend || !mutating || completedAcknowledgement) release();
+  }
 }
 
 // The interval is measured between scan starts. Adding it after collection

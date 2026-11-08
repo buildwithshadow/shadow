@@ -15,7 +15,7 @@ The backend implements synchronous methods:
 
 Keys are restricted to `heartbeat.json`, `snapshot.json`, `hold.json`, `events.json`, `publication.json` and `runner.lock`. The runner owns serialization and parses a copy of each read. Promise returning methods are rejected. This interface is an operator capability, never a public request option.
 
-A durable backend must persist the lock before collection begins. Status remains held while it exists. An unexpected interruption retains that lock, including a failure before replacing an older healthy heartbeat. Recovery requires a separate operator procedure that verifies no collector is still running. Never delete locks on a timer or recreate the backend identity when its baseline changes.
+A durable backend must persist the lock before collection begins. Status remains held while it exists. An unexpected interruption retains that lock, including a failure before replacing an older healthy heartbeat. Failed acknowledgement mutations also retain the lock, even if removal of the hold succeeded before storage reported failure. Ordinary acknowledgement validation errors release it. Recovery requires a separate operator procedure that verifies no collector is still running. Never delete locks on a timer or recreate the backend identity when its baseline changes.
 
 The same runner retains publication generation checks, snapshot binding, baseline changes, stale samples, head regression, incident latching and exact fresh acknowledgement. A storage adapter must preserve those semantics. An adapter with asynchronous durability must finish its durable commit barriers before exposing status or beginning external work. Synchronous method return alone does not prove durable replication.
 
