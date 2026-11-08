@@ -12,8 +12,10 @@ export function createCompatibleProviderHttpServer(options, listener, requestLim
   let active = 0;
   return createServer((request, response) => {
     const headers = request.rawHeaders;
-    let size = 0;
-    let valid = Array.isArray(headers) && headers.length % 2 === 0;
+    const target = request.url;
+    let valid = typeof target === 'string' && target.length <= maximum && Array.isArray(headers) && headers.length % 2 === 0;
+    let size = valid ? Buffer.byteLength(target, 'utf8') : maximum + 1;
+    valid = valid && size <= maximum;
     if (valid) {
       for (const header of headers) {
         if (typeof header !== 'string' || header.length > maximum) { valid = false; break; }

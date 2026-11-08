@@ -3,13 +3,13 @@ import { test } from 'node:test';
 import { request } from 'node:http';
 import { createCompatibleProviderHttpServer } from '../../examples/float-mainnet-provider-server/compatible-http.mjs';
 
-async function send(headers) {
+async function send(headers, path = "/") {
   let dispatched = 0;
   const server = createCompatibleProviderHttpServer({ maxHeaderSize: 256 }, (_req, res) => { dispatched++; res.end('provider'); });
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
   try {
     const reply = await new Promise((resolve, reject) => {
-      const req = request(`http://127.0.0.1:${server.address().port}`, { headers, agent: false }, res => {
+      const req = request(`http://127.0.0.1:${server.address().port}${path}`, { headers, agent: false }, res => {
         let body = ''; res.setEncoding('utf8'); res.on('data', text => { body += text; });
         res.on('end', () => resolve({ status: res.statusCode, headers: res.headers, body }));
       });
@@ -27,6 +27,8 @@ test('compatible HTTP factory keeps the original aggregate header bound before d
     assert.equal(rejected.reply.headers['cache-control'], 'no-store');
     assert.doesNotMatch(rejected.reply.body, /aaaa|bbbb|xxxx/);
   }
+  const longTarget = await send({}, '/' + 'q'.repeat(9000));
+  assert.equal(longTarget.reply.status, 431); assert.equal(longTarget.dispatched, 0);
 });
 test('compatible HTTP factory refuses a missing header limit', () => {
   assert.throws(() => createCompatibleProviderHttpServer({}, () => {}), /header bound/);
