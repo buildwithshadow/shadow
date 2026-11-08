@@ -1,3 +1,4 @@
+import { findLogs } from './float-mainnet-cli.mjs';
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import { inspect } from 'node:util';
@@ -43,7 +44,7 @@ test('read provider connection still verifies runtime, domain and chain identity
 test('owned read provider retains bounded quota retries in the explicit read queue', async () => {
   let calls = 0;
   const client = createPublicClient({ transport: createReadProviderTransport({ request: async () => {
-    if (++calls < 3) { const error = new Error('private provider detail'); error.code = -32005; throw error; }
+    if (++calls < 3) { const error = new Error('rate limit exceeded; wss://rpc.invalid/private-detail'); error.code = -32005; throw error; }
     return '0x1';
   } }, { spacingMs: 0, queueOptions: { maxAttempts: 3, baseDelayMs: 0, maxDelayMs: 0 } }) });
   assert.equal(await client.getChainId(), 1); assert.equal(calls, 3);
@@ -57,4 +58,25 @@ test('read provider rejects invalid parameters without dispatch or leaking clone
     });
   }
   assert.equal(calls, 0);
+});
+
+test('explicit range limits still split canonical scans instead of retrying the same range', async () => {
+  const ranges = [], successful = [];
+  const client = createPublicClient({ transport: createReadProviderTransport({ request: async ({method,params}) => {
+    assert.equal(method,'eth_getLogs'); const {fromBlock,toBlock}=params[0];
+    const from=BigInt(fromBlock),to=BigInt(toBlock);ranges.push([from,to]);
+    if(to-from+1n>20n){const error=new Error('block range exceeds provider maximum wss://rpc.invalid/private-secret');error.code=-32005;throw error;}
+    successful.push([from,to]);return [];
+  } }, {spacingMs:0,queueOptions:{maxAttempts:3,baseDelayMs:0,maxDelayMs:0}}) });
+  assert.deepEqual(await findLogs({client,address:'0x0000000000000000000000000000000000000001'},undefined,undefined,0n,99n),[]);
+  assert.deepEqual(ranges.slice(0,3),[[0n,99n],[0n,49n],[0n,24n]]);
+  let cursor=0n;for(const [from,to]of successful){assert.equal(from,cursor);cursor=to+1n;}assert.equal(cursor,100n);
+});
+
+test('deterministic log errors retain their exclusion from retries before sanitization', async () => {
+  for(const [message,attempts] of [['pruned history unavailable',1],['internal error: invalid params',1],['internal error',3]]) {
+    let calls=0;
+    const client=createPublicClient({transport:createReadProviderTransport({request:async()=>{calls++;const error=new Error(message);error.code=-32603;throw error;}},{spacingMs:0,queueOptions:{maxAttempts:3,baseDelayMs:0,maxDelayMs:0}})});
+    await assert.rejects(client.request({method:'eth_getLogs',params:[{}]}));assert.equal(calls,attempts,message);
+  }
 });

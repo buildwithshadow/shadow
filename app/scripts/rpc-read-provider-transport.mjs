@@ -1,4 +1,5 @@
 import { BaseError, createTransport } from 'viem';
+import { classifyRpcReadFailure } from './rpc-read-classification.mjs';
 import { createRpcReadQueue } from './rpc-read-queue.mjs';
 
 const METHODS = new Set(['eth_chainId', 'eth_getCode', 'eth_call', 'eth_getBlockByNumber', 'eth_getLogs', 'eth_getTransactionByHash', 'eth_getTransactionReceipt']);
@@ -22,11 +23,9 @@ export function createReadProviderTransport(provider, { spacingMs = 350, queueOp
           catch (error) {
             // Fixed classification text preserves the existing bounded read
             // queue policy without copying upstream messages or raw causes.
-            const label = error?.code === -32005 ? 'rate limit exceeded'
-              : error?.code === -32603 ? 'internal error'
-              : ['connect-timeout', 'request-timeout'].includes(error?.reason) ? 'RPC request timeout'
-              : ['connection-lost', 'connect-failed', 'send-failed'].includes(error?.reason) ? 'RPC temporarily unavailable'
-              : error?.code === 3 ? 'execution reverted' : 'RPC request failed';
+            // Classify before sanitizing. Codes alone do not distinguish a
+            // quota from an oversized range, or transient failure from pruning.
+            const label = classifyRpcReadFailure(error, method);
             const failure = new BaseError(`Observer RPC read ${method} failed`, { details: label });
             if (Number.isSafeInteger(error?.code)) failure.code = error.code;
             if (method === 'eth_call' && typeof error?.data === 'string' && error.data.length <= 8192 && /^0x(?:[0-9a-fA-F]{2})*$/.test(error.data)) failure.data = error.data;
