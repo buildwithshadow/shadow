@@ -14,7 +14,8 @@ import {
   runCli,
 } from "./float-mainnet-cli.mjs";
 import { writeJsonFile } from "./float-mainnet-intent.mjs";
-import { errorMessage, isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
+import { errorMessage, stableStringify } from "./float-mainnet-format.mjs";
+import { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
 
 // Event index for the ShadowFloatMainnet candidate: every Float event from a
 // start block (the manifest's deployment block) to a pinned head, decoded and

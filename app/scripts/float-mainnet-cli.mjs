@@ -12,7 +12,7 @@ import {
   revertName,
   walletFromEnv,
 } from "./float-mainnet-config.mjs";
-import { errorMessage } from "./float-mainnet-preflight.mjs";
+import { errorMessage } from "./float-mainnet-format.mjs";
 
 // CLI plumbing shared by the ShadowFloatMainnet candidate participant tools:
 // flag parsing, connection, dry-run / --execute / --calldata writes, event

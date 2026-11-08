@@ -47,7 +47,8 @@ import {
   validateIntentFile,
   writeJsonFile,
 } from "./float-mainnet-intent.mjs";
-import { errorMessage, isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
+import { errorMessage, stableStringify } from "./float-mainnet-format.mjs";
+import { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
 import { checkpointStatus } from "./float-mainnet-indexer.mjs";
 
 // Provider-side kit for the ShadowFloatMainnet candidate (Shadow's own
@@ -116,6 +117,9 @@ export function requestIdHashOf(requestId) {
   if (typeof requestId !== "string" || requestId === "") throw new Error("requestId must be a non-empty string");
   return keccak256(stringToBytes(requestId));
 }
+
+// Hash raw result bytes without requiring an install beside the reference server.
+export function resultHashOf(bytes) { return keccak256(bytes); }
 
 // A DeliveryReceipt's result location as signed: keccak256 of its UTF-8 bytes,
 // or zero when the delivery names none.

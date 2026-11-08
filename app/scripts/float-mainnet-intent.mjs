@@ -47,7 +47,8 @@ import {
   stateName,
   uintFlag,
 } from "./float-mainnet-cli.mjs";
-import { errorMessage, isEntrypoint, stableStringify } from "./float-mainnet-preflight.mjs";
+import { errorMessage, stableStringify } from "./float-mainnet-format.mjs";
+import { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
 import { inspectSessionIntent, requireNamedMainnetExecutor } from "./float-mainnet-session.mjs";
 
 // Agent-side SpendIntent tool for the ShadowFloatMainnet candidate.

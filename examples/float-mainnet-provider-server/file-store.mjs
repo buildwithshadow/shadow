@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
 import { storeOnce } from '../../app/scripts/float-mainnet-provider.mjs';
-import { stableStringify } from '../../app/scripts/float-mainnet-preflight.mjs';
+import { stableStringify } from '../../app/scripts/float-mainnet-format.mjs';
 import { createStoreWitness } from './store-witness.mjs';
 
 // Synchronous persistence boundary. A write must be durable before its caller
