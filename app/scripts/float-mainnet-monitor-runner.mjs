@@ -7,13 +7,12 @@ import { fileURLToPath } from "node:url";
 import { parseArgs } from "node:util";
 import { setTimeout as delay } from "node:timers/promises";
 import { performance } from "node:perf_hooks";
-import { isEntrypoint } from "./float-mainnet-preflight.mjs";
+import { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
 import { canonicalJson, digestJson } from "./float-mainnet-monitor-policy.mjs";
 import { evaluateSnapshot, validateBaseline } from "./float-mainnet-monitor-public-policy.mjs";
 import { configuredLogChunkBlocks } from "./float-mainnet-config.mjs";
 import { validateConfiguredHistory } from "./float-mainnet-approved-history.mjs";
 
-const MONITOR = fileURLToPath(new URL("./float-mainnet-monitor.mjs", import.meta.url));
 const alert = (code, detail) => ({ code, severity: "critical", detail });
 function atomicJson(path, value, mode = 0o600) {
   const temporary = `${path}.${randomUUID()}.tmp`;
@@ -26,7 +25,6 @@ function atomicJson(path, value, mode = 0o600) {
   finally { rmSync(temporary, { force: true }); }
 }
 function readJson(path) { return JSON.parse(readFileSync(path, "utf8")); }
-function optionalJson(path) { return existsSync(path) ? readJson(path) : null; }
 function acquire(directory) {
   mkdirSync(directory, { recursive: true, mode: 0o700 });
   const path = resolve(directory, "runner.lock");
@@ -34,6 +32,53 @@ function acquire(directory) {
   try { fd = openSync(path, "wx", 0o600); } catch { throw new Error("runner lock exists; inspect the process before recovering a stale lock"); }
   try { writeFileSync(fd, canonicalJson({ pid: process.pid, startedAt: new Date().toISOString() })); fsyncSync(fd); } finally { closeSync(fd); }
   return () => rmSync(path);
+}
+// Trusted embedding seam. Persistent state remains synchronous so publication
+// ordering is identical to the filesystem runner. Async adapters must not be
+// mistaken for completed writes or lock acquisition.
+function backendCall(context, method, ...args) {
+  const backend = context.stateBackend;
+  if (!backend || typeof backend[method] !== "function") throw new Error(`monitor state backend requires ${method}`);
+  const result = backend[method](...args);
+  if (result && typeof result.then === "function") {
+    // Consume rejection without accepting asynchronous persistence as success.
+    Promise.resolve(result).catch(() => {});
+    throw new Error("monitor state backend methods must be synchronous");
+  }
+  return result;
+}
+function stateKey(context, path) {
+  const allowed = ["heartbeat.json", "snapshot.json", "hold.json", "events.json", "publication.json", "runner.lock"];
+  const key = allowed.find(name => resolve(context.stateDir, name) === path);
+  if (!key) throw new Error("invalid monitor state key");
+  return key;
+}
+function stateHas(context, path) {
+  if (!context.stateBackend) return existsSync(path);
+  const result = backendCall(context, "has", stateKey(context, path));
+  if (typeof result !== "boolean") throw new Error("monitor state has must return boolean");
+  return result;
+}
+function stateRead(context, path) {
+  if (!context.stateBackend) return readJson(path);
+  // Own the returned value; a backend cannot mutate an already inspected record.
+  return JSON.parse(backendCall(context, "read", stateKey(context, path)));
+}
+function stateOptional(context, path) { return stateHas(context, path) ? stateRead(context, path) : null; }
+function stateWrite(context, path, value, mode = 0o600) {
+  if (!context.stateBackend) return atomicJson(path, value, mode);
+  backendCall(context, "write", stateKey(context, path), `${canonicalJson(value)}\n`);
+}
+function stateRemove(context, path, force = false) {
+  if (!context.stateBackend) return rmSync(path, { force });
+  backendCall(context, "remove", stateKey(context, path), force);
+}
+function stateAcquire(context) {
+  if (!context.stateBackend) return acquire(context.stateDir);
+  const token = randomUUID();
+  const acquired = backendCall(context, "acquire", "runner.lock", canonicalJson({ token, startedAt: new Date().toISOString() }));
+  if (acquired !== true) throw new Error("runner lock exists; inspect the process before recovering a stale lock");
+  return () => backendCall(context, "release", "runner.lock", token);
 }
 export function loadContext({ baselinePath, manifestPath, stateDir, indexPath, groupReadableStatus = false }) {
   if (typeof groupReadableStatus !== "boolean") throw new Error("groupReadableStatus must be a boolean");
@@ -55,19 +100,19 @@ const paths = (context) => Object.fromEntries(["heartbeat", "snapshot", "hold", 
 function atomicStatusJson(context, path, value) {
   const file = paths(context);
   if (![file.heartbeat, file.snapshot, file.hold].includes(path)) throw new Error("Not a shareable monitor observation file");
-  atomicJson(path, value, context.groupReadableStatus === true ? 0o640 : 0o600);
+  stateWrite(context, path, value, context.groupReadableStatus === true ? 0o640 : 0o600);
 }
 function event(context, record) {
   // Bounded local journal; no webhooks, email, signing keys or scheduler install.
   const path = paths(context).events;
-  const history = optionalJson(path) ?? [];
+  const history = stateOptional(context, path) ?? [];
   if (!Array.isArray(history)) throw new Error("local event journal is malformed");
-  atomicJson(path, [...history.slice(-199), record]);
+  stateWrite(context, path, [...history.slice(-199), record]);
 }
 function latch(context, alerts, nowMs) {
   const path = paths(context).hold;
-  if (!existsSync(path)) atomicStatusJson(context, path, { incidentId: randomUUID(), createdAt: new Date(nowMs).toISOString(), baselineHash: context.baselineHash, alerts });
-  return readJson(path);
+  if (!stateHas(context, path)) atomicStatusJson(context, path, { incidentId: randomUUID(), createdAt: new Date(nowMs).toISOString(), baselineHash: context.baselineHash, alerts });
+  return stateRead(context, path);
 }
 
 // This subprocess is read-only and has a hard wall-time/output bound. A killed
@@ -90,7 +135,7 @@ export async function collectSnapshot(context, { rpcUrl = process.env.ARC_RPC_UR
   if (!rpcUrl) throw new Error("ARC_RPC_URL required");
   const { baseline: b } = context;
   const childEnv = monitorReadEnvironment(rpcUrl, b.identity.chainId);
-  const args = [MONITOR, "snapshot", "--manifest", context.manifestPath, "--warn-before", String(b.policy.warnBeforeSeconds), "--max-index-lag", String(b.policy.maxIndexLagSeconds), "--executor-from-block", b.executor.fromBlock];
+  const args = [fileURLToPath(new URL("./float-mainnet-monitor.mjs", import.meta.url)), "snapshot", "--manifest", context.manifestPath, "--warn-before", String(b.policy.warnBeforeSeconds), "--max-index-lag", String(b.policy.maxIndexLagSeconds), "--executor-from-block", b.executor.fromBlock];
   if (b.schemaVersion === 2) args.push("--public-admission-audit");
   if (context.indexPath) args.push("--index", context.indexPath);
   if (b.approvedHistory) {
@@ -120,7 +165,8 @@ export async function collectSnapshot(context, { rpcUrl = process.env.ARC_RPC_UR
 export function heartbeatStatus(context, nowMs = Date.now()) {
   const common = identity(context);
   try {
-    const heartbeat = optionalJson(paths(context).heartbeat);
+    if (context.stateBackend && stateHas(context, resolve(context.stateDir, "runner.lock"))) return { ...common, ok: false, hold: true, status: "hold", alerts: [alert("CHECK_IN_PROGRESS", "durable monitor generation is active or interrupted")] };
+    const heartbeat = stateOptional(context, paths(context).heartbeat);
     if (!heartbeat) return { ...common, ok: false, hold: true, status: "missing", alerts: [alert("HEARTBEAT_MISSING", "no completed monitor heartbeat")] };
     const alerts = [];
     for (const key of Object.keys(common)) if (heartbeat[key] !== common[key]) alerts.push(alert("HEARTBEAT_BINDING_MISMATCH", `${key} differs from the selected baseline/release`));
@@ -129,13 +175,13 @@ export function heartbeatStatus(context, nowMs = Date.now()) {
     if (!Number.isFinite(time) || !Number.isFinite(start) || time < start || time > nowMs || nowMs - time > context.baseline.policy.maxHeartbeatAgeMs || nowMs - start > context.baseline.policy.maxHeartbeatAgeMs) alerts.push(alert("HEARTBEAT_STALE", "monitor completion is absent, stale or has invalid timestamps"));
     if (heartbeat.status !== "healthy" || heartbeat.checks?.snapshotHealthy !== true) alerts.push(alert("HEARTBEAT_NOT_HEALTHY", "latest cycle is not a completed healthy policy result"));
     if (heartbeat.status === "checking") alerts.push(alert("CHECK_IN_PROGRESS", "a fresh complete check is not available"));
-    const snapshot = optionalJson(paths(context).snapshot);
+    const snapshot = stateOptional(context, paths(context).snapshot);
     if (!snapshot || digestJson(snapshot) !== heartbeat.snapshotHash) alerts.push(alert("SNAPSHOT_BINDING_MISMATCH", "persisted snapshot is missing or does not match the heartbeat"));
     else {
       alerts.push(...evaluateSnapshot(context.baseline, snapshot, nowMs).alerts);
       if (canonicalJson(snapshot.observedAt) !== canonicalJson(heartbeat.observedAt)) alerts.push(alert("OBSERVATION_BINDING_MISMATCH", "heartbeat observation differs from its hashed snapshot"));
     }
-    const hold = optionalJson(paths(context).hold);
+    const hold = stateOptional(context, paths(context).hold);
     if (hold) alerts.push(alert("HOLD_LATCHED", `incident ${hold.incidentId} needs explicit local acknowledgement`));
     if (heartbeat.ok !== true || heartbeat.hold !== false) alerts.push(...(Array.isArray(heartbeat.alerts) ? heartbeat.alerts : [alert("HEARTBEAT_INVALID", "heartbeat has no alert policy result")]));
     const healthy = alerts.length === 0 && heartbeat.ok === true && heartbeat.hold === false;
@@ -144,14 +190,15 @@ export function heartbeatStatus(context, nowMs = Date.now()) {
 }
 
 export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now, afterCheckingPublished = async () => {}, afterSnapshotPublished = async () => {}, afterHoldLatched = async () => {} } = {}) {
-  const release = acquire(context.stateDir);
+  const release = stateAcquire(context);
+  let completedPublication = false;
   const file = paths(context);
   const started = now();
   const common = { ...identity(context), runId: randomUUID(), startedAt: new Date(started).toISOString(), completedAt: null, observedAt: null, snapshotHash: null, ok: false, hold: true, status: "checking", checks: { snapshotHealthy: false }, alerts: [alert("CHECK_IN_PROGRESS", "canonical read in progress; no spend authorization")] };
   try {
     // Replace a previous healthy heartbeat before doing any network work.
     let previous;
-    try { previous = optionalJson(file.heartbeat); } catch { latch(context, [alert("LOCAL_STATE_INVALID", "previous heartbeat was unreadable")], started); }
+    try { previous = stateOptional(context, file.heartbeat); } catch { latch(context, [alert("LOCAL_STATE_INVALID", "previous heartbeat was unreadable")], started); }
     if (previous && (previous.baselineHash !== context.baselineHash || previous.manifestHash !== context.manifestHash)) latch(context, [alert("BASELINE_CHANGED", "baseline/release changed since the previous run")], started);
     if (previous && (!Number.isFinite(Date.parse(previous.startedAt)) || started - Date.parse(previous.startedAt) > context.baseline.policy.maxHeartbeatAgeMs || previous.status === "checking")) latch(context, [alert("HEARTBEAT_STALE", "previous monitor heartbeat was missed or interrupted")], started);
     // Recover either the prior completed snapshot or a snapshot atomically
@@ -161,13 +208,13 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     let previousPublicationHash = null;
     let recoveredFailureCodes = null;
     const publicationAlerts = [];
-    if (existsSync(resolve(context.stateDir, 'publication.json'))) {
+    if (stateHas(context, resolve(context.stateDir, 'publication.json'))) {
       try {
-        const publication = optionalJson(resolve(context.stateDir, 'publication.json'));
-        const retained = optionalJson(file.snapshot);
+        const publication = stateOptional(context, resolve(context.stateDir, 'publication.json'));
+        const retained = stateOptional(context, file.snapshot);
         // Exactly one HOLD_LATCHED is appended only for a healthy policy
         // result under an existing hold. A failed result cannot discard it.
-        const priorHold = optionalJson(file.hold);
+        const priorHold = stateOptional(context, file.hold);
         const heartbeatOnlyHold = previous?.status === 'hold' && previous.ok === false && previous.hold === true &&
           previous.checks?.snapshotHealthy === true && Array.isArray(previous.alerts) && previous.alerts.length === 1 &&
           previous.alerts[0]?.code === 'HOLD_LATCHED' && previous.alerts[0]?.severity === 'critical' &&
@@ -212,7 +259,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     await afterCheckingPublished();
     // Publish the recovered binding before removing its old marker: a
     // separately scheduled notifier can sample either side of this write.
-    rmSync(resolve(context.stateDir, 'publication.json'), { force: true });
+    stateRemove(context, resolve(context.stateDir, 'publication.json'), true);
     let snapshot; let result;
     try { snapshot = await collect(context); result = evaluateSnapshot(context.baseline, snapshot, now()); }
     catch { result = { ok: false, hold: true, alerts: [alert("RPC_CHECK_FAILED", "read-only monitor failed or timed out; partial results are not healthy")] }; }
@@ -226,7 +273,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
     const completed = now();
     if (completed < started || completed - started > context.baseline.policy.runTimeoutMs) result = { ok: false, hold: true, alerts: [...result.alerts, alert("CHECK_TIMEOUT", "check exceeded the approved wall-time bound")] };
     const publication = resolve(context.stateDir, 'publication.json');
-    atomicJson(publication, { ...identity(context), runId: common.runId,
+    stateWrite(context, publication, { ...identity(context), runId: common.runId,
       startedAt: common.startedAt, completedAt: new Date(completed).toISOString(),
       snapshotHash: snapshot ? digestJson(snapshot) : retainedSnapshotHash,
       alertCodes: result.alerts.map(entry => entry.code) });
@@ -235,30 +282,35 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
       await afterSnapshotPublished();
     }
     if (result.hold) { latch(context, result.alerts, completed); await afterHoldLatched(); }
-    const incident = optionalJson(file.hold);
+    const incident = stateOptional(context, file.hold);
     const heartbeat = { ...common, completedAt: new Date(completed).toISOString(), observedAt: snapshot?.observedAt ?? null,
       snapshotHash: snapshot ? digestJson(snapshot) : retainedSnapshotHash, ok: result.ok && !incident, hold: result.hold || !!incident,
       status: result.ok && !incident ? "healthy" : "hold", ...(result.notices?.length ? {notices: result.notices} : {}), checks: { snapshotHealthy: result.ok },
       incidentId: incident?.incidentId ?? null, alerts: [...result.alerts, ...(incident && result.ok ? [alert("HOLD_LATCHED", `incident ${incident.incidentId} requires local acknowledgement after recovery`)] : [])] };
     event(context, { runId: heartbeat.runId, startedAt: heartbeat.startedAt, completedAt: heartbeat.completedAt, ok: heartbeat.ok, hold: heartbeat.hold, baselineHash: context.baselineHash, observedAt: heartbeat.observedAt, alerts: heartbeat.alerts });
     atomicStatusJson(context, file.heartbeat, heartbeat);
-    rmSync(publication, { force: true });
+    stateRemove(context, publication, true);
+    completedPublication = true;
     return heartbeat;
-  } finally { release(); }
+  } finally {
+    // A durable interrupted generation needs operator recovery. Releasing after
+    // a persistence error could expose an older healthy heartbeat as current.
+    if (!context.stateBackend || completedPublication) release();
+  }
 }
 
 export function acknowledgeHold(context, incidentId, nowMs = Date.now()) {
   if (typeof incidentId !== "string" || !/^[0-9a-f-]{36}$/.test(incidentId)) throw new Error("the exact incident-id is required");
-  const release = acquire(context.stateDir);
+  const release = stateAcquire(context);
   try {
-    const file = paths(context); const hold = readJson(file.hold); const heartbeat = readJson(file.heartbeat); const snapshot = readJson(file.snapshot);
+    const file = paths(context); const hold = stateRead(context, file.hold); const heartbeat = stateRead(context, file.heartbeat); const snapshot = stateRead(context, file.snapshot);
     const age = nowMs - Date.parse(heartbeat.startedAt);
     const completed = Date.parse(heartbeat.completedAt);
     if (hold.incidentId !== incidentId || heartbeat.baselineHash !== context.baselineHash || heartbeat.manifestHash !== context.manifestHash || heartbeat.snapshotHash !== digestJson(snapshot) || heartbeat.checks?.snapshotHealthy !== true || !Number.isFinite(completed) || completed > nowMs || completed < Date.parse(heartbeat.startedAt) || !Number.isFinite(age) || age < 0 || age > context.baseline.policy.maxHeartbeatAgeMs || !evaluateSnapshot(context.baseline, snapshot, nowMs).ok) throw new Error("acknowledgement requires the exact incident and a fresh complete healthy sample for this baseline");
     event(context, { acknowledgedAt: new Date(nowMs).toISOString(), incidentId, baselineHash: context.baselineHash });
     const acknowledged = { ...heartbeat, ok: true, hold: false, status: "healthy", alerts: [], incidentId: null, acknowledgedAt: new Date(nowMs).toISOString() };
     atomicStatusJson(context, file.heartbeat, acknowledged);
-    rmSync(file.hold); // If interrupted before this removal, status still holds.
+    stateRemove(context, file.hold); // If interrupted before this removal, status still holds.
     return acknowledged;
   } finally { release(); }
 }
