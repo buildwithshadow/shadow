@@ -328,3 +328,9 @@ An embedding Worker must route each identity through one coordinator, establish
 trusted caller identity, preserve independent storage and monitoring, and validate
 its own platform limits before accepting payments. Do not use its request bound
 as evidence that Node socket behavior is identical on Workers.
+
+### Trusted hosting caller identity
+
+An embedding runtime may pass `clientAddress(request)` to `createProviderServer` when the original socket address is not the platform authenticated caller address. It must synchronously return a validated IP literal for that request. Missing, invalid, asynchronous or throwing results are refused without falling back to a shared socket or forwarding header. Omitting the option preserves existing socket and explicitly configured loopback proxy behaviour.
+
+This callback is a trusted hosting capability, not a new client header or CLI setting. An adapter must obtain the address from its platform boundary, canonicalize it and keep it local to the request. Do not read an untrusted client supplied forwarding header or store one mutable global caller address. Public deployments must still configure the approved `publicOrigin` and retain their concurrent, per caller and recovery limits.

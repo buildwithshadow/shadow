@@ -95,7 +95,8 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null, serverFactory = createNodeProviderHttpServer }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null, serverFactory = createNodeProviderHttpServer, clientAddress = null }) {
+  if (clientAddress !== null && typeof clientAddress !== "function") throw new Error("clientAddress must be a function");
   if (typeof serverFactory !== "function") throw new Error("serverFactory must be a function");
   if (admissionGuard !== null && typeof admissionGuard !== "function") throw new Error("admissionGuard must be a function");
   const assertAdmission = async () => {
@@ -531,6 +532,19 @@ export function createProviderServer({ connection, account, endpointHash, price,
   const recoverySlots = Math.max(1, Math.floor(maxConcurrent / 2));
   if (maxConcurrent < 2) throw new Error('Provider needs at least two slots to reserve recovery capacity');
   function callerOf(request) {
+    // Trusted hosting adapters supply a request-local, platform-authenticated
+    // IP literal. This never makes a client-supplied forwarding header trusted.
+    if (clientAddress !== null) {
+      try {
+        const address = clientAddress(request);
+        if (address && typeof address.then === 'function') {
+          Promise.resolve(address).catch(() => {});
+          return null;
+        }
+        return typeof address === 'string' && address.length <= 45 && /^[0-9a-fA-F:.]+$/.test(address) && isIP(address)
+          ? address.toLowerCase() : null;
+      } catch { return null; }
+    }
     const remote = request.socket.remoteAddress || 'unknown';
     if (trustLoopbackProxy && ['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(remote)) {
       const forwarded = request.headers['x-shadow-client-ip'];
