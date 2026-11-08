@@ -205,7 +205,11 @@ export function createReadonlyTransport(options: TransportOptions): ReadonlyTran
     socket.removeEventListener('message', l.onMessage);
     socket.removeEventListener('close', l.onClose);
     socket.removeEventListener('error', l.onError);
-    try { socket.close(code, 'closed'); } catch { /* already closing */ }
+    // DOM close() accepts 1000 or application codes 3000..4999, rather
+    // than protocol status codes 1002/1003/1008/1009. Keep policy reasons
+    // locally and send their compatible application code on the wire.
+    const wireCode = code === 1000 ? 1000 : 3000 + code;
+    try { socket.close(wireCode, 'closed'); } catch { /* already closing */ }
     failAll(reason);
   };
 
