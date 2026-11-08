@@ -23,3 +23,20 @@ test('provider and snapshot imports do not enter Node CLI preflight or subproces
   `;
   assert.equal(execFileSync(process.execPath, ['--input-type=module', '--eval', script], { encoding: 'utf8', timeout: 15000 }), 'provider and monitor modules loaded');
 });
+
+test('notification policy imports without CLI preflight or testnet subprocess modules', () => {
+  const alerts = new URL('./float-mainnet-monitor-alerts.mjs', import.meta.url).href;
+  const script = `
+    import { registerHooks } from 'node:module';
+    registerHooks({ resolve(specifier, context, nextResolve) {
+      if (['float-mainnet-preflight.mjs', 'public-testnet-observer.mjs', 'public-testnet-observer-alerts.mjs'].some(name => specifier.endsWith(name))) {
+        throw new Error('CLI-only module entered notification policy: ' + specifier);
+      }
+      return nextResolve(specifier, context);
+    }});
+    const { notifyMainnet, notificationState } = await import(${JSON.stringify(alerts)});
+    if (typeof notifyMainnet !== 'function' || typeof notificationState !== 'function') throw new Error('missing policy export');
+    process.stdout.write('notification policy loaded');
+  `;
+  assert.equal(execFileSync(process.execPath, ['--input-type=module', '--eval', script], {encoding:'utf8',timeout:15000}), 'notification policy loaded');
+});

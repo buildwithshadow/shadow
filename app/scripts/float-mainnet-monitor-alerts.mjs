@@ -4,10 +4,9 @@ import { closeSync, fsyncSync, openSync, fstatSync, lstatSync, existsSync, mkdir
 import { resolve } from 'node:path';
 import { parseArgs } from 'node:util';
 import { fileURLToPath } from 'node:url';
-import { heartbeatStatus, loadContext } from './float-mainnet-monitor-runner.mjs';
+import { heartbeatStatus, loadContext, monitorStateRecord } from './float-mainnet-monitor-runner.mjs';
 import { digestJson, evaluateSnapshot } from './float-mainnet-monitor-public-policy.mjs';
-import { isEntrypoint } from './float-mainnet-preflight.mjs';
-import { sendTelegram } from './public-testnet-observer-alerts.mjs';
+import { isEntrypoint } from './float-mainnet-entrypoint.mjs';
 import { GUARDED_TESTNET } from '../guardedTestnetDeployment.mjs';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -19,6 +18,13 @@ const optionalRecord = path => {
   try { return { exists: true, value: JSON.parse(data) }; }
   catch { return { exists: true, value: null }; }
 };
+
+const observationRecord = (context, name) => context.stateBackend
+  ? monitorStateRecord(context, name) : optionalRecord(resolve(context.stateDir, name));
+const observationJson = (context, name) => context.stateBackend
+  ? monitorStateRecord(context, name).value : optionalJson(resolve(context.stateDir, name));
+const observationExists = (context, name) => context.stateBackend
+  ? monitorStateRecord(context, name).exists : existsSync(resolve(context.stateDir, name));
 
 export function loadMainnetContext(options) {
   return loadNotificationContext(options, '5042');
@@ -66,22 +72,20 @@ export function guardedTestnetNotificationState(context, now = Date.now()) {
 function boundNotificationState(context, now) {
   // Read the heartbeat around its snapshot/publication generation. A normal
   // two-file publication can finish between any of these reads.
-  const holdPath = resolve(context.stateDir, 'hold.json');
   let raw, snapshot, publication, publicationExists, hold, holdExists, generationConsistent = false, generationMoved = false;
   for (let attempt = 0; attempt < 3; attempt++) {
-    raw = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
-    const publicationPath = resolve(context.stateDir, 'publication.json');
-    const publicationRecord = optionalRecord(publicationPath);
+    raw = observationJson(context, 'heartbeat.json');
+    const publicationRecord = observationRecord(context, 'publication.json');
     publicationExists = publicationRecord.exists;
     publication = publicationRecord.value;
-    snapshot = optionalJson(resolve(context.stateDir, 'snapshot.json'));
+    snapshot = observationJson(context, 'snapshot.json');
     // A single read distinguishes absence from corruption without an
     // existence/read race. A later created hold belongs to the next sample.
-    const holdRecord = optionalRecord(holdPath);
+    const holdRecord = observationRecord(context, 'hold.json');
     holdExists = holdRecord.exists;
     hold = holdRecord.value;
-    const afterPublication = optionalRecord(publicationPath);
-    const after = optionalJson(resolve(context.stateDir, 'heartbeat.json'));
+    const afterPublication = observationRecord(context, 'publication.json');
+    const after = observationJson(context, 'heartbeat.json');
     const currentPublication = publication !== null && raw !== null && publication.runId === raw.runId && publication.startedAt === raw.startedAt;
     // With no hold, a valid bounded checking heartbeat remains non-authoritative
     // while its snapshot is being published. A held incident must bind data.
@@ -151,12 +155,12 @@ function boundNotificationState(context, now) {
     // result or a transient checking fingerprint. Corrupt files stay audible.
     firstFailurePublication = publicationBound && publication.snapshotHash === null &&
       raw.previousSnapshotHash === null && snapshot === null &&
-      !existsSync(resolve(context.stateDir, 'snapshot.json')) && publication.alertCodes.includes('RPC_CHECK_FAILED');
+      !observationExists(context, 'snapshot.json') && publication.alertCodes.includes('RPC_CHECK_FAILED');
     if (firstFailurePublication) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...publication.alertCodes.map(code => ({code})));
     // A subsequent bounded collection retains a prior no-snapshot failure;
     // its original RPC outage does not become a new checking incident.
     retainedNoSnapshotFailure = boundedScan && (!publicationExists || priorPublicationBound) && raw.previousSnapshotHash === null &&
-      snapshot === null && !existsSync(resolve(context.stateDir, 'snapshot.json')) &&
+      snapshot === null && !observationExists(context, 'snapshot.json') &&
       Array.isArray(raw.previousFailureCodes) && raw.previousFailureCodes.includes('RPC_CHECK_FAILED') &&
       raw.previousFailureCodes.every(code => typeof code === 'string' && /^[A-Z_0-9]{1,80}$/.test(code));
     if (retainedNoSnapshotFailure) snapshotAlerts.push({code:'SNAPSHOT_BINDING_MISMATCH'}, ...raw.previousFailureCodes.map(code => ({code})));
@@ -229,6 +233,7 @@ async function main(load = loadMainnetContext, notify = notifyMainnet) {
   const observerDir = resolve(values['observer-dir']);
   const dir = resolve(values['state-dir']);
   if (dir === observerDir) throw new Error('SEPARATE_NOTIFICATION_STATE_REQUIRED');
+  const { sendTelegram } = await import('./public-testnet-observer-alerts.mjs');
   const context = load({ baselinePath: values.baseline, manifestPath: values.manifest, stateDir: observerDir });
   const config = JSON.parse(readFileSync(resolve(values.config), 'utf8'));
   mkdirSync(dir, { recursive: true, mode: 0o700 });
