@@ -120,7 +120,7 @@ import { readFileSync as requireManifest } from 'node:fs';
 
 test('runtime history location preserves the original protected baseline and exact byte approval', () => {
  const f=fixture();try {
-  const baseline={...f.baseline,approvedHistory:{...f.history,file:'/etc/shadow/nonexistent-protected-history.json'}};
+  const baseline={...f.baseline,approvedHistory:{...f.history,file:join(f.directory,'unmounted-original-host','prefix.json')}};
   const baselinePath=join(f.directory,'baseline.json');writeFileSync(baselinePath,JSON.stringify(baseline));
   const options={baselinePath,manifestPath:f.manifestPath,stateDir:join(f.directory,'state')};
   assert.throws(()=>loadContext(options),/ENOENT/);
