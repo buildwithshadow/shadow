@@ -1,0 +1,29 @@
+name: rpc-read-websocket
+on:
+  pull_request:
+    paths:
+      - 'packages/rpc-read-websocket/**'
+      - '.github/workflows/rpc-read-websocket.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/rpc-read-websocket/**'
+      - '.github/workflows/rpc-read-websocket.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/rpc-read-websocket
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/rpc-read-websocket/package-lock.json
+      - run: npm ci
+      - run: npm run check

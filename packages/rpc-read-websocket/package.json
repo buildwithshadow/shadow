@@ -1,0 +1,17 @@
+{
+  "name": "@shadow/rpc-read-websocket",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Bounded readonly JSON RPC over owned WebSockets with no automatic wire replay",
+  "type": "module",
+  "scripts": {
+    "test": "node --test --test-timeout=10000 --test-reporter=spec test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "check": "npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "viem": "2.55.11"
+  }
+}
