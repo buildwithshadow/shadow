@@ -1,5 +1,6 @@
 import { constants, openSync, closeSync, fstatSync, readFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
+import { isAbsolute } from 'node:path';
 import { keccak256 } from 'viem';
 import { findLogs } from './float-mainnet-cli.mjs';
 import { MAX_BYTES, buildNormalizedContent, hashBytes, validateApprovedBytes, verifyAndMerge } from './float-mainnet-history-validation.mjs';
@@ -35,13 +36,17 @@ export function readApprovedHistoryFile(file, digest, identity) {
   } finally { closeSync(fd); }
 }
 
-export function validateConfiguredHistory(baseline, manifestPath) {
+export function validateConfiguredHistory(baseline, manifestPath, { runtimeFile = null } = {}) {
+  if (runtimeFile !== null) {
+    must(typeof runtimeFile === 'string' && isAbsolute(runtimeFile) && runtimeFile.length <= 4096 && !/[\0\r\n]/.test(runtimeFile), 'Approved history runtime file must be a bounded absolute path.');
+    must(!!baseline.approvedHistory, 'A runtime file requires an externally approved history binding.');
+  }
   if (!baseline.approvedHistory) return null;
   const identity = approvedHistoryIdentity(manifestPath);
   for (const key of ['chainId', 'address', 'runtimeCodeHash', 'deployBlock'])
     must(same(identity[key], baseline.identity[key]), 'Approved history baseline differs from the verified manifest.');
   const policy = baseline.approvedHistory;
-  const history = readApprovedHistoryFile(policy.file, policy.sha256, identity);
+  const history = readApprovedHistoryFile(runtimeFile ?? policy.file, policy.sha256, identity);
   must(history.parsed.anchor.blockNumber === policy.anchorBlock
     && same(history.parsed.anchor.blockHash, policy.anchorHash), 'History anchor differs from the approved baseline.');
   return history;
