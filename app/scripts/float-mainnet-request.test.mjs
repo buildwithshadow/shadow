@@ -24,6 +24,7 @@ import {
 import { sign } from "viem/accounts";
 
 import { createProviderServer } from "../../examples/float-mainnet-provider-server/server.mjs";
+import { createFileProviderStore } from "../../examples/float-mainnet-provider-server/file-store.mjs";
 import exampleService from "../../examples/float-mainnet-provider-server/service.mjs";
 import { connectCandidate, floatAbi } from "./float-mainnet-config.mjs";
 import { CHAIN_ID, account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
@@ -169,7 +170,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
   // its service and its chain client are wrapped to count signatures, service
   // runs and chain calls: failNextSign and failNextCall make the next one fail,
   // and hold, when set, is a promise the signer and the service wait for.
-  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, admissionGuard = null } = {}) {
+  async function startProviderServer(port, { key = provider, endpointHash = ENDPOINT_HASH, price = PRICE, storeDir = store, serviceImpl = exampleService, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, admissionGuard = null, recordStore = null } = {}) {
     const stats = { signed: 0, work: [], prepared: [], calls: [], failNextSign: false, failNextCall: null, failSignatureRpc: null, hold: null };
     const signer = {
       address: key.address,
@@ -215,7 +216,7 @@ describe("request client against the reference provider server", { skip: e2eSkip
         };
       },
     });
-    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine, admissionGuard });
+    const server = createProviderServer({ connection: { ...connection, client: counted }, account: signer, endpointHash, price, storeDir, service, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine, admissionGuard, recordStore });
     await listen(server, port);
     return { server, stats, port };
   }
@@ -1236,6 +1237,129 @@ describe("request client against the reference provider server", { skip: e2eSkip
       assert.equal(existsSync(join(dir, `${different.digest}.released.json`)), false);
       assert.equal((await post(OTHER_PORT, "/serve", { digest: different.digest })).status, 200);
     } finally { await stop(bounded.server); await client.request({ method: "evm_revert", params: [snapshot] }); }
+  });
+
+  // Real server exercised with an adapter that yields on every storage access.
+  // These are local Anvil tests, never a hosted service or a real wallet.
+  function delayedStore(directory, hook = async () => {}) {
+    fs.mkdirSync(directory, { recursive: true });
+    directory = fs.realpathSync(directory);
+    const base = createFileProviderStore({ directory, witnessDirectory: `${directory}-witness`, identity: { provider: provider.address, chainId: CHAIN_ID.toString(), contract: float, endpointHash: ENDPOINT_HASH } });
+    const adapter = { witnessed: base.witnessed, describe: name => base.describe(name) };
+    for (const method of ["read", "putOnce", "list", "has", "assertConsistent"]) {
+      adapter[method] = async (...args) => {
+        await new Promise(resolve => setImmediate(resolve));
+        await hook(method, ...args);
+        return base[method](...args);
+      };
+    }
+    return adapter;
+  }
+
+  test("asynchronous admission persistence completes before signing, and acceptance persistence completes before replying", async () => {
+    const intent = await signedIntent("async-durable-order");
+    let reached, resume;
+    const paused = new Promise(resolve => { reached = resolve; });
+    const gate = new Promise(resolve => { resume = resolve; });
+    let first = true;
+    const recordStore = delayedStore(path("async-order"), async (method, name) => {
+      if (first && method === "putOnce" && name.endsWith(".admission.json")) { first = false; reached(); await gate; }
+    });
+    const bounded = await startProviderServer(OTHER_PORT, { recordStore });
+    let replied = false;
+    const pending = post(OTHER_PORT, "/accept", { intent: readJson(intent.file), requestId: "async-order" }).then(reply => { replied = true; return reply; });
+    try {
+      await paused;
+      assert.equal(bounded.stats.signed, 0, "no signature before the durable admission finishes");
+      assert.equal(replied, false);
+      resume();
+      const answer = await pending;
+      assert.equal(answer.status, 200, JSON.stringify(answer));
+      assert.deepEqual(await recordStore.read(`${intent.digest}.acceptance.json`), answer.json);
+      const status = await send(OTHER_PORT, "GET", `/status/${intent.digest}`);
+      assert.equal(status.json.delivered, false, "has() is resolved, never serialized as a Promise");
+    } finally { resume(); await pending; await stop(bounded.server); }
+  });
+
+  test("asynchronous storage retains the paid result across restart without new work or signatures", async () => {
+    const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+    const now = (await client.getBlock()).timestamp;
+    await client.request({ method: "evm_setNextBlockTimestamp", params: [Number(now + 86400n)] });
+    await client.request({ method: "anvil_mine", params: ["0x1"] });
+    const intent = await signedIntent("async-paid-recovery");
+    const directory = path("async-paid-store");
+    let bounded = await startProviderServer(OTHER_PORT, { recordStore: delayedStore(directory) });
+    try {
+      const accepted = await post(OTHER_PORT, "/accept", { intent: readJson(intent.file), requestId: "async-paid" });
+      assert.equal(accepted.status, 200, JSON.stringify(accepted));
+      assert.equal((await ok("submit", ["submit", "--intent", intent.file, "--execute"], EXECUTOR)).status, "paid");
+      const first = await post(OTHER_PORT, "/serve", { digest: intent.digest });
+      assert.equal(first.status, 200, JSON.stringify(first));
+      assert.equal(bounded.stats.work.length, 1);
+      await stop(bounded.server);
+      bounded = await startProviderServer(OTHER_PORT, { recordStore: delayedStore(directory) });
+      const recovered = await post(OTHER_PORT, "/serve", { digest: intent.digest });
+      assert.deepEqual(recovered, first);
+      assert.equal(bounded.stats.signed, 0);
+      assert.equal(bounded.stats.work.length, 0);
+    } finally { await stop(bounded.server); await client.request({ method: "evm_revert", params: [snapshot] }); }
+  });
+
+  test("asynchronous capacity scans cannot overbook the final admission slot", async () => {
+    const intents = await Promise.all([signedIntent("async-cap-a"), signedIntent("async-cap-b")]);
+    const bounded = await startProviderServer(OTHER_PORT, { recordStore: delayedStore(path("async-capacity")), maxStoredPurchases: 1 });
+    try {
+      bounded.stats.hold = arrivals(bounded.server, 2);
+      const replies = await Promise.all(intents.map((intent, i) => post(OTHER_PORT, "/accept", { intent: readJson(intent.file), requestId: `async-cap-${i}` })));
+      assert.deepEqual(replies.map(reply => reply.status).sort(), [200, 503]);
+      assert.equal(bounded.stats.signed, 1);
+    } finally { await stop(bounded.server); }
+  });
+
+  test("a suspended failed release retains per-agent and per-line quota metadata", async () => {
+    for (const quota of ["maxStoredPerAgent", "maxStoredPerLine"]) {
+      const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+      const first = await signedIntent(`async-release-${quota}-first`);
+      let reachedRelease, continueRelease, readMetadata;
+      const releaseEntered = new Promise(resolve => { reachedRelease = resolve; });
+      const releaseGate = new Promise(resolve => { continueRelease = resolve; });
+      const metadataRead = new Promise(resolve => { readMetadata = resolve; });
+      let releasing = false;
+      const recordStore = delayedStore(path(`async-release-${quota}`), async (method, name) => {
+        if (method === "putOnce" && name.endsWith(".released.json")) {
+          releasing = true; reachedRelease(); await releaseGate;
+          throw new Error("release storage unavailable");
+        }
+        if (releasing && method === "read" && name === `${first.digest}.admission.json`) readMetadata();
+      });
+      const bounded = await startProviderServer(OTHER_PORT, { recordStore, [quota]: 1 });
+      let second, third;
+      try {
+        const body = { intent: readJson(first.file), requestId: `first-${quota}` };
+        assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
+        const { lineId, nonce } = body.intent.typedData.message;
+        const tx = await walletOf(agent).writeContract({ address: float, abi: floatAbi, functionName: "cancelNonce", args: [lineId, BigInt(nonce)] });
+        await client.waitForTransactionReceipt({ hash: tx });
+        await client.request({ method: "anvil_mine", params: ["0x80"] });
+        const next = await signedIntent(`async-release-${quota}-next`);
+        const other = await signedIntent(`async-release-${quota}-other`);
+        second = post(OTHER_PORT, "/accept", { intent: readJson(next.file), requestId: `next-${quota}` });
+        await releaseEntered;
+        third = post(OTHER_PORT, "/accept", { intent: readJson(other.file), requestId: `other-${quota}` });
+        await metadataRead;
+        // Drain the capacity decision after its last asynchronous metadata read.
+        await new Promise(resolve => setImmediate(resolve));
+        continueRelease();
+        const replies = await Promise.all([second, third]);
+        assert.ok(replies.every(reply => reply.status !== 200), JSON.stringify(replies));
+        assert.equal(bounded.stats.signed, 1, "the unresolved original still owns its identity quota");
+      } finally {
+        continueRelease();
+        await Promise.allSettled([second, third].filter(Boolean));
+        await stop(bounded.server);
+        await client.request({ method: "evm_revert", params: [snapshot] });
+      }
+    }
   });
 
   test("storage admission reserves the last slot across concurrent distinct purchases", async () => {

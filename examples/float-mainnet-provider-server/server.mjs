@@ -90,7 +90,7 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null }) {
   if (admissionGuard !== null && typeof admissionGuard !== "function") throw new Error("admissionGuard must be a function");
   const assertAdmission = async () => {
     if (!admissionGuard) return;
@@ -105,13 +105,24 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (account.signTypedData || account.type === "local") throw new Error("Recovery mode requires only a public provider address, never a signer");
   }
   const provider = parseAddress("account.address", account.address, Error);
-  const store = createFileProviderStore({
+  const store = recordStore ?? createFileProviderStore({
     directory: storeDir, witnessDirectory: witnessDir, recoveryOnly,
     identity: witnessDir ? { provider, chainId: String(connection.chainId), contract: connection.address.toLowerCase(), endpointHash: endpointHash.toLowerCase() } : null,
   });
+  for (const method of ["read", "putOnce", "list", "has", "assertConsistent", "describe"]) {
+    if (typeof store[method] !== "function") throw new Error(`Provider store needs ${method}`);
+  }
+  // One server is the only writer for this identity. Await every durable write
+  // before signing or replying. Generation changes invalidate capacity scans
+  // that overlap a local publication, including writes suspended on a witness.
+  let storeGeneration = 0;
   const fileOf = (digest, slot) => `${digest}.${slot}.json`;
   const readStored = name => store.read(name);
-  const persist = (name, value) => store.putOnce(name, value);
+  const persist = async (name, value) => {
+    storeGeneration++;
+    try { return await store.putOnce(name, value); }
+    finally { storeGeneration++; }
+  };
   const accepting = new Map();
   const serving = new Map();
   const admitting = new Map();
@@ -119,8 +130,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
   let reclaiming = null;
   let reclaimCursor = 0;
   let lastReclaim = 0;
-  function outstanding() {
-    const files = store.list();
+  async function outstanding() {
+    const files = await store.list();
     const terminal = new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:delivery|released)\.json$/.test(name)).map(name => name.slice(0, 66)));
     return new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:admission|prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66)).filter(digest => !terminal.has(digest)));
   }
@@ -133,14 +144,14 @@ export function createProviderServer({ connection, account, endpointHash, price,
     if (Date.now() - lastReclaim < 30_000) return;
     lastReclaim = Date.now();
     reclaiming = (async () => {
-      const pending = [...outstanding()].filter(digest => !admitting.has(digest));
+      const pending = [...await outstanding()].filter(digest => !admitting.has(digest));
       if (!pending.length) return;
       const block = await connection.client.getBlock({ blockTag: "finalized" });
       if (block.number === null) throw new Error("Finalized block is unavailable; admission remains held");
       const batch = Array.from({ length: Math.min(32, pending.length) }, (_, i) => pending[(reclaimCursor + i) % pending.length]);
       reclaimCursor = (reclaimCursor + batch.length) % pending.length;
       for (const digest of batch) {
-        const metadata = readStored(fileOf(digest, "admission"));
+        const metadata = await readStored(fileOf(digest, "admission"));
         if (metadata?.digest !== digest || !/^[0-9]+$/.test(metadata.signatureExpiry)) continue;
         const status = Number(await read(connection, "receiptStatus", [digest], block.number));
         if (status !== 0 && status !== 1) continue; // Never release paid, undelivered results.
@@ -155,14 +166,21 @@ export function createProviderServer({ connection, account, endpointHash, price,
           ]);
           if (used || cancelled) reason = used ? "nonce-used-unpaid" : "nonce-cancelled-unpaid";
         }
-        if (reason) persist(fileOf(digest, "released"), { digest, reason, blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() });
+        if (reason && !admitting.has(digest)) {
+          // A suspended release still occupies both identity quotas until durable.
+          admitting.set(digest, { ...metadata, reclaiming: true });
+          storeGeneration++;
+          try { await persist(fileOf(digest, "released"), { digest, reason, blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() }); }
+          finally { admitting.delete(digest); storeGeneration++; }
+        }
       }
     })().finally(() => { reclaiming = null; });
     return reclaiming;
   }
 
-  function capacityReached(struct) {
-    const pending = new Map([...outstanding()].map(digest => [digest, readStored(fileOf(digest, "admission"))]));
+  async function capacityReached(struct) {
+    const pending = new Map();
+    for (const digest of await outstanding()) pending.set(digest, await readStored(fileOf(digest, "admission")));
     for (const [digest, metadata] of admitting) pending.set(digest, metadata);
     const records = [...pending.values()];
     return pending.size >= maxStoredPurchases ||
@@ -171,23 +189,32 @@ export function createProviderServer({ connection, account, endpointHash, price,
   }
 
   async function reserveAdmission(digest, struct) {
-    if (outstanding().has(digest)) return () => {}; // An interrupted retry already occupies its slot.
-    if (capacityReached(struct)) await reclaimExpired();
-    // No await between the final check and reservation. In-flight requests
-    // count toward both identity quotas as well as the global ceiling.
-    if (capacityReached(struct)) {
-      throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
+    for (let attempt = 0; attempt < 3; attempt++) {
+      const generation = storeGeneration;
+      if (admitting.get(digest)?.reclaiming) throw new HttpError('This expired purchase is being released; retry later', 503);
+      if (await readStored(fileOf(digest, "released"))) throw new HttpError('This purchase authorization has ended; prepare a new purchase', 409);
+      const known = await outstanding();
+      const full = known.has(digest) ? false : await capacityReached(struct);
+      if (generation !== storeGeneration) continue;
+      // No await between validating the scan and registering this request.
+      // Retries already occupy one durable slot, but must exclude reclaim too.
+      if (full) {
+        if (attempt === 0) { await reclaimExpired(); continue; }
+        throw new HttpError('New purchases are temporarily at capacity; existing purchases can still be recovered', 503);
+      }
+      admitting.set(digest, struct);
+      storeGeneration++;
+      return () => { admitting.delete(digest); storeGeneration++; };
     }
-    admitting.set(digest, struct);
-    return () => admitting.delete(digest);
+    throw new HttpError('Purchase capacity changed while checking; retry the original request', 503);
   }
 
   // This server reserves each provider job id for at most one intent digest.
   // The durable claim also arbitrates concurrent accepts for different digests.
-  function bindRequest(requestId, digest, claim = true) {
+  async function bindRequest(requestId, digest, claim = true) {
     const file = `request-${requestIdHashOf(requestId)}.json`;
     const binding = { requestId, digest };
-    const kept = claim ? (persist(file, binding) ? binding : readStored(file)) : readStored(file);
+    const kept = claim ? (await persist(file, binding) ? binding : await readStored(file)) : await readStored(file);
     if (!claim && kept === null) return;
     if (kept?.requestId !== requestId || !/^0x[0-9a-f]{64}$/.test(kept?.digest)) {
       throw new HttpError(`the stored binding for request ${JSON.stringify(requestId)} is invalid; the provider has to repair it`, 500);
@@ -203,9 +230,9 @@ export function createProviderServer({ connection, account, endpointHash, price,
   // A stored receipt, checked for shape and for this provider and digest. Its
   // signature was verified when it was signed and is not checked again, so an
   // ERC-1271 provider that rotates its signer still serves what it stored.
-  function storedReceipt(digest, kind) {
+  async function storedReceipt(digest, kind) {
     const file = fileOf(digest, kind === ACCEPTANCE_KIND ? "acceptance" : "delivery");
-    const stored = readStored(file);
+    const stored = await readStored(file);
     if (!stored) return null;
     const receipt = validateReceiptFile(stored, connection, kind);
     if (receipt.message.provider !== provider) throw new Error(`${store.describe(file)} holds provider ${receipt.message.provider}'s receipt, not ${provider}'s`);
@@ -223,8 +250,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return { digest, requestId, result: Buffer.from(result).toString("base64"), resultRef };
   }
 
-  function checkedPrepared(digest, requestId) {
-    const prepared = readStored(fileOf(digest, "prepared"));
+  async function checkedPrepared(digest, requestId) {
+    const prepared = await readStored(fileOf(digest, "prepared"));
     if (!prepared) return null;
     if (prepared.digest !== digest || prepared.requestId !== requestId || typeof prepared.result !== "string" ||
         Buffer.from(prepared.result, "base64").toString("base64") !== prepared.result) {
@@ -237,15 +264,15 @@ export function createProviderServer({ connection, account, endpointHash, price,
   // Returns the acceptance and the intent file acceptIntent checked for it
   // (null for a stored one).
   async function acceptOnce({ digest, struct, signature }, intent, requestId) {
-    const stored = storedReceipt(digest, ACCEPTANCE_KIND);
+    const stored = await storedReceipt(digest, ACCEPTANCE_KIND);
     if (stored) {
       // An unpaid stored signature still authorizes a new payment. Only an
       // already paid digest may bypass the admission hold for recovery.
       if (admissionGuard && RECEIPT_STATUSES[Number(await read(connection, "receiptStatus", [digest]))] !== "paid") await assertAdmission();
-      if (typeof service.prepare === "function" && !checkedPrepared(digest, stored.requestId)) {
+      if (typeof service.prepare === "function" && !(await checkedPrepared(digest, stored.requestId))) {
         throw new HttpError(`prepared service result for digest ${digest} is missing; the provider must reconcile it before payment`, 409);
       }
-      bindRequest(stored.requestId, digest);
+      await bindRequest(stored.requestId, digest);
       return { acceptance: stored, checkedIntent: null };
     }
     await assertAdmission();
@@ -268,7 +295,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
     // acceptIntent refuses with a plain Error listing its problems, before it
     // signs anything. An RPC failure is one of viem's Error subclasses, and a
     // failure once signing has begun is the provider's own: neither is a refusal.
-    const rememberAdmission = () => persist(fileOf(digest, "admission"), { digest, agent: struct.agent, lineId: struct.lineId, nonce: struct.nonce.toString(), dueAt: struct.dueAt.toString(), signatureExpiry: struct.signatureExpiry.toString() });
+    const rememberAdmission = async () => await persist(fileOf(digest, "admission"), { digest, agent: struct.agent, lineId: struct.lineId, nonce: struct.nonce.toString(), dueAt: struct.dueAt.toString(), signatureExpiry: struct.signatureExpiry.toString() });
     let signing = false;
     const signer = {
       address: account.address,
@@ -276,27 +303,27 @@ export function createProviderServer({ connection, account, endpointHash, price,
         signing = true;
         // Reject existing conflicts before upstream work; atomically claim again
         // after preparation, before persisting anything under this digest.
-        bindRequest(requestId, digest, false);
-        if (typeof service.prepare === "function" && !checkedPrepared(digest, requestId)) {
-          store.assertConsistent();
+        await bindRequest(requestId, digest, false);
+        if (typeof service.prepare === "function" && !(await checkedPrepared(digest, requestId))) {
+          await store.assertConsistent();
           const output = await service.prepare({ digest, requestId });
           if (output === null) throw new HttpError(`service request ${JSON.stringify(requestId)} is unavailable; no acceptance was signed`, 422);
           const prepared = outputRecord(digest, requestId, output);
-          bindRequest(requestId, digest);
-          rememberAdmission();
-          if (!persist(fileOf(digest, "prepared"), prepared)) checkedPrepared(digest, requestId);
+          await bindRequest(requestId, digest);
+          await rememberAdmission();
+          if (!await persist(fileOf(digest, "prepared"), prepared)) await checkedPrepared(digest, requestId);
         }
         // Recheck time-sensitive snapshots before a new signature, including a
         // retry after a signer/process failure. Stored acceptances and paid
         // delivery recovery retain their original bytes and skip this hook.
         if (typeof service.validatePrepared === "function") {
-          const prepared = checkedPrepared(digest, requestId);
+          const prepared = await checkedPrepared(digest, requestId);
           if (!prepared) throw new Error("service validation needs a prepared result");
           await service.validatePrepared({ requestId, result: Buffer.from(prepared.result, "base64"), resultRef: prepared.resultRef });
         }
-        bindRequest(requestId, digest);
-        rememberAdmission();
-        store.assertConsistent();
+        await bindRequest(requestId, digest);
+        await rememberAdmission();
+        await store.assertConsistent();
         await assertAdmission();
         return account.signTypedData(typed);
       },
@@ -308,8 +335,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
       if (!signing && Object.getPrototypeOf(error) === Error.prototype) throw new HttpError(errorMessage(error), 422);
       throw error;
     }
-    bindRequest(requestId, digest);
-    const kept = persist(fileOf(digest, "acceptance"), acceptance) ? acceptance : storedReceipt(digest, ACCEPTANCE_KIND);
+    await bindRequest(requestId, digest);
+    const kept = await persist(fileOf(digest, "acceptance"), acceptance) ? acceptance : await storedReceipt(digest, ACCEPTANCE_KIND);
     return { acceptance: kept, checkedIntent: intent };
     } finally { releaseAdmission(); }
   }
@@ -347,14 +374,14 @@ export function createProviderServer({ connection, account, endpointHash, price,
   // The service's output, stored before any delivery is signed over it, so a
   // crash after this point never runs the service again for the digest.
   async function produce(digest, acceptance) {
-    const prepared = checkedPrepared(digest, acceptance.requestId);
+    const prepared = await checkedPrepared(digest, acceptance.requestId);
     if (typeof service.prepare === "function" && !prepared) {
       throw new HttpError(`prepared service result for digest ${digest} is missing; the provider must reconcile it before serving`, 409);
     }
     if (prepared) {
       // Prepared bytes were frozen before acceptance and payment. Copying them
       // cannot repeat external work, even if an older process left a marker.
-      const kept = persist(fileOf(digest, "result"), prepared) ? prepared : readStored(fileOf(digest, "result"));
+      const kept = await persist(fileOf(digest, "result"), prepared) ? prepared : await readStored(fileOf(digest, "result"));
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || kept?.result !== prepared.result || kept?.resultRef !== prepared.resultRef) {
         throw new HttpError(`the provider's stored result for digest ${digest} disagrees with its prepared output; the provider has to repair it`, 500);
       }
@@ -362,17 +389,17 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     const markerFile = fileOf(digest, "started");
     const marker = { digest, requestId: acceptance.requestId };
-    if (!persist(markerFile, marker)) {
-      const kept = readStored(markerFile);
+    if (!await persist(markerFile, marker)) {
+      const kept = await readStored(markerFile);
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId) {
         throw new HttpError(`the provider's stored service marker for digest ${digest} disagrees with its acceptance; the provider has to repair it`, 500);
       }
       throw new HttpError(`service outcome for digest ${digest} is unknown; the provider must reconcile it before work can be retried`, 409);
     }
     try {
-      store.assertConsistent();
+      await store.assertConsistent();
       const record = outputRecord(digest, acceptance.requestId, await service({ digest, requestId: acceptance.requestId, acceptance }));
-      const kept = persist(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
+      const kept = await persist(fileOf(digest, "result"), record) ? record : await readStored(fileOf(digest, "result"));
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || typeof kept?.result !== "string") {
         throw new Error(`stored result for digest ${digest} is missing or disagrees with its acceptance`);
       }
@@ -385,10 +412,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
   }
 
   async function serveOnce(digest, paymentTransactionHash) {
-    const acceptance = storedReceipt(digest, ACCEPTANCE_KIND);
+    const acceptance = await storedReceipt(digest, ACCEPTANCE_KIND);
     if (!acceptance) return [404, { error: `no accepted request for digest ${digest}` }];
-    const delivered = storedReceipt(digest, DELIVERY_KIND);
-    const earlier = readStored(fileOf(digest, "result"));
+    const delivered = await storedReceipt(digest, DELIVERY_KIND);
+    const earlier = await readStored(fileOf(digest, "result"));
     if (recoveryOnly) {
       if (!delivered) throw new HttpError("Recovery mode cannot create a delivery; restore the original signed delivery and result", 409);
       const code = await connection.client.getCode({ address: provider });
@@ -404,7 +431,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
         throw new HttpError("Stored recovery records disagree; restore trusted records", 409);
       }
     }
-    const marker = readStored(fileOf(digest, "started"));
+    const marker = await readStored(fileOf(digest, "started"));
     if (marker && (marker.digest !== digest || marker.requestId !== acceptance.requestId)) {
       throw new HttpError(`the provider's stored service marker for digest ${digest} disagrees with its acceptance; the provider has to repair it`, 500);
     }
@@ -427,13 +454,13 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
     // A stored delivery is not payment evidence: a reorg can remove its
     // payment after it was signed. Recheck before returning either path.
-    const savedPayment = readStored(fileOf(digest, "payment"));
+    const savedPayment = await readStored(fileOf(digest, "payment"));
     const payment = await checkPayment(connection, digest, { transactionHash: savedPayment?.transactionHash ?? paymentTransactionHash });
     if (!payment.paid) return [402, { error: "the digest is not paid", receiptStatus: payment.receiptStatus }];
     await assertPaidProviderBinding(connection, payment, acceptance);
     // Upgrade legacy delivered stores too: persist only the independently
     // verified original transaction, before any successful return.
-    if (!recoveryOnly) persist(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
+    if (!recoveryOnly) await persist(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
     // Returning our stored bytes creates no new receipt/signature. A rotated
     // smart-provider key must not strand that result; payment binding is still
     // freshly established from the original canonical transaction.
@@ -441,8 +468,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const verified = await checkDeliveryPayment(connection, { acceptance, account, transactionHash: payment.providerPaid.transactionHash });
     const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
-    store.assertConsistent();
-    const deliveryAccount = store.witnessed ? { address: account.address, signTypedData: typed => { store.assertConsistent(); return account.signTypedData(typed); } } : account;
+    await store.assertConsistent();
+    const deliveryAccount = store.witnessed ? { address: account.address, signTypedData: async typed => { await store.assertConsistent(); return account.signTypedData(typed); } } : account;
     const { delivery } = await deliverResult(connection, {
       acceptance,
       resultHash: resultHashOf(Buffer.from(produced.result, "base64")),
@@ -450,13 +477,13 @@ export function createProviderServer({ connection, account, endpointHash, price,
       account: deliveryAccount,
       transactionHash: verified.payment.providerPaid.transactionHash,
     });
-    const kept = persist(fileOf(digest, "delivery"), delivery) ? delivery : storedReceipt(digest, DELIVERY_KIND);
+    const kept = await persist(fileOf(digest, "delivery"), delivery) ? delivery : await storedReceipt(digest, DELIVERY_KIND);
     return [200, { result: produced.result, delivery: kept }];
   }
 
   // receiptStatus only: a status request never scans for the ProviderPaid log.
   async function status(digest) {
-    const acceptance = storedReceipt(digest, ACCEPTANCE_KIND);
+    const acceptance = await storedReceipt(digest, ACCEPTANCE_KIND);
     const receiptStatus = RECEIPT_STATUSES[Number(await read(connection, "receiptStatus", [digest]))];
     return [
       200,
@@ -466,13 +493,13 @@ export function createProviderServer({ connection, account, endpointHash, price,
         requestId: acceptance?.requestId ?? null,
         paid: receiptStatus === "paid",
         receiptStatus,
-        delivered: store.has(fileOf(digest, "delivery")),
+        delivered: await store.has(fileOf(digest, "delivery")),
       },
     ];
   }
 
   async function route(request, context, inputBody) {
-    store.assertConsistent();
+    await store.assertConsistent();
     const { pathname } = new URL(request.url, "http://provider.invalid");
     if (request.method === "GET" && pathname.startsWith("/status/")) {
       context.digest = parseBytes32("digest", pathname.slice("/status/".length), HttpError);

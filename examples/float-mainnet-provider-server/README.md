@@ -288,3 +288,25 @@ Previously issued signatures remain usable onchain until their own expiry or
 nonce cancellation, subject to contract policy and pauses. This provider gate
 cannot revoke an authorization already handed to a client. Use the pause-only
 operator when an incident requires an immediate onchain stop.
+
+### Storage adapter boundary
+
+`createProviderServer` accepts an optional `recordStore`. The default remains the
+filesystem store. An adapter supplies `read(name)`, `putOnce(name, value)`,
+`list()`, `has(name)` and `assertConsistent()`, each returning either its ordinary
+value or a promise. `describe(name)` and the `witnessed` boolean are synchronous.
+`read` returns the parsed original record or null; `putOnce` durably preserves the
+first value and returns true only for its creator; `list` resolves to the complete
+record name array. An adapter must not report success before durable publication
+and its witness checks have completed. It must preserve serialization and receipt
+bytes, independent witness identity, and recovery only restrictions.
+
+All writes for one provider identity must pass through exactly one server
+coordinator. Concurrent external writers and administrative imports require a
+quiesced coordinator. Generation checks reject capacity scans changed by local
+publications, with a bounded retry response rather than admission based on a
+stale scan. Paid result retrieval does not acquire new purchase capacity.
+
+This interface is preparation for asynchronous persistence. It does not deploy a
+Cloudflare provider, configure storage capacity reservations or replace the
+monitoring service. Those integrations require separate runtime validation.
