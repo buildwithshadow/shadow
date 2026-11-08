@@ -1,0 +1,29 @@
+name: provider-durable-store
+on:
+  pull_request:
+    paths:
+      - 'packages/provider-durable-store/**'
+      - '.github/workflows/provider-durable-store.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/provider-durable-store/**'
+      - '.github/workflows/provider-durable-store.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/provider-durable-store
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/provider-durable-store/package-lock.json
+      - run: npm ci
+      - run: npm run check
