@@ -8,7 +8,7 @@ import { createPublicClient, createTestClient, createWalletClient, decodeFunctio
 
 import { floatAbi } from "./float-mainnet-config.mjs";
 import { CHAIN_ID, account, e2eSkip, keyOf, runTool, startAnvil } from "./float-mainnet-e2e.mjs";
-import { CAP_KINDS, lineMismatches, reconcileState } from "./float-mainnet-monitor.mjs";
+import { CAP_KINDS, lineMismatches, reconcileState, monitorSnapshot } from "./float-mainnet-monitor.mjs";
 import { stableStringify } from "./float-mainnet-preflight.mjs";
 import { collectSnapshot, loadContext, runMonitorOnce } from "./float-mainnet-monitor-runner.mjs";
 
@@ -343,6 +343,25 @@ describe("pilot monitor and reconciliation through the participant CLIs", { skip
   after(() => {
     anvil?.stop();
     if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test("an owned read provider produces the same complete canonical snapshot as the HTTP CLI", async () => {
+    const keys = ['ARC_RPC_URL', 'FLOAT_MAINNET_EXPECTED_CHAIN_ID', 'FLOAT_MAINNET_ADDRESS', 'SHADOW_RPC_READ_SPACING_MS'];
+    const saved = Object.fromEntries(keys.map(key => [key, process.env[key]]));
+    const methods = [];
+    try {
+      process.env.ARC_RPC_URL = RPC;
+      process.env.FLOAT_MAINNET_EXPECTED_CHAIN_ID = CHAIN_ID.toString();
+      delete process.env.FLOAT_MAINNET_ADDRESS; delete process.env.SHADOW_RPC_READ_SPACING_MS;
+      const direct = await monitorSnapshot({ manifest }, { readProvider: { request: async args => { methods.push(args.method); return client.request(args); } } });
+      const httpSnapshot = await monitor(['snapshot']);
+      const normalized = JSON.parse(JSON.stringify(direct, (_key, value) => typeof value === 'bigint' ? value.toString() : value));
+      assert.deepEqual(normalized, httpSnapshot);
+      assert.ok(methods.includes('eth_getLogs'));
+      assert.ok(methods.every(method => !/send|sign/i.test(method)));
+    } finally {
+      for (const key of keys) { if (saved[key] === undefined) delete process.env[key]; else process.env[key] = saved[key]; }
+    }
   });
 
   test("check lists every opened line from a canonical scan, with index checkpoint diagnostics and no alert", async () => {

@@ -15,6 +15,7 @@ import {
 } from "viem";
 import { privateKeyToAccount } from "viem/accounts";
 import { errorMessage, redactUrl, stableStringify } from "./float-mainnet-format.mjs";
+import { createReadProviderTransport } from "./rpc-read-provider-transport.mjs";
 import { createRpcReadTransport } from "./rpc-read-transport.mjs";
 import { arcRpcUrlForChain } from "../arcTestnetNetwork.mjs";
 
@@ -100,7 +101,8 @@ export function readDeployment(env = process.env, { manifest } = {}) {
 
 // Connects and proves the address is this contract generation on this chain,
 // using the contract's own public domain and type constants.
-export async function connectCandidate(deployment, { readOnly = false } = {}) {
+export async function connectCandidate(deployment, { readOnly = false, readProvider = null } = {}) {
+  if (readProvider !== null && !readOnly) throw new Error("A custom read provider requires a read-only connection");
   const model = accountingModel(deployment.accountingModel);
   if (model === SETTLED_ACCOUNTING && !deployment.runtimeHash) throw new Error("settled-v1 accounting requires a runtime-verified release manifest");
   deployment = { ...deployment, rpcUrl: arcRpcUrlForChain(deployment.rpcUrl, deployment.expectedChainId) };
@@ -113,9 +115,9 @@ export async function connectCandidate(deployment, { readOnly = false } = {}) {
   // Every public read is paced, including reads performed before a write.
   // Broadcasts use a separate transport with retries disabled: an ambiguous
   // send belongs to durable reconciliation, never automatic retransmission.
-  const readTransport = createRpcReadTransport(deployment.rpcUrl, {
+  const readTransport = readProvider === null ? createRpcReadTransport(deployment.rpcUrl, {
     queueOptions: deployment.readSpacingMs === undefined ? {} : { spacingMs: deployment.readSpacingMs },
-  });
+  }) : createReadProviderTransport(readProvider, { spacingMs: deployment.readSpacingMs ?? 350 });
   const transport = readOnly ? readTransport : (options) => {
     const reads = readTransport(options);
     const broadcasts = http(deployment.rpcUrl, { timeout: 30_000, retryCount: 0 })(options);

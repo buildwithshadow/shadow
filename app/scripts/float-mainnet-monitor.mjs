@@ -16,7 +16,7 @@ import {
   stateName,
 } from "./float-mainnet-cli.mjs";
 import { readIndexFile } from "./float-mainnet-indexer.mjs";
-import { isEntrypoint } from "./float-mainnet-preflight.mjs";
+import { isEntrypoint } from "./float-mainnet-entrypoint.mjs";
 import { readExecutionTransaction } from "./float-mainnet-monitor-execution-transaction.mjs";
 import { readDirectExecutionAttribution } from "./float-mainnet-monitor-direct-execution.mjs";
 import { readCircleExecutionAttribution } from "./float-mainnet-monitor-circle-execution.mjs";
@@ -110,13 +110,13 @@ async function stillCanonical(connection, pinned) {
 
 const observed = (pinned) => ({ blockNumber: pinned.number, blockHash: pinned.hash, timestamp: pinned.timestamp });
 
-async function check(values, { snapshot = false } = {}) {
+async function check(values, { snapshot = false, readProvider = null } = {}) {
   requireManifest(values);
   const warnBefore = values["warn-before"] === undefined ? DEFAULT_WARN_BEFORE : durationFlag(values, "warn-before");
   const maxIndexLag = values["max-index-lag"] === undefined ? DEFAULT_MAX_INDEX_LAG : durationFlag(values, "max-index-lag");
   if (snapshot && values["line-id"] !== undefined) throw new UsageError("snapshot requires unfiltered canonical discovery");
   const only = values["line-id"] === undefined ? null : [...new Set(values["line-id"].map((raw) => parseBytes32("--line-id", raw)))];
-  const connection = await connect(values, { readOnly: true });
+  const connection = await connect(values, { readOnly: true, readProvider });
   const pinned = await connection.client.getBlock();
   const at = (functionName, args) => read(connection, functionName, args, pinned.number);
   const found = await discover(connection, values.index, pinned, snapshot ? values : {});
@@ -540,8 +540,8 @@ async function reconcile(values) {
   };
 }
 
-export async function monitorSnapshot(values) {
-  return check(values, { snapshot: true });
+export async function monitorSnapshot(values, { readProvider = null } = {}) {
+  return check(values, { snapshot: true, readProvider });
 }
 
 const COMMANDS = {

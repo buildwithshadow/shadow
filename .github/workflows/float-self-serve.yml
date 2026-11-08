@@ -119,6 +119,7 @@ on:
       - "app/scripts/guarded-testnet-monitor-alerts*"
       - "app/scripts/rpc-read-queue*"
       - "app/scripts/rpc-read-transport*"
+      - "app/scripts/rpc-read-provider-transport.mjs"
       - "examples/float-mainnet-provider-server/**"
       - "app/scripts/provider-file-store.test.mjs"
       - "app/scripts/shadow-url-migration.test.mjs"
