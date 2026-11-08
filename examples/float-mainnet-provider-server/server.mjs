@@ -1,8 +1,6 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { createServer } from "node:http";
 import { isIP } from "node:net";
 import { createRequire } from "node:module";
-import { join } from "node:path";
 import { inspect, parseArgs } from "node:util";
 import { parseAddress, parseBytes32, parseUint, read } from "../../app/scripts/float-mainnet-cli.mjs";
 import { RECEIPT_STATUSES, connectCandidate, endpointHashFrom, readDeployment, walletFromEnv } from "../../app/scripts/float-mainnet-config.mjs";
@@ -18,7 +16,6 @@ import {
   deliverResult,
   requestIdHashOf,
   resultRefHashOf,
-  storeOnce,
   validateReceiptFile,
 } from "../../app/scripts/float-mainnet-provider.mjs";
 
@@ -37,7 +34,8 @@ const { keccak256 } = createRequire(new URL("../../app/package.json", import.met
 
 import { configureProviderAdmission } from "../../app/scripts/float-mainnet-provider-monitor-guard.mjs";
 
-import { createStoreWitness, ProviderStoreHold } from "./store-witness.mjs";
+import { ProviderStoreHold } from "./store-witness.mjs";
+import { createFileProviderStore } from "./file-store.mjs";
 
 const KEY = "FLOAT_PROVIDER_PRIVATE_KEY";
 const MAX_BODY_BYTES = 65_536;
@@ -47,10 +45,6 @@ class HttpError extends Error {
     super(message);
     this.status = status;
   }
-}
-
-function readStored(file) {
-  return existsSync(file) ? JSON.parse(readFileSync(file, "utf8")) : null;
 }
 
 // Concurrent calls for one key share a single run of work. Finished work is
@@ -113,15 +107,15 @@ export function createProviderServer({ connection, account, endpointHash, price,
   if (typeof recoveryOnly !== "boolean") throw new Error("recoveryOnly must be boolean");
   if (recoveryOnly) {
     if (account.signTypedData || account.type === "local") throw new Error("Recovery mode requires only a public provider address, never a signer");
-    if (!statSync(storeDir).isDirectory()) throw new Error("Recovery requires an existing store directory");
-  } else mkdirSync(storeDir, { recursive: true });
+  }
   const provider = parseAddress("account.address", account.address, Error);
-  const fileOf = (digest, slot) => join(storeDir, `${digest}.${slot}.json`);
-  const witness = witnessDir ? createStoreWitness({
-    storeDir, witnessDir, identity: { provider, chainId: String(connection.chainId), contract: connection.address.toLowerCase(), endpointHash: endpointHash.toLowerCase() },
-    readOnly: recoveryOnly, storeOnce, serialize: value => `${stableStringify(value)}\n`,
-  }) : null;
-  const persist = witness ? witness.storeOnce : storeOnce;
+  const store = createFileProviderStore({
+    directory: storeDir, witnessDirectory: witnessDir, recoveryOnly,
+    identity: witnessDir ? { provider, chainId: String(connection.chainId), contract: connection.address.toLowerCase(), endpointHash: endpointHash.toLowerCase() } : null,
+  });
+  const fileOf = (digest, slot) => `${digest}.${slot}.json`;
+  const readStored = name => store.read(name);
+  const persist = (name, value) => store.putOnce(name, value);
   const accepting = new Map();
   const serving = new Map();
   const admitting = new Map();
@@ -130,7 +124,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
   let reclaimCursor = 0;
   let lastReclaim = 0;
   function outstanding() {
-    const files = readdirSync(storeDir);
+    const files = store.list();
     const terminal = new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:delivery|released)\.json$/.test(name)).map(name => name.slice(0, 66)));
     return new Set(files.filter(name => /^0x[0-9a-f]{64}\.(?:admission|prepared|acceptance)\.json$/.test(name)).map(name => name.slice(0, 66)).filter(digest => !terminal.has(digest)));
   }
@@ -195,7 +189,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
   // This server reserves each provider job id for at most one intent digest.
   // The durable claim also arbitrates concurrent accepts for different digests.
   function bindRequest(requestId, digest, claim = true) {
-    const file = join(storeDir, `request-${requestIdHashOf(requestId)}.json`);
+    const file = `request-${requestIdHashOf(requestId)}.json`;
     const binding = { requestId, digest };
     const kept = claim ? (persist(file, binding) ? binding : readStored(file)) : readStored(file);
     if (!claim && kept === null) return;
@@ -288,7 +282,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
         // after preparation, before persisting anything under this digest.
         bindRequest(requestId, digest, false);
         if (typeof service.prepare === "function" && !checkedPrepared(digest, requestId)) {
-          witness?.assertConsistent();
+          store.assertConsistent();
           const output = await service.prepare({ digest, requestId });
           if (output === null) throw new HttpError(`service request ${JSON.stringify(requestId)} is unavailable; no acceptance was signed`, 422);
           const prepared = outputRecord(digest, requestId, output);
@@ -306,7 +300,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
         }
         bindRequest(requestId, digest);
         rememberAdmission();
-        witness?.assertConsistent();
+        store.assertConsistent();
         await assertAdmission();
         return account.signTypedData(typed);
       },
@@ -380,7 +374,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       throw new HttpError(`service outcome for digest ${digest} is unknown; the provider must reconcile it before work can be retried`, 409);
     }
     try {
-      witness?.assertConsistent();
+      store.assertConsistent();
       const record = outputRecord(digest, acceptance.requestId, await service({ digest, requestId: acceptance.requestId, acceptance }));
       const kept = persist(fileOf(digest, "result"), record) ? record : readStored(fileOf(digest, "result"));
       if (kept?.digest !== digest || kept?.requestId !== acceptance.requestId || typeof kept?.result !== "string") {
@@ -451,8 +445,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
     const verified = await checkDeliveryPayment(connection, { acceptance, account, transactionHash: payment.providerPaid.transactionHash });
     const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
-    witness?.assertConsistent();
-    const deliveryAccount = witness ? { address: account.address, signTypedData: typed => { witness.assertConsistent(); return account.signTypedData(typed); } } : account;
+    store.assertConsistent();
+    const deliveryAccount = store.witnessed ? { address: account.address, signTypedData: typed => { store.assertConsistent(); return account.signTypedData(typed); } } : account;
     const { delivery } = await deliverResult(connection, {
       acceptance,
       resultHash: keccak256(Buffer.from(produced.result, "base64")),
@@ -476,13 +470,13 @@ export function createProviderServer({ connection, account, endpointHash, price,
         requestId: acceptance?.requestId ?? null,
         paid: receiptStatus === "paid",
         receiptStatus,
-        delivered: existsSync(fileOf(digest, "delivery")),
+        delivered: store.has(fileOf(digest, "delivery")),
       },
     ];
   }
 
   async function route(request, context, inputBody) {
-    witness?.assertConsistent();
+    store.assertConsistent();
     const { pathname } = new URL(request.url, "http://provider.invalid");
     if (request.method === "GET" && pathname.startsWith("/status/")) {
       context.digest = parseBytes32("digest", pathname.slice("/status/".length), HttpError);

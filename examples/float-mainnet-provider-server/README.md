@@ -4,6 +4,10 @@ A small HTTP server that shows how a provider takes part in a Shadow candidate p
 
 The protocol is **Shadow's own convention** for this candidate. It is not x402 or any other payment standard, and no existing seller supports it: a provider has to adopt it. The server uses the provider kit's exported functions (`acceptIntent`, `checkPayment`, `deliverResult`, `validateReceiptFile`, `storeOnce`) from `app/scripts/float-mainnet-provider.mjs`. Every protocol check is the kit's own, including the fresh payment check that gates every `/serve`, even when its result and delivery are already stored. The server adds the HTTP layer and the store's layout, and on `/accept` it repeats the kit's checks that need no chain read (provider, endpoint, price, a signature present) before calling `acceptIntent`, so an intent refused on its face costs no RPC calls. The receipt formats are described in `docs/SHADOW_FLOAT_MAINNET_PARTICIPANT_TOOLS.md` §6. The agent's side is `app/scripts/float-mainnet-request.mjs`.
 
+## Persistence boundary
+
+`file-store.mjs` owns synchronous record reads, immutable writes, directory enumeration and the optional independent witness. The HTTP server uses logical record names through that boundary. The filesystem remains the only implemented backend; this separation does not make the server compatible with ephemeral storage or change its single process requirement. A replacement backend must make each write durable before a signature or response is published and preserve original serialized report bytes, request bindings and witness failure behavior.
+
 ## How a purchase runs
 
 1. The agent builds and signs an intent (`float-mainnet-intent.mjs`), then sends it to the provider **before payment**, over TLS and to the provider only: `float-mainnet-request.mjs accept`. The provider checks it and signs a `ServiceAcceptance` that binds the request id to the intent's digest.
