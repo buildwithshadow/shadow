@@ -1316,6 +1316,52 @@ describe("request client against the reference provider server", { skip: e2eSkip
     } finally { await stop(bounded.server); }
   });
 
+  test("a suspended failed release retains per-agent and per-line quota metadata", async () => {
+    for (const quota of ["maxStoredPerAgent", "maxStoredPerLine"]) {
+      const snapshot = await client.request({ method: "evm_snapshot", params: [] });
+      const first = await signedIntent(`async-release-${quota}-first`);
+      let reachedRelease, continueRelease, readMetadata;
+      const releaseEntered = new Promise(resolve => { reachedRelease = resolve; });
+      const releaseGate = new Promise(resolve => { continueRelease = resolve; });
+      const metadataRead = new Promise(resolve => { readMetadata = resolve; });
+      let releasing = false;
+      const recordStore = delayedStore(path(`async-release-${quota}`), async (method, name) => {
+        if (method === "putOnce" && name.endsWith(".released.json")) {
+          releasing = true; reachedRelease(); await releaseGate;
+          throw new Error("release storage unavailable");
+        }
+        if (releasing && method === "read" && name === `${first.digest}.admission.json`) readMetadata();
+      });
+      const bounded = await startProviderServer(OTHER_PORT, { recordStore, [quota]: 1 });
+      let second, third;
+      try {
+        const body = { intent: readJson(first.file), requestId: `first-${quota}` };
+        assert.equal((await post(OTHER_PORT, "/accept", body)).status, 200);
+        const { lineId, nonce } = body.intent.typedData.message;
+        const tx = await walletOf(agent).writeContract({ address: float, abi: floatAbi, functionName: "cancelNonce", args: [lineId, BigInt(nonce)] });
+        await client.waitForTransactionReceipt({ hash: tx });
+        await client.request({ method: "anvil_mine", params: ["0x80"] });
+        const next = await signedIntent(`async-release-${quota}-next`);
+        const other = await signedIntent(`async-release-${quota}-other`);
+        second = post(OTHER_PORT, "/accept", { intent: readJson(next.file), requestId: `next-${quota}` });
+        await releaseEntered;
+        third = post(OTHER_PORT, "/accept", { intent: readJson(other.file), requestId: `other-${quota}` });
+        await metadataRead;
+        // Drain the capacity decision after its last asynchronous metadata read.
+        await new Promise(resolve => setImmediate(resolve));
+        continueRelease();
+        const replies = await Promise.all([second, third]);
+        assert.ok(replies.every(reply => reply.status !== 200), JSON.stringify(replies));
+        assert.equal(bounded.stats.signed, 1, "the unresolved original still owns its identity quota");
+      } finally {
+        continueRelease();
+        await Promise.allSettled([second, third].filter(Boolean));
+        await stop(bounded.server);
+        await client.request({ method: "evm_revert", params: [snapshot] });
+      }
+    }
+  });
+
   test("storage admission reserves the last slot across concurrent distinct purchases", async () => {
     const a = await signedIntent("capacity-a"), b = await signedIntent("capacity-b");
     const bounded = await startProviderServer(OTHER_PORT, { storeDir: path("bounded-store"), maxStoredPurchases: 1 });

@@ -167,7 +167,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
           if (used || cancelled) reason = used ? "nonce-used-unpaid" : "nonce-cancelled-unpaid";
         }
         if (reason && !admitting.has(digest)) {
-          admitting.set(digest, { reclaiming: true });
+          // A suspended release still occupies both identity quotas until durable.
+          admitting.set(digest, { ...metadata, reclaiming: true });
           storeGeneration++;
           try { await persist(fileOf(digest, "released"), { digest, reason, blockNumber: block.number.toString(), blockHash: block.hash, timestamp: block.timestamp.toString() }); }
           finally { admitting.delete(digest); storeGeneration++; }
