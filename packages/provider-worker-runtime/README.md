@@ -14,4 +14,4 @@ The approved manifest scratch file is immutable and request local. It does not s
 
 ## Local checks
 
-Install the existing app dependencies with `npm ci --prefix ../../app --ignore-scripts`, then run `npm ci` and `npm run check` in this package. Tests use local workerd, synthetic chain responses and placeholder signatures. They verify refusal, unchanged retained bytes, witness holds, caller identity, CORS, bounded requests, maintenance across eviction, and manifest approval. They send no live transactions and do not establish a completed production migration.
+Install the existing app dependencies with `pnpm --dir ../../app install --frozen-lockfile --ignore-scripts`, then run `npm ci` and `npm run check` in this package. Tests use local workerd, synthetic chain responses and placeholder signatures. They verify refusal, unchanged retained bytes, witness holds, caller identity, CORS, bounded requests, maintenance across eviction, and manifest approval. They send no live transactions and do not establish a completed production migration.

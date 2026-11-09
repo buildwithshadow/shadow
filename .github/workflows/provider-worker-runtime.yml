@@ -9,7 +9,7 @@ on:
       - 'app/scripts/float-mainnet-*.mjs'
       - 'app/scripts/rpc-read-*.mjs'
       - 'app/scripts/arc-rpc-*.mjs'
-      - 'app/package-lock.json'
+      - 'app/pnpm-lock.yaml'
       - '.github/workflows/provider-worker-runtime.yml'
   push:
     branches: [main]
@@ -21,7 +21,7 @@ on:
       - 'app/scripts/float-mainnet-*.mjs'
       - 'app/scripts/rpc-read-*.mjs'
       - 'app/scripts/arc-rpc-*.mjs'
-      - 'app/package-lock.json'
+      - 'app/pnpm-lock.yaml'
       - '.github/workflows/provider-worker-runtime.yml'
 permissions:
   contents: read
@@ -40,5 +40,8 @@ jobs:
           cache: npm
           cache-dependency-path: packages/provider-worker-runtime/package-lock.json
       - run: npm ci
-      - run: npm ci --prefix ../../app --ignore-scripts
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: pnpm --dir ../../app install --frozen-lockfile --ignore-scripts
       - run: npm run check
