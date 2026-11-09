@@ -1,6 +1,9 @@
 import {durableRouteQuotas} from './route-quotas.ts';
 import { DurableObject } from 'cloudflare:workers';
 import { httpServerHandler } from 'cloudflare:node';
+import {snapshotRecords} from '../../provider-durable-store/src/snapshot.ts';
+import {ownRecordBytes} from '../../provider-durable-store/src/bytes.ts';
+import type {ReconcileOptions,DigestBudget} from '../../provider-durable-store/src/record-ledger.ts';
 import { bootstrapStore } from '../../provider-durable-store/src/admin.ts';
 import { ProviderStoreHold } from '../../provider-durable-store/src/errors.ts';
 import { storeObjectName, type ProviderStoreIdentity } from '../../provider-durable-store/src/identity.ts';
@@ -49,6 +52,7 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
     this.quiesced = this.ctx.storage.kv.get<boolean>('maintenance:quiesced') === true;
   }
   private active = 0;
+  private administrative = 0;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   protected idleDelayMs = 30000;
   protected resetConnection = async (): Promise<void> => {
@@ -141,11 +145,11 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
     this.ctx.storage.kv.put('maintenance:quiesced', true);
     this.quiesced = true;
     const bound = Math.min(Math.max(Math.trunc(Number(timeoutMs)) || 0, 0), 10_000);
-    for (let waited = 0; this.active > 0 && waited < bound; waited += 10) await new Promise<void>(resolve => setTimeout(resolve, 10));
-    return { quiesced: true, drained: this.active === 0, active: this.active };
+    for (let waited = 0; this.active + this.administrative > 0 && waited < bound; waited += 10) await new Promise<void>(resolve => setTimeout(resolve, 10));
+    return { quiesced: true, drained: this.active + this.administrative === 0, active: this.active + this.administrative };
   }
 
-  resume(): { quiesced: false } { this.ctx.storage.kv.put('maintenance:quiesced', false); this.quiesced = false; return { quiesced: false }; }
+  resume(): { quiesced: false } { if(this.administrative!==0)throw new ProviderStoreHold('administrative operations are still active'); this.ctx.storage.kv.put('maintenance:quiesced', false); this.quiesced = false; return { quiesced: false }; }
 
   #requireQuiet(): ProviderStoreIdentity {
     if (!this.quiesced || this.active > 0) throw new ProviderStoreHold('administrative store operations require the provider to be quiesced and drained');
@@ -154,19 +158,34 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
     return parsed.config.identity;
   }
 
-  /** Import/initialize the record store. The inventory fingerprint is an input the operator supplies; it is never computed or returned here. */
-  async adminBootstrap(records: Array<{ name: string; bytes: Uint8Array }>, approvedInventoryFingerprint: string) {
-    const identity = this.#requireQuiet();
-    const name = await storeObjectName(identity);
-    const recordsStub = this.env.RECORD_STORE.get(this.env.RECORD_STORE.idFromName(name));
-    const witnessStub = this.env.STORE_WITNESS.get(this.env.STORE_WITNESS.idFromName(name));
-    return bootstrapStore({ records: recordsStub, witness: witnessStub }, identity, records, approvedInventoryFingerprint);
+  #beginAdministrative(): ProviderStoreIdentity {
+    const identity=this.#requireQuiet();
+    if(this.administrative!==0)throw new ProviderStoreHold('administrative operations are still active');
+    this.administrative++;
+    return identity;
   }
 
-  async adminComplete(recordName: string, bytes: Uint8Array, approvedFingerprint: string) {
-    const identity = this.#requireQuiet();
-    const stub = this.env.RECORD_STORE.get(this.env.RECORD_STORE.idFromName(await storeObjectName(identity)));
-    return stub.completeFromWitness(identity, recordName, bytes, approvedFingerprint);
+  /** Import/initialize only with the operator's independent inventory and remaining reservation policy. */
+  async adminBootstrap(records: Array<{ name: string; bytes: Uint8Array }>, approvedInventoryFingerprint: string, options?: {perDigest?:DigestBudget}) {
+    const identity = this.#beginAdministrative();
+    try {
+      const owned=[...snapshotRecords(records)];
+      const policy=options?.perDigest?{perDigest:{...options.perDigest}}:undefined;
+      const name = await storeObjectName(identity);
+      const recordsStub = this.env.RECORD_STORE.get(this.env.RECORD_STORE.idFromName(name));
+      const witnessStub = this.env.STORE_WITNESS.get(this.env.STORE_WITNESS.idFromName(name));
+      return await bootstrapStore({ records: recordsStub, witness: witnessStub }, identity, owned, approvedInventoryFingerprint, policy);
+    } finally { this.administrative--; }
+  }
+
+  async adminComplete(recordName: string, bytes: Uint8Array, approvedFingerprint: string, options?: ReconcileOptions) {
+    const identity = this.#beginAdministrative();
+    try {
+      const owned=ownRecordBytes(bytes);
+      const policy=options?{budgetDigest:options.budgetDigest,perDigest:options.perDigest?{...options.perDigest}:undefined}:undefined;
+      const stub = this.env.RECORD_STORE.get(this.env.RECORD_STORE.idFromName(await storeObjectName(identity)));
+      return await stub.completeFromWitness(identity, recordName, owned, approvedFingerprint, policy);
+    } finally { this.administrative--; }
   }
 
   async adminInspect() {

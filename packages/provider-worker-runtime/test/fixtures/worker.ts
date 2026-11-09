@@ -70,6 +70,16 @@ export class ProviderCoordinatorDO extends ProviderCoordinatorBase {
     this.ready = null;
   }
   async __managedConnection(){await this.resetConnection();this.ctx.storage.kv.put('test:managed',true);this.idleDelayMs=5;}
+  async __resumeDuringBootstrap(records:Array<{name:string;bytes:Uint8Array}>,approval:string){
+    const pending=this.adminBootstrap(records,approval);let resumeError:string|null=null;
+    try{this.resume();}catch(error){resumeError=(error as Error).message;}
+    try{return {resumeError,result:await pending};}catch(error){return {resumeError,error:(error as Error).message};}
+  }
+  async __resumeDuringComplete(name:string,bytes:Uint8Array,approval:string){
+    const pending=this.adminComplete(name,bytes,approval);let resumeError:string|null=null;
+    try{this.resume();}catch(error){resumeError=(error as Error).message;}
+    try{return {resumeError,result:await pending};}catch(error){return {resumeError,error:(error as Error).message};}
+  }
   __setStatus(digest: string, status: number): void { this.statuses.set(digest, BigInt(status)); }
   __setIdleDelay(ms: number) {this.idleDelayMs=ms;}
   __counters() { return { requests: this.requests, clientCalls: [...this.clientCalls], opened:this.opened, closed:this.closed }; }

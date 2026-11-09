@@ -1,3 +1,6 @@
+import {snapshotRecords} from '../../provider-durable-store/src/snapshot.ts';
+import {ownRecordBytes} from '../../provider-durable-store/src/bytes.ts';
+import type {ReconcileOptions,DigestBudget} from '../../provider-durable-store/src/record-ledger.ts';
 import { productionConnectionSource } from './verified-connection.ts';
 import { WorkerEntrypoint } from 'cloudflare:workers';
 import { ProviderCoordinatorBase } from './coordinator.ts';
@@ -30,11 +33,13 @@ const coordinatorFor = async (env: Env) => {
 export class ProviderAdmin extends WorkerEntrypoint<Env> {
   async quiesce(timeoutMs?: number) { return (await coordinatorFor(this.env)).quiesce(timeoutMs); }
   async resume() { return (await coordinatorFor(this.env)).resume(); }
-  async bootstrap(records: Array<{ name: string; bytes: Uint8Array }>, approvedInventoryFingerprint: string) {
-    return (await coordinatorFor(this.env)).adminBootstrap(records, approvedInventoryFingerprint);
+  async bootstrap(records: Array<{ name: string; bytes: Uint8Array }>, approvedInventoryFingerprint: string, options?: {perDigest?:DigestBudget}) {
+    const owned=[...snapshotRecords(records)],policy=options?.perDigest?{perDigest:{...options.perDigest}}:undefined;
+    return (await coordinatorFor(this.env)).adminBootstrap(owned, approvedInventoryFingerprint, policy);
   }
-  async completeFromWitness(name: string, bytes: Uint8Array, approvedFingerprint: string) {
-    return (await coordinatorFor(this.env)).adminComplete(name, bytes, approvedFingerprint);
+  async completeFromWitness(name: string, bytes: Uint8Array, approvedFingerprint: string, options?: ReconcileOptions) {
+    const owned=ownRecordBytes(bytes),policy=options?{budgetDigest:options.budgetDigest,perDigest:options.perDigest?{...options.perDigest}:undefined}:undefined;
+    return (await coordinatorFor(this.env)).adminComplete(name, owned, approvedFingerprint, policy);
   }
   async inspect() { return (await coordinatorFor(this.env)).adminInspect(); }
 }
