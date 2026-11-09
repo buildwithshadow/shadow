@@ -1,0 +1,5 @@
+{
+ "name":"shadow-foundry-ci","private":true,"version":"0.0.0","type":"module",
+ "description":"Integrity pinned official Foundry binaries for Linux x64 CI",
+ "devDependencies":{"@foundry-rs/forge-linux-amd64":"1.7.1","@foundry-rs/cast-linux-amd64":"1.7.1","@foundry-rs/anvil-linux-amd64":"1.7.1"}
+}
