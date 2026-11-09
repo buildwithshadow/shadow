@@ -1,0 +1,5 @@
+{
+ "name":"shadow-monitor-runtime-test","main":"test/fixtures/worker.mjs","compatibility_date":"2026-11-09","compatibility_flags":["nodejs_compat"],"workers_dev":false,"preview_urls":false,
+ "durable_objects":{"bindings":[{"name":"MONITOR","class_name":"TestMonitorDO"}]},
+ "migrations":[{"tag":"v1","new_sqlite_classes":["TestMonitorDO"]}],"vars":{"ALERT_DESTINATION_ID":"123"}
+}

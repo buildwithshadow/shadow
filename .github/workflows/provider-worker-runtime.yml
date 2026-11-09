@@ -3,6 +3,7 @@ on:
   pull_request:
     paths:
       - 'packages/provider-worker-runtime/**'
+      - 'packages/monitor-worker-runtime/**'
       - 'packages/provider-durable-store/**'
       - 'packages/rpc-read-websocket/**'
       - 'examples/float-mainnet-provider-server/**'
@@ -15,6 +16,7 @@ on:
     branches: [main]
     paths:
       - 'packages/provider-worker-runtime/**'
+      - 'packages/monitor-worker-runtime/**'
       - 'packages/provider-durable-store/**'
       - 'packages/rpc-read-websocket/**'
       - 'examples/float-mainnet-provider-server/**'
@@ -39,6 +41,26 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: packages/provider-worker-runtime/package-lock.json
+      - run: npm ci
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: pnpm --dir ../../app install --frozen-lockfile --ignore-scripts
+      - run: npm run check
+
+  monitor:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/monitor-worker-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/monitor-worker-runtime/package-lock.json
       - run: npm ci
       - uses: pnpm/action-setup@v4
         with:
