@@ -1,3 +1,5 @@
+import type {LocalAccount} from 'viem';
+import type {createShadowArcWalletService} from '../../../examples/float-mainnet-provider-server/shadow-arc-wallet-service.mjs';
 import {durableRouteQuotas} from './route-quotas.ts';
 import { DurableObject } from 'cloudflare:workers';
 import {compatibleHandler} from './compatible-handler.ts';
@@ -25,6 +27,12 @@ export interface ConnectionBundle {
 }
 
 
+export interface SigningBundle {
+  account: Pick<LocalAccount,'address'|'signTypedData'>;
+  service: ReturnType<typeof createShadowArcWalletService>;
+  admissionGuard(): Promise<void>;
+}
+
 export type Ready =
   | { kind: 'serving'; handler: { fetch(request: Request): Promise<Response> }; dispose(): void; idleManaged: boolean }
   | { kind: 'held'; reason: HeldReason };
@@ -34,7 +42,7 @@ const refusal = (status: number, body: unknown): Response =>
 
 /**
  * One coordinator per configured identity, addressed by the edge from Worker vars only. It hosts the actual
- * provider server in RECOVERY-ONLY mode (hard-coded; no setting turns it off) and is the single path to the
+ * provider server in recovery mode by default and is the single path to the
  * record store for that identity: the server reads through it, and administrative store operations run
  * through it only while it is quiesced.
  *
@@ -87,6 +95,9 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
     connectionSource: () => Promise.resolve(null),
   };
 
+  /** Only a reviewed subclass can install a signing source. No environment switch changes the recovery entrypoint. */
+  protected signingSource = async (_config:ProviderConfig,_connection:Awaited<ReturnType<ConnectionBundle['connect']>>):Promise<SigningBundle|null> => null;
+
   async #build(): Promise<Ready> {
     const parsed = readProviderConfig(this.hooks.vars());
     if (!parsed.ok) return { kind: 'held', reason: parsed.reason };
@@ -98,15 +109,16 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
       if (bundle.manifestSha256 !== config.manifestApprovedSha256) {bundle.close?.();return { kind: 'held', reason: 'manifest-mismatch' };}
       const connection = await bundle.connect(); // the manifest is approved: now verify it against the chain
       const store = createIdentityRecordStore(await createDoRecordPort(this.env, config.identity));
+      const signing=await this.signingSource(config,connection);
       const server:unknown = Reflect.apply(createProviderServer,undefined,[{
         connection,
-        account: { address: config.provider }, // a public address only; no signTypedData, as recovery mode requires
+        account: signing?.account??{ address: config.provider },
         endpointHash: config.endpointHash,
         price: config.price,
         storeDir: '/unused-record-store-is-injected',
-        service: () => { throw new Error('Recovery mode cannot perform service work'); },
-        recoveryOnly: true,
-        admissionGuard: null,
+        service: signing?.service??(() => { throw new Error('Recovery mode cannot perform service work'); }),
+        recoveryOnly: signing===null,
+        admissionGuard: signing?.admissionGuard??null,
         recordStore: store,
         serverFactory: this.serverFactory,
         maxRequestsPerMinute: config.maxRequestsPerMinute,

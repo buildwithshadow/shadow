@@ -1,0 +1,51 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shadow-provider-active-staging",
+  "main": "src/active-worker.ts",
+  "compatibility_date": "2026-11-09",
+  "compatibility_flags": [
+    "nodejs_compat"
+  ],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "PROVIDER_COORDINATOR",
+        "class_name": "MainnetActiveProviderCoordinatorDO"
+      },
+      {
+        "name": "RECORD_STORE",
+        "class_name": "RecordStoreDO"
+      },
+      {
+        "name": "STORE_WITNESS",
+        "class_name": "StoreWitnessDO",
+        "script_name": "shadow-provider-witness-staging"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "MainnetActiveProviderCoordinatorDO",
+        "RecordStoreDO"
+      ]
+    }
+  ],
+  "services": [
+    {
+      "binding": "MONITOR_READ",
+      "service": "shadow-monitor-runtime-staging",
+      "entrypoint": "MonitorRead"
+    }
+  ],
+  "vars": {
+    "PROVIDER_MODE": "guarded-active"
+  }
+}

@@ -15,3 +15,13 @@ The approved manifest scratch file is immutable and request local. It does not s
 ## Local checks
 
 Install the existing app dependencies with `pnpm --dir ../../app install --frozen-lockfile --ignore-scripts`, then run `npm ci` and `npm run check` in this package. Tests use local workerd, synthetic chain responses and placeholder signatures. They verify refusal, unchanged retained bytes, witness holds, caller identity, CORS, bounded requests, maintenance across eviction, and manifest approval. They send no live transactions and do not establish a completed production migration.
+
+## Optional guarded mainnet staging entrypoint
+
+`active-worker.ts` and `wrangler.active.jsonc` are a separate opt-in mainnet staging composition. The default recovery entrypoint does not install a signing source, even if active mode or provider key variables are supplied. The checked in active configuration has no identity, approved policy, signing secret or public route and cannot accept a purchase.
+
+The active entrypoint requires the existing verified deployment connection and durable store, `PROVIDER_MODE=guarded-active`, a provider signing secret matching the configured provider, locally approved monitor manifest/baseline/history bytes, a private `MONITOR_READ` service binding and two distinct configured wallet report RPC sources. Only the address and typed data signing function reach the existing provider server. There is no wallet client or transaction sender. The server retains its original prepared report, signature, payment receipt and duplicate recovery semantics.
+
+Missing signing configuration or a failed signing-source setup selects recovery mode. An installed monitor guard is mandatory for new acceptance and still refuses unhealthy or changed observations. It does not gate recovery of an already paid stored result. No public request can install a signer, change the service, toggle recovery mode or supply a monitor approval. Store maintenance, witness checks, caller quotas and idle resource cleanup remain in the shared coordinator.
+
+This configuration is not cutover clearance. Its positive staging purchase, lost confirmation recovery, restart, prepared report expiry, resource measurements and live hostname checks still need completion. It composes only the current mainnet report service; earlier identities and testnet services require their own explicitly verified migration configuration.
