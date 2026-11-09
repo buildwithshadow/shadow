@@ -13,7 +13,8 @@ export function pinnedContext(vars,stateBackend) {
  const b=JSON.parse(new TextDecoder('utf8',{fatal:true}).decode(baseline));
  if(!b.approvedHistory?.sha256)throw Error('complete approved history is required');
  const history=approved(vars.HISTORY_JSON,b.approvedHistory.sha256,16*1024*1024);
- const context=loadContext({manifestPath:scratch('manifest',manifest),baselinePath:scratch('baseline',baseline),stateDir:'/durable-monitor-state',approvedHistoryRuntimeFile:scratch('history',history)});
+ const baselinePath=scratch('baseline',baseline);
+ const context=loadContext({manifestPath:scratch('manifest',manifest),baselinePath,stateDir:'/durable-monitor-state',approvedHistoryRuntimeFile:scratch('history',history)});
  if(context.baseline.identity.chainId!=='5042'||context.baseline.schemaVersion!==2)throw Error('public mainnet monitor configuration required');
- return {...context,stateBackend};
+ return {...context,baselinePath,stateBackend};
 }

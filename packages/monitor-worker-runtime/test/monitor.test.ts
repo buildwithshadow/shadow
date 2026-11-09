@@ -39,3 +39,15 @@ it('releases the generation when the alert sink never settles and retries later'
  await m.mode('healthy');await m.advance();expect((await m.fire()).result.ok).toBe(true);
  expect((await m.inspect()).collections).toBe(2);expect((await m.inspect()).sent).toHaveLength(1);
 });
+
+it('imports independently fingerprinted notification state without resetting suppression',async()=>{
+ const source=stub('source-notification'),destination=stub('imported-notification');await source.setup();await source.arm();await source.advance();await source.fire();await source.stop();
+ const exported=await source.exportState();expect(exported.notification).toBeTruthy();
+ await destination.advance();await destination.importExport(exported);await destination.arm();await destination.advance();await destination.fire();
+ expect((await destination.inspect()).sent).toHaveLength(0);expect((await destination.status()).ok).toBe(true);
+});
+it('refuses altered notification import before initializing any state',async()=>{
+ const source=stub('source-bad-notification'),destination=stub('bad-notification');await source.setup();await source.arm();await source.advance();await source.fire();await source.stop();
+ const exported=await source.exportState();exported.notification.bytes+=' ';
+ expect((await destination.attempt('importExport',exported)).error).toMatch(/fingerprint/);expect((await destination.inspect()).keys).toEqual([]);
+});
