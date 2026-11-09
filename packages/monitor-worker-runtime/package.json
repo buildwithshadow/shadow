@@ -1,0 +1,21 @@
+{
+  "name": "@shadow/monitor-worker-runtime",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Durable monitor state and bounded scheduling using the existing observation kernel",
+  "type": "module",
+  "scripts": {
+    "types": "wrangler types --strict-vars=false -c wrangler.test.jsonc",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "vitest run --config vitest.config.ts",
+    "check": "npm run types && npm run typecheck && npm test"
+  },
+  "devDependencies": {
+    "@cloudflare/vitest-plugin": "1.6.0",
+    "@types/node": "24.19.2",
+    "typescript": "5.9.3",
+    "vitest": "4.1.12",
+    "wrangler": "4.158.0",
+    "viem": "2.55.11"
+  }
+}

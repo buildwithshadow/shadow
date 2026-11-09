@@ -1,0 +1,7 @@
+{
+ "$schema":"./node_modules/wrangler/config-schema.json","name":"shadow-monitor-runtime-staging","main":"src/worker.mjs","compatibility_date":"2026-11-09","compatibility_flags":["nodejs_compat"],"workers_dev":false,"preview_urls":false,
+ "vars":{"ARC_RPC_URL":"owned-read-provider","FLOAT_MAINNET_EXPECTED_CHAIN_ID":"5042"},
+ "observability":{"enabled":true,"head_sampling_rate":1},
+ "durable_objects":{"bindings":[{"name":"MONITOR","class_name":"MonitorDO"}]},
+ "migrations":[{"tag":"v1","new_sqlite_classes":["MonitorDO"]}]
+}
