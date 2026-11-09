@@ -6,6 +6,7 @@ import type {ProviderConfig} from './config.ts';
 
 /** Missing or invalid signing configuration permits recovery only, never unmonitored acceptance. */
 export function mainnetSigningSource(vars:Record<string,unknown>,config:ProviderConfig,connection:Awaited<ReturnType<ConnectionBundle['connect']>>):SigningBundle|null {
+ if(vars.RECOVERY_ONLY==='true')return null;
  if(config.chainId!==5042n||vars.PROVIDER_MODE!=='guarded-active'||typeof vars.PROVIDER_SIGNING_KEY!=='string'||!/^0x[0-9a-fA-F]{64}$/.test(vars.PROVIDER_SIGNING_KEY))return null;
  const monitor=vars.MONITOR_READ;
  if(!monitor||typeof monitor!=='object'||!('admissionState'in monitor)||typeof monitor.admissionState!=='function')return null;
