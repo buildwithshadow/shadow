@@ -63,7 +63,7 @@ export function workerSocket(socket: WebSocket): SocketLike {
     send: data => socket.send(data),
     close: (code, reason) => socket.close(code, reason),
     addEventListener(type, listener) {
-      if (type !== 'message' && type !== 'close' && type !== 'error') throw Error('unsupported socket event');
+      if (type !== 'open' && type !== 'message' && type !== 'close' && type !== 'error') throw Error('unsupported socket event');
       let typed = listeners.get(listener);
       if (!typed) { typed = new Map(); listeners.set(listener, typed); }
       if (typed.has(type)) return;
@@ -72,7 +72,7 @@ export function workerSocket(socket: WebSocket): SocketLike {
       socket.addEventListener(type, adapted);
     },
     removeEventListener(type, listener) {
-      if (type !== 'message' && type !== 'close' && type !== 'error') return;
+      if (type !== 'open' && type !== 'message' && type !== 'close' && type !== 'error') return;
       const typed = listeners.get(listener), adapted = typed?.get(type);
       if (!adapted) return;
       socket.removeEventListener(type, adapted);
