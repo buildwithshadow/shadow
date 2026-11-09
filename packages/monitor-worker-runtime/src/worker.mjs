@@ -3,6 +3,7 @@ import {createHash,randomUUID} from 'node:crypto';
 import {createMonitorSqlState} from './sql-state.mjs';
 import {pinnedContext} from './pinned-context.mjs';
 import {collectorOptions} from './collector-options.mjs';
+import {notificationImport} from './notification-import.mjs';
 import {runMonitorOnce,heartbeatStatus,acknowledgeHold} from '../../../app/scripts/float-mainnet-monitor-runner.mjs';
 import {monitorSnapshot} from '../../../app/scripts/float-mainnet-monitor.mjs';
 import {canonicalJson} from '../../../app/scripts/float-mainnet-monitor-policy.mjs';
@@ -32,7 +33,7 @@ export class MonitorDO extends DurableObject {
  readMeta=(name,fallback=null)=>{const rows=this.ctx.storage.sql.exec('SELECT bytes FROM monitor_meta WHERE name=?',name).toArray();return rows.length?JSON.parse(rows[0].bytes):fallback;}
  writeMeta=(name,value)=>{this.ctx.storage.sql.exec('INSERT INTO monitor_meta(name,bytes) VALUES(?,?) ON CONFLICT(name) DO UPDATE SET bytes=excluded.bytes',name,JSON.stringify(value));}
  context=()=>{const context=this.hooks.context();if(this.readMeta('binding')!==binding(context))throw Error('monitor binding not initialized');return context;}
- async initialize(approvedBinding,records,approvedInventoryHash){
+ async initialize(approvedBinding,records,approvedInventoryHash,notificationPacket){
   if(this.inFlight||this.readMeta('binding')!==null||this.ctx.storage.sql.exec('SELECT name FROM monitor_state LIMIT 1').toArray().length)throw Error('monitor initialization requires completely empty state');
   const context=this.hooks.context();if(approvedBinding!==binding(context))throw Error('monitor binding not approved');
   if(!Array.isArray(records)||records.length>5)throw Error('invalid monitor inventory');
@@ -40,7 +41,8 @@ export class MonitorDO extends DurableObject {
   if(new Set(entries.map(r=>r.name)).size!==entries.length)throw Error('duplicate monitor record');
   const fingerprint=hash(canonicalJson(entries.map(r=>({name:r.name,sha256:hash(r.bytes)})).sort((a,b)=>a.name.localeCompare(b.name))));
   if(approvedInventoryHash!==fingerprint)throw Error('monitor inventory not approved');
-  this.ctx.storage.transactionSync(()=>{for(const r of entries)this.backend.write(r.name,r.bytes);this.writeMeta('binding',approvedBinding);});
+  const notification=notificationImport(context,this.env.ALERT_DESTINATION_ID,notificationPacket,this.hooks.now());
+  this.ctx.storage.transactionSync(()=>{if(notification)this.writeMeta('notification',notification);for(const r of entries)this.backend.write(r.name,r.bytes);this.writeMeta('binding',approvedBinding);});
   await this.ctx.storage.sync();return {initialized:true,records:entries.length};
  }
  async arm(){
@@ -108,7 +110,7 @@ export class MonitorDO extends DurableObject {
   await this.ctx.storage.sync();return {recovered:true,incidentId:incident.incidentId,hold:true};
  }
  async usage(){return this.readMeta('lastCollectionUsage');}
- async exportState(){if(this.inFlight||this.readMeta('schedule')?.enabled)throw Error('stop and drain the monitor before export');return this.admissionState();}
+ async exportState(){if(this.inFlight||this.readMeta('schedule')?.enabled)throw Error('stop and drain the monitor before export');const view=await this.admissionState();if(this.inFlight||this.readMeta('schedule')?.enabled)throw Error('stop and drain the monitor before export');const notification=this.readMeta('notification');const bytes=notification===null?null:canonicalJson(notification);return {...view,notification:bytes===null?null:{bytes,sha256:hash(bytes)}};}
  async alarm(){await this.step();}
  async acknowledge(incidentId){if(this.inFlight)throw Error('monitor generation is active');const context=this.context();const result=acknowledgeHold(context,incidentId,this.hooks.now());await this.ctx.storage.sync();let notification;try{notification=await this.notify(context);}catch{notification={sent:false,reason:'delivery-failed'};}return {result,notification};}
 }
@@ -123,7 +125,7 @@ export class MonitorRead extends WorkerEntrypoint {
 }
 /** Operator binding only. Never proxy this entrypoint from an HTTP route or a public Pages Function. */
 export class MonitorAdmin extends WorkerEntrypoint {
- async initialize(approvedBinding,records,approvedInventoryHash){return selected(this.env).initialize(approvedBinding,records,approvedInventoryHash);}
+ async initialize(approvedBinding,records,approvedInventoryHash,notificationPacket){return selected(this.env).initialize(approvedBinding,records,approvedInventoryHash,notificationPacket);}
  async arm(){return selected(this.env).arm();}
  async stop(){return selected(this.env).stop();}
  async acknowledge(incidentId){return selected(this.env).acknowledge(incidentId);}

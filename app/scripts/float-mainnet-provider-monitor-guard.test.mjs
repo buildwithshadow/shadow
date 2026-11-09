@@ -4,8 +4,8 @@ import {mkdtempSync,writeFileSync,rmSync,readFileSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {keccak256} from 'viem';
-import {createProviderMonitorGuard,createTestnetProviderMonitorGuard,createSettledTestnetProviderMonitorGuard,configureProviderAdmission} from './float-mainnet-provider-monitor-guard.mjs';
-import {loadContext,runMonitorOnce} from './float-mainnet-monitor-runner.mjs';
+import {createProviderMonitorGuard,createTestnetProviderMonitorGuard,createSettledTestnetProviderMonitorGuard,configureProviderAdmission,createProviderMonitorReadGuard} from './float-mainnet-provider-monitor-guard.mjs';
+import {loadContext,runMonitorOnce,heartbeatStatus} from './float-mainnet-monitor-runner.mjs';
 import {SETTLED_MAINNET_CANDIDATE} from '../settledMainnetCandidate.mjs';
 const addr=n=>'0x'+n.toString(16).padStart(40,'0');
 const hash=n=>'0x'+n.toString(16).padStart(64,'0');
@@ -149,4 +149,63 @@ test('settled provider holds while its protected spending phase is paused',async
  const f=await fixture({testnet:'settled'});
  try{f.baseline.pauses.spendsPaused=true;writeFileSync(f.options.baselinePath,JSON.stringify(f.baseline));await assert.rejects(createSettledTestnetProviderMonitorGuard(f.options));}
  finally{f.cleanup();}
+});
+
+function admissionView(f){
+ return {manifestHash:f.context.manifestHash,baselineHash:f.context.baselineHash,status:heartbeatStatus(f.context),records:['heartbeat.json','snapshot.json','hold.json','events.json','publication.json','runner.lock'].flatMap(name=>{try{return [{name,bytes:readFileSync(join(f.options.stateDir,name),'utf8')}];}catch(error){if(error.code==='ENOENT')return [];throw error;}})};
+}
+function readGuard(f,readAdmissionState=async()=>admissionView(f)){
+ return createProviderMonitorReadGuard({...f.options,expectedManifestHash:f.context.manifestHash,expectedBaselineHash:f.context.baselineHash,readAdmissionState});
+}
+test('service binding guard recomputes policy from records and retains both canonical reads',async()=>{
+ const f=await fixture();try{
+  let views=0,blocks=0,codes=0;
+  const originalBlock=f.options.connection.client.getBlock,originalCode=f.options.connection.client.getCode;
+  f.options.connection.client.getBlock=async args=>{blocks++;return originalBlock(args);};
+  f.options.connection.client.getCode=async args=>{codes++;return originalCode(args);};
+  await readGuard(f,async()=>{views++;return admissionView(f);})();
+  assert.equal(views,2);assert.equal(blocks,2);assert.equal(codes,1);
+ }finally{f.cleanup();}
+});
+for(const [name,change] of [
+ ['wrong manifest binding',v=>v.manifestHash='0'.repeat(64)],
+ ['wrong baseline binding',v=>v.baselineHash='0'.repeat(64)],
+ ['disabled schedule',v=>v.status={ok:false,hold:true,reason:'checks-disabled'}],
+ ['duplicate record',v=>v.records.push(v.records[0])],
+ ['unknown record',v=>v.records.push({name:'config.json',bytes:'{}'})],
+ ['missing heartbeat',v=>v.records=v.records.filter(r=>r.name!=='heartbeat.json')],
+ ['missing snapshot',v=>v.records=v.records.filter(r=>r.name!=='snapshot.json')],
+ ['malformed snapshot',v=>v.records.find(r=>r.name==='snapshot.json').bytes='{'],
+ ['substituted snapshot',v=>{const r=v.records.find(r=>r.name==='snapshot.json'),snapshot=JSON.parse(r.bytes);snapshot.observedAt.blockNumber='101';r.bytes=JSON.stringify(snapshot);}],
+ ['unreported hold',v=>v.records.push({name:'hold.json',bytes:JSON.stringify({incidentId:'held'})})],
+ ['unreported interrupted lock',v=>v.records.push({name:'runner.lock',bytes:'{}'})],
+ ['stale heartbeat hidden by forged healthy status',v=>{const r=v.records.find(r=>r.name==='heartbeat.json'),h=JSON.parse(r.bytes);h.startedAt=h.completedAt=new Date(Date.now()-60000).toISOString();r.bytes=JSON.stringify(h);}],
+ ['different reported run',v=>v.status.runId='another-run'],
+ ['different reported snapshot',v=>v.status.snapshotHash='0'.repeat(64)],
+ ['oversized records',v=>v.records.push({name:'hold.json',bytes:' '.repeat(16*1024*1024+1)})],
+])test(`service binding guard refuses ${name}`,async()=>{
+ const f=await fixture();try{const v=admissionView(f);change(v);await assert.rejects(readGuard(f,async()=>v));}finally{f.cleanup();}
+});
+test('service binding guard requires local approvals before calling the monitor',async()=>{
+ const f=await fixture();try{
+  let reads=0;const base={...f.options,expectedManifestHash:f.context.manifestHash,expectedBaselineHash:f.context.baselineHash,readAdmissionState:async()=>{reads++;return admissionView(f);}};
+  for(const patch of [{expectedManifestHash:undefined},{expectedBaselineHash:'0'.repeat(64)},{expectedManifestHash:'0'.repeat(64)}])assert.throws(()=>createProviderMonitorReadGuard({...base,...patch}));
+  assert.equal(reads,0);
+ }finally{f.cleanup();}
+});
+for(const [name,change] of [
+ ['canonical block mismatch',f=>f.options.connection.client.getBlock=async()=>({number:100n,hash:hash(99),timestamp:1n})],
+ ['runtime mismatch',f=>f.options.connection.client.getCode=async()=> '0x5678'],
+ ['hold during runtime check',f=>f.options.connection.client.getCode=async()=>{writeFileSync(join(f.options.stateDir,'hold.json'),JSON.stringify({incidentId:'during-read'}));return '0x1234';}],
+])test(`service binding guard retains ${name} refusal`,async()=>{
+ const f=await fixture();try{const guard=readGuard(f);change(f);await assert.rejects(guard);}finally{f.cleanup();}
+});
+test('service binding guard refuses a different generation after canonical verification',async()=>{
+ const f=await fixture();try{
+  let reads=0;
+  await assert.rejects(readGuard(f,async()=>{const v=admissionView(f);if(++reads===2){const r=v.records.find(r=>r.name==='heartbeat.json'),h=JSON.parse(r.bytes);h.runId='00000000-0000-4000-8000-000000000001';r.bytes=JSON.stringify(h);v.status.runId=h.runId;}return v;}));
+ }finally{f.cleanup();}
+});
+test('service binding guard bounds an unavailable monitor without canonical reads', {timeout:7000},async()=>{
+ const f=await fixture();try{f.options.connection.client.getBlock=async()=>{throw Error('must not read chain');};await assert.rejects(readGuard(f,()=>new Promise(()=>{})),/could not be verified/);}finally{f.cleanup();}
 });
