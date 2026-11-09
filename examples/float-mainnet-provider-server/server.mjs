@@ -95,7 +95,7 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null, serverFactory = createNodeProviderHttpServer, clientAddress = null }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null, serverFactory = createNodeProviderHttpServer, clientAddress = null, routeQuotaStore = null }) {
   if (clientAddress !== null && typeof clientAddress !== "function") throw new Error("clientAddress must be a function");
   if (typeof serverFactory !== "function") throw new Error("serverFactory must be a function");
   if (admissionGuard !== null && typeof admissionGuard !== "function") throw new Error("admissionGuard must be a function");
@@ -526,7 +526,13 @@ export function createProviderServer({ connection, account, endpointHash, price,
     return [404, { error: "not found" }];
   }
 
-  const routeQuotas = { accept: new Map(), status: new Map(), serve: new Map() }, callerActive = new Map();
+  // A trusted embedding may retain these per-route counters across connection
+  // retirement. Node deployments keep the original bounded in-memory maps.
+  const routeQuotas = routeQuotaStore ?? { accept: new Map(), status: new Map(), serve: new Map() }, callerActive = new Map();
+  for (const route of ["accept", "status", "serve"]) {
+    const quota = routeQuotas[route];
+    if (!quota || !Number.isSafeInteger(quota.size) || quota.size < 0 || ["get", "set", "has", "delete", "keys"].some(name => typeof quota[name] !== "function") || typeof quota[Symbol.iterator] !== "function") throw new Error("invalid route quota store");
+  }
   let normalActive = 0, recoveryActive = 0;
   const readingBodies = { accept: 0, serve: 0 };
   const recoverySlots = Math.max(1, Math.floor(maxConcurrent / 2));
@@ -586,6 +592,8 @@ export function createProviderServer({ connection, account, endpointHash, price,
       // Keep rate-limit memory bounded without a global new-caller lockout.
       if (!quotas.has(quotaKey) && quotas.size >= 2048) quotas.delete(quotas.keys().next().value);
       quota = { start: now, count: 0 }; quotas.set(quotaKey, quota);
+      // An embedded durable map returns a write-through counter view.
+      quota = quotas.get(quotaKey);
     }
     // Status polling shares normal admission, never paid-result delivery slots.
     const recovery = routeKind === 'serve', activeKey = `${caller}:${routeKind}`;

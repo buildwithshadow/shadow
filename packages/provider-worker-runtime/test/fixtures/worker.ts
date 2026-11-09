@@ -53,6 +53,7 @@ export class ProviderCoordinatorDO extends ProviderCoordinatorBase {
       getBlock: () => { calls.push('getBlock'); return Promise.reject(new Error('synthetic client: no chain')); },
     };
     return Promise.resolve({
+      ...(this.ctx.storage.kv.get('test:managed') === true ? {close:()=>{this.closed++;}} : {}),
       manifestSha256: manifest ?? 'abababababababababababababababababababababababababababababababab',
       connect: () => Promise.resolve({ chainId: config.chainId, address: config.contract, client }),
     });
@@ -68,6 +69,7 @@ export class ProviderCoordinatorDO extends ProviderCoordinatorBase {
     this.ctx.storage.kv.put('test:noConnection', extra.noConnection === true);
     this.ready = null;
   }
+  async __managedConnection(){await this.resetConnection();this.ctx.storage.kv.put('test:managed',true);this.idleDelayMs=5;}
   __setStatus(digest: string, status: number): void { this.statuses.set(digest, BigInt(status)); }
   __setIdleDelay(ms: number) {this.idleDelayMs=ms;}
   __counters() { return { requests: this.requests, clientCalls: [...this.clientCalls], opened:this.opened, closed:this.closed }; }

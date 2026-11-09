@@ -1,3 +1,4 @@
+import {durableRouteQuotas} from './route-quotas.ts';
 import { DurableObject } from 'cloudflare:workers';
 import { httpServerHandler } from 'cloudflare:node';
 import { bootstrapStore } from '../../provider-durable-store/src/admin.ts';
@@ -105,6 +106,7 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
         recordStore: store,
         serverFactory: createCompatibleProviderHttpServer,
         maxRequestsPerMinute: config.maxRequestsPerMinute,
+        routeQuotaStore: durableRouteQuotas(this.ctx.storage),
         trustLoopbackProxy: false,
         publicOrigin: 'https://www.shadowbuild.xyz',
         maxConcurrent: 4,
