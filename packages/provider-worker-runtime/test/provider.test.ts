@@ -114,6 +114,15 @@ describe('the actual provider, recovery-only', () => {
     for (const r of retained) expect(same(await bytesOf(r.name), r.bytes), r.name).toBe(true);
   });
 
+
+it('the recovery entrypoint ignores active mode and provider key variables',async()=>{
+ const c=await coordinator();await c.__override({PROVIDER_MODE:'guarded-active',PROVIDER_SIGNING_KEY:'0x'+'1'.repeat(64)});
+ try {
+  const response=await edge('/accept',{method:'POST',body:JSON.stringify({requestId:'must-not-sign',intent:{}}),headers:{'content-type':'application/json'}});
+  expect(response.status).toBe(503);expect(jsonOf(response).error).toMatch(/recovery-only/);
+ }finally{await c.__override(null);}
+});
+
   it('bounds headers (431) and incomplete bodies (about two seconds) in the actual server', { timeout: BOUND }, async () => {
     const c = await coordinator();
     const calls = (await c.__counters()).clientCalls.length;
