@@ -1,6 +1,6 @@
 import {durableRouteQuotas} from './route-quotas.ts';
 import { DurableObject } from 'cloudflare:workers';
-import { httpServerHandler } from 'cloudflare:node';
+import {compatibleHandler} from './compatible-handler.ts';
 import {snapshotRecords} from '../../provider-durable-store/src/snapshot.ts';
 import {ownRecordBytes} from '../../provider-durable-store/src/bytes.ts';
 import type {ReconcileOptions,DigestBudget} from '../../provider-durable-store/src/record-ledger.ts';
@@ -24,7 +24,6 @@ export interface ConnectionBundle {
   connect(): Promise<{ chainId: bigint; address: string; client: unknown }>;
 }
 
-type CreateProviderServer = (options: Record<string, unknown>) => Parameters<typeof httpServerHandler>[0];
 
 export type Ready =
   | { kind: 'serving'; handler: { fetch(request: Request): Promise<Response> }; dispose(): void; idleManaged: boolean }
@@ -55,6 +54,7 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
   private administrative = 0;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   protected idleDelayMs = 30000;
+  protected serverFactory = createCompatibleProviderHttpServer;
   protected resetConnection = async (): Promise<void> => {
     if (this.active !== 0) throw new ProviderStoreHold('connection reset requires drained requests');
     if (this.idleTimer !== null) clearTimeout(this.idleTimer);
@@ -98,7 +98,7 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
       if (bundle.manifestSha256 !== config.manifestApprovedSha256) {bundle.close?.();return { kind: 'held', reason: 'manifest-mismatch' };}
       const connection = await bundle.connect(); // the manifest is approved: now verify it against the chain
       const store = createIdentityRecordStore(await createDoRecordPort(this.env, config.identity));
-      const server = (createProviderServer as unknown as CreateProviderServer)({
+      const server:unknown = Reflect.apply(createProviderServer,undefined,[{
         connection,
         account: { address: config.provider }, // a public address only; no signTypedData, as recovery mode requires
         endpointHash: config.endpointHash,
@@ -108,7 +108,7 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
         recoveryOnly: true,
         admissionGuard: null,
         recordStore: store,
-        serverFactory: createCompatibleProviderHttpServer,
+        serverFactory: this.serverFactory,
         maxRequestsPerMinute: config.maxRequestsPerMinute,
         routeQuotaStore: durableRouteQuotas(this.ctx.storage),
         trustLoopbackProxy: false,
@@ -118,8 +118,9 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
           const value=request.headers['cf-connecting-ip'];
           return typeof value === 'string' ? trustedClientAddress(value) : null;
         },
-      });
-      return { kind: 'serving', handler: httpServerHandler(server) as { fetch(request: Request): Promise<Response> }, dispose: () => bundle?.close?.(), idleManaged: typeof bundle.close === 'function' };
+      }]);
+      const handler=compatibleHandler(server);
+      return { kind: 'serving', handler, dispose: () => {try {handler.close();} finally {bundle?.close?.();}}, idleManaged: typeof bundle.close === 'function' };
     } catch { bundle?.close?.();return { kind: 'held', reason: 'initialization-failed' }; }
   }
 

@@ -12,6 +12,7 @@ export default handler;
  * manifest hash it reports is a constant the test config approves (or a test overrides to prove a mismatch holds).
  */
 export class ProviderCoordinatorDO extends ProviderCoordinatorBase {
+  private servers:Array<{listening:boolean}>=[];
   private statuses = new Map<string, bigint>();
   private clientCalls: string[] = [];
   private requests = 0;
@@ -20,6 +21,8 @@ export class ProviderCoordinatorDO extends ProviderCoordinatorBase {
 
   constructor(ctx: DurableObjectState, env: Env) {
     super(ctx, env);
+    const originalFactory=this.serverFactory;
+    this.serverFactory=(...args)=>{const server=originalFactory(...args);this.servers.push(server);return server;};
     this.hooks = { vars: () => this.#vars(), connectionSource: config => this.#connection(config) };
   }
 
@@ -80,6 +83,7 @@ export class ProviderCoordinatorDO extends ProviderCoordinatorBase {
     try{this.resume();}catch(error){resumeError=(error as Error).message;}
     try{return {resumeError,result:await pending};}catch(error){return {resumeError,error:(error as Error).message};}
   }
+  __serverStats(){return {created:this.servers.length,listening:this.servers.filter(server=>server.listening).length};}
   __setStatus(digest: string, status: number): void { this.statuses.set(digest, BigInt(status)); }
   __setIdleDelay(ms: number) {this.idleDelayMs=ms;}
   __counters() { return { requests: this.requests, clientCalls: [...this.clientCalls], opened:this.opened, closed:this.closed }; }
