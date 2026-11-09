@@ -1,5 +1,6 @@
 import {expect,it} from 'vitest';
 import {generatePrivateKey,privateKeyToAccount} from 'viem/accounts';
+import {recoverTypedDataAddress} from 'viem';
 import {mainnetSigningSource} from '../src/mainnet-signing-source.ts';
 import {readProviderConfig} from '../src/config.ts';
 import {approved} from '../../monitor-worker-runtime/test/fixtures/public-config.mjs';
@@ -25,4 +26,11 @@ it('accepts RPC capabilities without requiring enumerable or in-operator method 
  const f=fixture();const proxy=new Proxy(f.vars.MONITOR_READ,{has:()=>false});
  const source=mainnetSigningSource({...f.vars,MONITOR_READ:proxy},f.config,f.connection);
  expect(source).not.toBeNull();await expect(source!.admissionGuard()).rejects.toThrow('synthetic held monitor');
+});
+
+it('signs and independently recovers isolated typed data inside workerd',async()=>{
+ const f=fixture(),source=mainnetSigningSource(f.vars,f.config,f.connection);expect(source).not.toBeNull();
+ const typed={domain:{name:'Shadow isolated runtime probe',version:'1',chainId:5042,verifyingContract:f.config.contract},types:{Probe:[{name:'nonce',type:'uint256'}]},primaryType:'Probe',message:{nonce:1n}} as const;
+ const signature=await source!.account.signTypedData(typed);
+ expect(await recoverTypedDataAddress({...typed,signature})).toBe(f.config.provider);
 });
