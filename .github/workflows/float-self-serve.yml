@@ -4,6 +4,8 @@ on:
   pull_request:
     paths:
       - ".github/workflows/float-self-serve.yml"
+      - ".github/actions/setup-foundry/**"
+      - "tooling/foundry-ci/**"
       - "app/api/float.ts"
       - "app/explorerRecovery.*"
       - "app/vercel.json"
@@ -166,9 +168,7 @@ jobs:
       - uses: pnpm/action-setup@v4
         with:
           version: 10
-      - uses: foundry-rs/foundry-toolchain@v1
-        with:
-          version: v1.7.1
+      - uses: ./.github/actions/setup-foundry
       - name: Install app dependencies
         working-directory: app
         run: pnpm install --frozen-lockfile --ignore-workspace
@@ -268,10 +268,7 @@ jobs:
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
-      - uses: foundry-rs/foundry-toolchain@v1
-        with:
-          # Match the locally verified candidate toolchain; avoid floating upgrades.
-          version: v1.7.1
+      - uses: ./.github/actions/setup-foundry
       - name: Test sponsored-only Mainnet V1 candidate
         run: forge test --root contracts --match-path 'test/ShadowFloatMainnet*.t.sol'
       - name: Enforce implementation runtime and scope locks

@@ -1,0 +1,17 @@
+name: Set up pinned Foundry from the official npm distribution
+description: Install exact integrity locked Linux binaries and verify their version and upstream commit
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+    - name: Install locked Foundry binaries
+      shell: bash
+      run: npm ci --prefix tooling/foundry-ci --ignore-scripts --no-audit --no-fund
+    - name: Verify pinned binary identities
+      shell: bash
+      run: node tooling/foundry-ci/verify.mjs
+    - name: Add verified tools to PATH
+      shell: bash
+      run: printf '%s\n' "$GITHUB_WORKSPACE/tooling/foundry-ci/node_modules/.bin" >> "$GITHUB_PATH"
