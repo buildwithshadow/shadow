@@ -10,7 +10,7 @@ The collector uses the existing snapshot implementation, including the schema 2 
 
 ## Durable state and recovery
 
-Heartbeat, snapshot, publication, hold, events and runner lock records use synchronous SQLite state so publication ordering matches the filesystem runner. The alarm reserves its next slot before collection and never catches up missed slots. An interrupted or stale generation cannot authorize payment. Schedule and notification suppression survive eviction. Failed alert delivery is not marked sent.
+Heartbeat, snapshot, publication, hold, events and runner lock records use synchronous SQLite state so publication ordering matches the filesystem runner. The alarm reserves its next slot before collection and never catches up missed slots. An interrupted or stale generation cannot authorize payment. Schedule and notification suppression survive eviction. Alert delivery has an independent five second deadline. A stalled sink cannot retain the generation lock or stop future scans, and failed delivery is not marked sent. A timed out remote send may still complete at the destination; this is not an exactly once notification guarantee.
 
 `MonitorRead` exposes only status and admission records. `MonitorAdmin` is an operator service binding, never a public HTTP proxy. It supports initialization, scheduling, usage, stopped exports, hold acknowledgement and interrupted lock recovery. The default HTTP handler always returns 404. No provider signer or transaction capability belongs in this Worker.
 

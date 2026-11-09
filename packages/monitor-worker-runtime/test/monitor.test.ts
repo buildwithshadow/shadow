@@ -27,3 +27,15 @@ it('never clears a lock still inside its run timeout',async()=>{
  expect((await m.attempt('recoverInterrupted',digest)).error).toMatch(/timeout/);
  expect((await m.inspect()).keys).toContain('runner.lock');
 });
+
+it('releases the generation when the alert sink never settles and retries later',async()=>{
+ const m=stub('stalled-sink');await m.setup();await m.arm();await m.mode('delivery-stalled');await m.advance();
+ let timer:ReturnType<typeof setTimeout>;
+ try {
+  const result=await Promise.race([m.fire(),new Promise<never>((_,reject)=>{timer=setTimeout(()=>reject(Error('notification blocked generation')),6500);})]);
+  expect(result.notification).toEqual({sent:false,reason:'delivery-failed'});
+ } finally {clearTimeout(timer!);}
+ expect((await m.inspect()).notification).toBeNull();
+ await m.mode('healthy');await m.advance();expect((await m.fire()).result.ok).toBe(true);
+ expect((await m.inspect()).collections).toBe(2);expect((await m.inspect()).sent).toHaveLength(1);
+});

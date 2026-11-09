@@ -12,6 +12,13 @@ import {websocketConnector} from '../../provider-worker-runtime/src/worker-socke
 const hash=bytes=>createHash('sha256').update(bytes).digest('hex');
 const binding=context=>hash(`${context.manifestHash}:${context.baselineHash}`);
 const HOLD=Object.freeze({ok:false,hold:true,status:'hold',reason:'monitor-configuration-or-state-unavailable'});
+async function boundedDelivery(send,message){
+ let timer;
+ try {
+  await Promise.race([Promise.resolve().then(()=>send(message)),new Promise((_,reject)=>{timer=setTimeout(()=>reject(Error('alert delivery timed out')),5000);})]);
+ } finally {clearTimeout(timer);}
+}
+
 
 /** Dedicated readonly Worker. Do not install provider signing keys or public routes here. */
 export class MonitorDO extends DurableObject {
@@ -55,7 +62,7 @@ export class MonitorDO extends DurableObject {
  }
  notify=async(context)=>{
   return notifyMainnet({context,now:this.hooks.now(),previous:this.readMeta('notification'),destinationId:this.env.ALERT_DESTINATION_ID,
-   send:this.hooks.send,save:async value=>{this.writeMeta('notification',value);await this.ctx.storage.sync();}});
+   send:message=>boundedDelivery(this.hooks.send,message),save:async value=>{this.writeMeta('notification',value);await this.ctx.storage.sync();}});
  }
  step=async()=>{
   if(this.inFlight)return {skipped:'overlap'};this.inFlight=true;
