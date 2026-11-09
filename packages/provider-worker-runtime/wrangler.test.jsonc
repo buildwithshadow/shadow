@@ -1,0 +1,34 @@
+{
+  // LOCAL TEST FIXTURE. Same bindings as wrangler.jsonc plus a synthetic approved-manifest hash and a test
+  // worker whose coordinator supplies a SYNTHETIC connection (fake chain data, no RPC). Never deployed.
+  "name": "provider-worker-adapter-test",
+  "main": "test/fixtures/worker.ts",
+  "compatibility_date": "2026-11-04",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": {
+    "bindings": [
+      { "name": "PROVIDER_COORDINATOR", "class_name": "ProviderCoordinatorDO" },
+      // The unmodified production-shaped coordinator (src/worker.ts), bound only so a test can prove it stays held.
+      { "name": "PRODUCTION_SHAPED", "class_name": "ProductionShapedCoordinatorDO" },
+      { "name": "RECORD_STORE", "class_name": "RecordStoreDO" },
+      { "name": "STORE_WITNESS", "class_name": "StoreWitnessDO" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1-coordinator", "new_sqlite_classes": ["ProviderCoordinatorDO"] },
+    { "tag": "v1-production-shaped", "new_sqlite_classes": ["ProductionShapedCoordinatorDO"] },
+    { "tag": "v1-records", "new_sqlite_classes": ["RecordStoreDO"] },
+    { "tag": "v1-witness", "new_sqlite_classes": ["StoreWitnessDO"] }
+  ],
+  "vars": {
+    "DEPLOYMENT": "pwa-synthetic",
+    "PROVIDER": "0x00000000000000000000000000000000000000a1",
+    "CHAIN_ID": "5042002",
+    "CONTRACT": "0x00000000000000000000000000000000000000c1",
+    "ENDPOINT_HASH": "0x1111111111111111111111111111111111111111111111111111111111111111",
+    "PRICE": "1000000",
+    "MANIFEST_APPROVED_SHA256": "abababababababababababababababababababababababababababababababab"
+  }
+}

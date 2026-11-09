@@ -53,6 +53,8 @@ export function configuredLogChunkBlocks(value) {
   return BigInt(raw);
 }
 
+/** @param {Record<string, string | undefined>} env
+ * @param {{manifest?: string}} options */
 export function readDeployment(env = process.env, { manifest } = {}) {
   const rpcUrl = env.ARC_RPC_URL?.trim();
   if (!rpcUrl) throw new Error("ARC_RPC_URL is required");
@@ -101,6 +103,8 @@ export function readDeployment(env = process.env, { manifest } = {}) {
 
 // Connects and proves the address is this contract generation on this chain,
 // using the contract's own public domain and type constants.
+/** @param {ReturnType<typeof readDeployment>} deployment
+ * @param {{readOnly?: boolean, readProvider?: {request(args: {method: string, params?: unknown}): Promise<unknown>} | null}} options */
 export async function connectCandidate(deployment, { readOnly = false, readProvider = null } = {}) {
   if (readProvider !== null && !readOnly) throw new Error("A custom read provider requires a read-only connection");
   const model = accountingModel(deployment.accountingModel);

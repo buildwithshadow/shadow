@@ -1,0 +1,23 @@
+import { expect, it } from 'vitest';
+import { workerSocket } from '../src/verified-connection.ts';
+it('removes adapted Workers socket listeners exactly and closes its socket',()=>{
+ const pair=new WebSocketPair();
+ pair[0].accept();pair[1].accept();
+ const socket=workerSocket(pair[0]);
+ const messages:unknown[]=[];let closes=0;
+ const listener=(event:{data?:unknown})=>messages.push(event.data);
+ const closed=()=>{closes++;};
+ socket.addEventListener('message',listener);
+ socket.addEventListener('message',listener);
+ pair[0].dispatchEvent(new MessageEvent('message',{data:'first'}));
+ expect(messages).toEqual(['first']);
+ socket.removeEventListener('message',listener);
+ pair[0].dispatchEvent(new MessageEvent('message',{data:'ignored'}));
+ expect(messages).toEqual(['first']);
+ socket.addEventListener('close',closed);
+ socket.removeEventListener('close',closed);
+ pair[0].dispatchEvent(new CloseEvent('close'));
+ expect(closes).toBe(0);
+ socket.close(4002,'protocol error');pair[1].close(1000);
+ expect(socket.readyState).not.toBe(1);
+});

@@ -1,0 +1,44 @@
+name: provider-worker-runtime
+on:
+  pull_request:
+    paths:
+      - 'packages/provider-worker-runtime/**'
+      - 'packages/provider-durable-store/**'
+      - 'packages/rpc-read-websocket/**'
+      - 'examples/float-mainnet-provider-server/**'
+      - 'app/scripts/float-mainnet-*.mjs'
+      - 'app/scripts/rpc-read-*.mjs'
+      - 'app/scripts/arc-rpc-*.mjs'
+      - 'app/package-lock.json'
+      - '.github/workflows/provider-worker-runtime.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'packages/provider-worker-runtime/**'
+      - 'packages/provider-durable-store/**'
+      - 'packages/rpc-read-websocket/**'
+      - 'examples/float-mainnet-provider-server/**'
+      - 'app/scripts/float-mainnet-*.mjs'
+      - 'app/scripts/rpc-read-*.mjs'
+      - 'app/scripts/arc-rpc-*.mjs'
+      - 'app/package-lock.json'
+      - '.github/workflows/provider-worker-runtime.yml'
+permissions:
+  contents: read
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: packages/provider-worker-runtime
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: packages/provider-worker-runtime/package-lock.json
+      - run: npm ci
+      - run: npm ci --prefix ../../app --ignore-scripts
+      - run: npm run check
