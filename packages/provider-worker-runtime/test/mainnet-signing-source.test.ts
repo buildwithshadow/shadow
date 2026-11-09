@@ -20,3 +20,9 @@ for(const [name,patch] of [
 ] as const)it(`keeps ${name} in recovery only`,()=>{const f=fixture();expect(mainnetSigningSource({...f.vars,...patch},f.config,f.connection)).toBeNull();});
 it('does not construct a signer under an unapproved policy',()=>{const f=fixture();expect(()=>mainnetSigningSource({...f.vars,BASELINE_JSON:f.vars.BASELINE_JSON+' '},f.config,f.connection)).toThrow('not approved');});
 it('cannot downgrade to testnet or compose duplicate report sources',()=>{const f=fixture();expect(mainnetSigningSource(f.vars,{...f.config,chainId:5042002n},f.connection)).toBeNull();expect(()=>mainnetSigningSource({...f.vars,SHADOW_WALLET_REPORT_RPC_URLS:'https://one.invalid,https://one.invalid'},f.config,f.connection)).toThrow('two separate RPC');});
+
+it('accepts RPC capabilities without requiring enumerable or in-operator method discovery',async()=>{
+ const f=fixture();const proxy=new Proxy(f.vars.MONITOR_READ,{has:()=>false});
+ const source=mainnetSigningSource({...f.vars,MONITOR_READ:proxy},f.config,f.connection);
+ expect(source).not.toBeNull();await expect(source!.admissionGuard()).rejects.toThrow('synthetic held monitor');
+});
