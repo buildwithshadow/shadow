@@ -63,6 +63,7 @@ type RecentWindowTotals = {
 // 20s window regardless of how many viewers are loaded.
 const CACHE_KEY = "state:cache:v2";
 const CACHE_TTL_SECONDS = 20;
+const CACHE_WRITE_TIMEOUT_MS = 2_000;
 const GATEWAY_SETTLEMENT_INDEX_KEY = "gateway:settlements:index:v1";
 const LOG_CHUNK_SIZE = 90_000n;
 // The Canteen Arc RPC is a pruning node: getLogs against blocks older than its
@@ -99,6 +100,7 @@ type VercelLikeRequest = {
   method?: string;
   query?: Record<string, string | string[] | undefined>;
   url?: string;
+  waitUntil?: (promise: Promise<unknown>) => void;
 };
 
 type VercelLikeResponse = {
@@ -178,10 +180,13 @@ export default async function handler(req: VercelLikeRequest, res: VercelLikeRes
     const fresh = await fetchSerializedState();
 
     if (kv) {
-      // Best-effort write; never block the response on a cache miss.
-      kvSet(kv, CACHE_KEY, fresh, CACHE_TTL_SECONDS).catch((err) => {
+      // Keep the refresh alive after a Pages response. Other runtimes await the
+      // bounded best-effort write instead of dropping it when the request ends.
+      const cacheWrite = kvSet(kv, CACHE_KEY, fresh, CACHE_TTL_SECONDS).catch((err) => {
         console.warn(`kv set failed: ${(err as Error).message}`);
       });
+      if (req.waitUntil) req.waitUntil(cacheWrite);
+      else await cacheWrite;
     }
 
     res.setHeader("Cache-Control", `public, s-maxage=${CACHE_TTL_SECONDS}, stale-while-revalidate=60`);
@@ -572,6 +577,7 @@ async function kvSet(kv: KVConfig, key: string, value: unknown, ttlSec: number):
   const body = JSON.stringify(value);
   const res = await fetch(`${kv.url}/set/${encodeURIComponent(key)}?EX=${ttlSec}`, {
     method: "POST",
+    signal: AbortSignal.timeout(CACHE_WRITE_TIMEOUT_MS),
     headers: { authorization: `Bearer ${kv.token}`, "content-type": "application/json" },
     body,
   });
