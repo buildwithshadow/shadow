@@ -43,9 +43,9 @@ export async function prepare():Promise<string>{
  const chain=defineChain({id:5042,name:'local-5042',nativeCurrency:{name:'USDC',symbol:'USDC',decimals:18},rpcUrls:{default:{http:[ANVIL_URL]}}});
  const pub=createPublicClient({chain,transport:http(ANVIL_URL)});
  const owner=createWalletClient({chain,transport:http(ANVIL_URL),account:privateKeyToAccount(KEYS.owner)});
- const mockAddr=(await pub.waitForTransactionReceipt({hash:await owner.deployContract({abi:mock.abi as never,bytecode:`0x${mock.bin}` as Hex})})).contractAddress!;
+ const mockAddr=(await pub.waitForTransactionReceipt({timeout:10000,pollingInterval:20,hash:await owner.deployContract({abi:mock.abi as never,bytecode:`0x${mock.bin}` as Hex})})).contractAddress!;
  const tuple=(v:bigint[])=>({protocolReserve:v[0],lineReserve:v[1],lineSpend:v[2],perSpend:v[3],dailySpend:v[4]});
- const fReceipt=await pub.waitForTransactionReceipt({hash:await owner.deployContract({abi:settled.abi as never,bytecode:`0x${settled.bin}` as Hex,args:[mockAddr,5042n,tuple([10_000_000n,1_000_000n,50_000n,50_000n,50_000n]),tuple([1_000_000n,100_000n,5_000n,5_000n,5_000n]),3600n,86400n,3600n] as never})});
+ const fReceipt=await pub.waitForTransactionReceipt({timeout:10000,pollingInterval:20,hash:await owner.deployContract({abi:settled.abi as never,bytecode:`0x${settled.bin}` as Hex,args:[mockAddr,5042n,tuple([10_000_000n,1_000_000n,50_000n,50_000n,50_000n]),tuple([1_000_000n,100_000n,5_000n,5_000n,5_000n]),3600n,86400n,3600n] as never})});
  const float=fReceipt.contractAddress!,deployBlock=fReceipt.blockNumber;
  const code=await pub.getCode({address:float});if(!code||code==='0x')throw Error('no runtime code');
  const manifest=JSON.stringify({ok:true,chainId:'5042',publicRegistration:true,repaymentBindingVersion:2,contract:{name:'ShadowFloatMainnetPublicSettled',address:float,accountingModel:'settled-v1'},bytecode:{onchainRuntimeKeccak256:keccak256(code)},deployment:{blockNumber:deployBlock.toString()}});

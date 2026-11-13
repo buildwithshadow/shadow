@@ -28,7 +28,7 @@ const extra=parseAbi([
 const tokenAbi=parseAbi(['function mint(address,uint256)','function approve(address,uint256) returns (bool)']);
 async function send(key:Hex,address:Hex,abi:any,functionName:string,args:unknown[]){
  const hash=await wallet(key).writeContract({address,abi,functionName,args,chain} as never);
- const receipt=await pub.getTransactionReceipt({hash});expect(receipt.status,`${functionName} reverted`).toBe('success');return receipt;
+ const receipt=await pub.waitForTransactionReceipt({hash,timeout:10000,pollingInterval:20});expect(receipt.status,`${functionName} reverted`).toBe('success');return receipt;
 }
 let rpcId=0;
 const plainProvider={request:async({method,params=[]}:{method:string;params?:unknown[]})=>{
