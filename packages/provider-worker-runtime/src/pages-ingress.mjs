@@ -9,6 +9,7 @@ export const providerRoutes = Object.freeze([
   ['/provider/arc-wallet-testnet-bounded', 'BOUNDED_TESTNET'],
   ['/provider/arc-wallet-testnet-guarded', 'GUARDED_TESTNET'],
   ['/provider/shadow-v2-cycle', 'PUBLIC_TESTNET'],
+  ['/provider', 'PUBLIC_TESTNET'],
 ]);
 
 function unavailable(request, status, message) {
@@ -24,7 +25,9 @@ function unavailable(request, status, message) {
 export async function routeProviderRequest(request, env) {
   const url = new URL(request.url);
   if (url.pathname.length + url.search.length > 2048) return unavailable(request, 414, 'Request target exceeds the provider limit');
-  const route = providerRoutes.find(([prefix]) => url.pathname === prefix || url.pathname.startsWith(`${prefix}/`));
+  const route = providerRoutes.find(([prefix]) => prefix === '/provider'
+    ? ['/provider/accept', '/provider/serve'].includes(url.pathname) || url.pathname.startsWith('/provider/status/')
+    : url.pathname === prefix || url.pathname.startsWith(`${prefix}/`));
   if (!route) return unavailable(request, 404, 'Not found');
   const declared = request.headers.get('content-length');
   if (declared !== null && (!/^[0-9]{1,12}$/.test(declared) || Number(declared) > 65536)) return unavailable(request, 413, 'Request body exceeds the provider limit');
