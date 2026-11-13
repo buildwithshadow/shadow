@@ -1,8 +1,6 @@
-import { createRequire } from 'node:module';
+import { createPublicClient, erc20Abi, formatUnits, getAddress, zeroAddress } from '../../app/scripts/float-mainnet-service-viem.mjs';
 import { createRpcReadTransport } from '../../app/scripts/rpc-read-transport.mjs';
 
-const { createPublicClient, erc20Abi, formatUnits, getAddress, zeroAddress } =
-  createRequire(new URL('../../app/package.json', import.meta.url))('viem');
 const USDC = '0x3600000000000000000000000000000000000000';
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const REQUEST = /^arc-wallet:([0-9a-f]{32}):(0x[0-9a-fA-F]{40})$/;
