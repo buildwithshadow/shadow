@@ -1,5 +1,5 @@
 import { BaseError, createTransport, http } from "viem";
-import { createRpcReadQueue, isTransientRpcReadError } from "./rpc-read-queue.mjs";
+import { createRpcReadQueue, isTransientRpcReadError, throwIfReadAborted } from "./rpc-read-queue.mjs";
 
 // A separate read-only transport: never attach retry policy to a wallet/send
 // transport. The queue owns retries, so neither inner nor outer viem layers
@@ -61,12 +61,12 @@ export function createRpcReadTransport(url, { queueOptions = {}, fallbackUrls = 
   // Local Anvil has no shared provider quota; retain serialized reads/retries
   // without adding remote pacing to every contract regression test.
   const spacingMs = ["localhost", "127.0.0.1", "[::1]"].includes(host) ? 0 : 350;
-  return (options) => {
+  const queue = createRpcReadQueue({ spacingMs, ...queueOptions });
+  const scoped = signal => (options) => {
     const bases = urls.map((endpoint) => http(endpoint, { timeout: 30_000, ...httpOptions, retryCount: 0 })(options));
     const base = bases[0];
     const verified = new Set();
     let active = 0;
-    const queue = createRpcReadQueue({ spacingMs, ...queueOptions });
     return createTransport({
       ...base.config,
       key: "queued-read-only-http",
@@ -76,6 +76,7 @@ export function createRpcReadTransport(url, { queueOptions = {}, fallbackUrls = 
         if (!READ_METHODS.has(request.method)) throw new BaseError(`read-only RPC transport refuses ${request.method}`);
         try {
           return await queue(request.method, async () => {
+            throwIfReadAborted(signal);
             const index = active;
             try {
               if (expectedChainId !== undefined && !verified.has(index)) {
@@ -83,14 +84,16 @@ export function createRpcReadTransport(url, { queueOptions = {}, fallbackUrls = 
                 if (BigInt(chain) !== BigInt(expectedChainId)) throw new BaseError("RPC returned an unexpected chain ID");
                 verified.add(index);
               }
+              throwIfReadAborted(signal);
               return await bases[index].request(request, { retryCount: 0 });
             } catch (error) {
+              throwIfReadAborted(signal);
               // Switch only on temporary transport/quota or internal log-read failures. Reverts and
               // wrong-chain responses must not be hidden by another provider.
               if (isTransientRpcReadError(error, request.method)) active = (index + 1) % bases.length;
               throw error;
             }
-          });
+          }, { signal });
         } catch (error) {
           const failure = new BaseError(`RPC read ${request.method} failed: ${safeMessage(error)}`, { cause: safeCause(error) });
           // Preserve classification by the bounded log-range adapter without
@@ -100,4 +103,7 @@ export function createRpcReadTransport(url, { queueOptions = {}, fallbackUrls = 
       },
     }, base.value);
   };
+  const transport = scoped(undefined);
+  transport.withSignal = signal => scoped(signal);
+  return transport;
 }

@@ -499,6 +499,9 @@ export function createProviderServer({ connection, account, endpointHash, price,
   const DEADLINE_MESSAGE = 'The original payment lookup timed out. Retry this saved purchase with its original payment transaction hash. Do not pay again.';
   const SUPERSEDED_MESSAGE = 'A newer recovery request supplied a payment transaction hash. Retry this saved purchase. Do not pay again.';
   function scopeConnection(base, signal) {
+    // A scoped transport captures this run's signal at queue admission, not
+    // in mutable shared state. Retired reads cannot later retry or dispatch.
+    if (typeof base.withReadSignal === 'function') base = base.withReadSignal(signal);
     const reason = () => signal.reason ?? new Error('read aborted');
     const guard = (call) => {
       if (signal.aborted) return Promise.reject(reason());

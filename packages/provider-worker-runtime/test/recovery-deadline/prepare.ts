@@ -3,6 +3,7 @@ import {createHash} from 'node:crypto';
 import {mkdirSync,writeFileSync} from 'node:fs';
 import {dirname,resolve} from 'node:path';
 import {fileURLToPath} from 'node:url';
+import {homedir} from 'node:os';
 import {createPublicClient,createWalletClient,defineChain,http,keccak256,type Hex} from 'viem';
 import {privateKeyToAccount} from 'viem/accounts';
 import {ADDR,ANVIL_PORT,ANVIL_URL,ENDPOINT_HASH,KEYS,PRICE} from './constants.ts';
@@ -18,8 +19,15 @@ const rpc=async(method:string,params:unknown[]=[])=>{
  const b=await r.json() as {result?:unknown;error?:{message:string}};if(b.error)throw Error(`${method}: ${b.error.message}`);return b.result;
 };
 function compile(){
+ const suffix=['svm','0.8.24','solc-0.8.24'];
+ const candidates=process.env.SOLC_BIN?[process.env.SOLC_BIN]:['solc',
+  resolve(process.env.XDG_DATA_HOME||resolve(homedir(),'.local/share'),...suffix),
+  resolve(homedir(),'.svm/0.8.24/solc-0.8.24'),
+  resolve(homedir(),'Library/Application Support',...suffix)];
+ const compiler=candidates.find(path=>{try{return /Version: 0\.8\.24\+commit\.e11b9ed9/.test(execFileSync(path,['--version'],{encoding:'utf8',stdio:['ignore','pipe','ignore']}));}catch{return false;}});
+ if(!compiler)throw Error('Native Solidity 0.8.24 is required; set SOLC_BIN to the pinned compiler installed by Foundry.');
  const files=[resolve(ROOT,'contracts/src/ShadowFloatMainnetPublicSettled.sol'),resolve(HERE,'MockUSDC.sol')];
- const out=execFileSync(process.env.SOLC_BIN || 'solc',['--via-ir','--optimize','--optimize-runs','1','--metadata-hash','none','--no-cbor-metadata','--combined-json','abi,bin','--allow-paths',ROOT,...files],{maxBuffer:64*1024*1024,encoding:'utf8'});
+ const out=execFileSync(compiler,['--via-ir','--optimize','--optimize-runs','1','--metadata-hash','none','--no-cbor-metadata','--combined-json','abi,bin','--allow-paths',ROOT,...files],{maxBuffer:64*1024*1024,encoding:'utf8'});
  const contracts=JSON.parse(out).contracts as Record<string,{abi:unknown[];bin:string}>;
  const pick=(name:string)=>{const k=Object.keys(contracts).find(x=>x.endsWith(`:${name}`));if(!k)throw Error(`missing ${name}`);return contracts[k];};
  return {settled:pick('ShadowFloatMainnetPublicSettled'),mock:pick('MockUSDC')};

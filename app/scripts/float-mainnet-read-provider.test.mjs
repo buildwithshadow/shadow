@@ -6,6 +6,26 @@ import { createPublicClient, encodeAbiParameters, keccak256, toBytes } from 'vie
 import { createReadProviderTransport } from './rpc-read-provider-transport.mjs';
 import { connectCandidate, DOMAIN_NAME, DOMAIN_VERSION, SPEND_INTENT_TYPE_STRING } from './float-mainnet-config.mjs';
 
+test('scoped clients cancel shared queue work without retrying it or cancelling another client', async () => {
+  let enter, finish; const calls = [];
+  const entered = new Promise(resolve => { enter = resolve; });
+  const wire = new Promise((_, reject) => { finish = reject; });
+  const transport = createReadProviderTransport({request: async ({method}) => {
+    calls.push(method); if (method === 'eth_getCode') { enter(); return wire; } return '0x13b2';
+  }}, {spacingMs: 0, queueOptions: {baseDelayMs: 0}});
+  const controller = new AbortController();
+  const retired = createPublicClient({transport: transport.withSignal(controller.signal)});
+  const healthy = createPublicClient({transport});
+  const first = assert.rejects(retired.request({method: 'eth_getCode'}), /retired request/);
+  await entered;
+  const queued = assert.rejects(retired.request({method: 'eth_call'}), /retired request/);
+  const good = healthy.getChainId();
+  controller.abort(new Error('retired request'));
+  finish(Error('temporarily unavailable'));
+  await Promise.all([first, queued]); assert.equal(await good, 5042);
+  assert.deepEqual(calls, ['eth_getCode', 'eth_chainId']);
+});
+
 test('owned read provider serializes calls and refuses every broadcast method before dispatch', async () => {
   let active = 0, maxActive = 0; const methods = [];
   const client = createPublicClient({ transport: createReadProviderTransport({ request: async ({ method }) => {

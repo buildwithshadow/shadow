@@ -85,6 +85,23 @@ beforeAll(async()=>{
 const ips={a:'203.0.113.11',b:'203.0.113.12',c:'203.0.113.13',d:'203.0.113.14'};
 
 describe('recovery of a delivered record without payment.json',()=>{
+ it('retires transient read retries in the actual shared queue so a hinted retry can finish',async()=>{
+  await setDeadline(400);
+  await (await stub()).__failLogs(true);
+  try {
+   const before=await counters();
+   const expired=await serve(ips.a,{digest:state.digest});
+   expect(expired.status).toBe(503);
+   const stopped=(await counters()).getLogs;
+   expect(stopped-before.getLogs).toBe(1);
+   const retry=await serve(ips.b,{digest:state.digest,paymentTransactionHash:state.paymentTx});
+   expect(retry.status,retry.text).toBe(200);
+   expect(retry.json()).toEqual({result:state.resultB64,delivery:JSON.parse(state.deliveryText)});
+   await sleep(800);
+   expect((await counters()).getLogs).toBe(stopped);
+  } finally {await (await stub()).__failLogs(false);}
+ });
+
  it('bounds abandoned hashless lookups: reads stop, capacity returns, and the original hash then completes',async()=>{
   await setDeadline(400);
   const before=await counters();

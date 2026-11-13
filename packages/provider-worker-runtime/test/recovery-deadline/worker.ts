@@ -25,6 +25,7 @@ const hex=(n:bigint)=>`0x${n.toString(16)}`;
 export class RecoveryDeadlineCoordinatorDO extends ProviderCoordinatorBase {
  private counts={getLogs:0,total:0};
  private logDelayMs=15;
+ private failLogs=false;
  constructor(ctx:DurableObjectState,env:LocalEnv){
   super(ctx,env);
   const url=env.LOCAL_RPC_URL;
@@ -45,6 +46,7 @@ export class RecoveryDeadlineCoordinatorDO extends ProviderCoordinatorBase {
    }
    if(method==='eth_getLogs'){
     this.counts.getLogs++;
+    if(this.failLogs)throw Object.assign(Error('temporarily unavailable'),{code:-32011});
     await new Promise(resolve=>setTimeout(resolve,this.logDelayMs));
     const filter={...(params[0] as Record<string,string>)};
     if(BigInt(filter.fromBlock)>head)return [];
@@ -59,5 +61,6 @@ export class RecoveryDeadlineCoordinatorDO extends ProviderCoordinatorBase {
   }};
  }
  async __setDeadline(ms:number){await this.resetConnection();this.readDeadlineMs=ms;}
+ __failLogs(value:boolean){this.failLogs=value;}
  __counters(){return {...this.counts};}
 }
