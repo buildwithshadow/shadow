@@ -6,7 +6,7 @@ it('uses only the configured destination and reports delivery only after confirm
  let sends=0;
  await deliverMonitorAlert(config,message,async(...args:Parameters<typeof fetch>)=>{
   const [url,options]=args;
-  sends++;expect(String(url)).toBe('https://api.telegram.org/bot123:synthetic_token/sendMessage');expect(options?.redirect).toBe('error');
+  sends++;expect(String(url)).toBe('https://api.telegram.org/bot123:synthetic_token/sendMessage');expect(options?.redirect).toBe('manual');
   expect(JSON.parse(String(options?.body))).toMatchObject({chat_id:'-456',text:message});
   return Response.json({ok:true,result:{chat:{id:-456}}});
  });expect(sends).toBe(1);expect((await handler.fetch()).status).toBe(404);
