@@ -95,7 +95,7 @@ async function jsonBody(request) {
 // after payment, even if the upstream content later disappears.
 // Returns an http.Server that is not yet listening. A 500 answer names only
 // the digest; the full error goes to stderr as one JSON line.
-export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null, serverFactory = createNodeProviderHttpServer, clientAddress = null, routeQuotaStore = null }) {
+export function createProviderServer({ connection, account, endpointHash, price, storeDir, service, publicOrigin = null, trustLoopbackProxy = false, maxConcurrent = publicOrigin ? 4 : 32, maxRequestsPerMinute = 120, maxStoredPurchases = 1000, maxStoredPerAgent = 100, maxStoredPerLine = 25, maxSignatureTtl = 3600, recoveryOnly = false, witnessDir = null, admissionGuard = null, recordStore = null, serverFactory = createNodeProviderHttpServer, clientAddress = null, routeQuotaStore = null, readDeadlineMs = null }) {
   if (clientAddress !== null && typeof clientAddress !== "function") throw new Error("clientAddress must be a function");
   if (typeof serverFactory !== "function") throw new Error("serverFactory must be a function");
   if (admissionGuard !== null && typeof admissionGuard !== "function") throw new Error("admissionGuard must be a function");
@@ -108,6 +108,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
   if (publicOrigin && (new URL(publicOrigin).origin !== publicOrigin || !publicOrigin.startsWith('https://'))) throw new Error('publicOrigin must be an exact HTTPS origin');
   for (const value of [maxConcurrent, maxRequestsPerMinute, maxStoredPurchases, maxStoredPerAgent, maxStoredPerLine, maxSignatureTtl]) if (!Number.isSafeInteger(value) || value < 1) throw new Error('Provider limits must be positive integers');
   if (typeof recoveryOnly !== "boolean") throw new Error("recoveryOnly must be boolean");
+  if (readDeadlineMs !== null && (!Number.isSafeInteger(readDeadlineMs) || readDeadlineMs < 1)) throw new Error("readDeadlineMs must be a positive integer or null");
   if (recoveryOnly) {
     if (account.signTypedData || account.type === "local") throw new Error("Recovery mode requires only a public provider address, never a signer");
   }
@@ -418,18 +419,18 @@ export function createProviderServer({ connection, account, endpointHash, price,
     }
   }
 
-  async function serveOnce(digest, paymentTransactionHash) {
+  async function serveOnce(digest, paymentTransactionHash, conn = connection, enterCommit = () => {}) {
     const acceptance = await storedReceipt(digest, ACCEPTANCE_KIND);
     if (!acceptance) return [404, { error: `no accepted request for digest ${digest}` }];
     const delivered = await storedReceipt(digest, DELIVERY_KIND);
     const earlier = await readStored(fileOf(digest, "result"));
     if (recoveryOnly) {
       if (!delivered) throw new HttpError("Recovery mode cannot create a delivery; restore the original signed delivery and result", 409);
-      const code = await connection.client.getCode({ address: provider });
+      const code = await conn.client.getCode({ address: provider });
       if (code && code !== "0x") throw new HttpError("Recovery mode supports ordinary EOA providers only", 409);
       for (const [receipt, kind] of [[acceptance, ACCEPTANCE_KIND], [delivered, DELIVERY_KIND]]) {
         const checked = validateReceiptFile(receipt, connection, kind);
-        const signature = await checkSignature(connection, provider, checked.hash, checked.signature);
+        const signature = await checkSignature(conn, provider, checked.hash, checked.signature);
         if (!signature.valid) throw new HttpError("Stored provider signature does not verify; restore trusted records", 409);
       }
       if (delivered.requestId !== acceptance.requestId || earlier?.digest !== digest || earlier?.requestId !== acceptance.requestId ||
@@ -462,9 +463,10 @@ export function createProviderServer({ connection, account, endpointHash, price,
     // A stored delivery is not payment evidence: a reorg can remove its
     // payment after it was signed. Recheck before returning either path.
     const savedPayment = await readStored(fileOf(digest, "payment"));
-    const payment = await checkPayment(connection, digest, { transactionHash: savedPayment?.transactionHash ?? paymentTransactionHash });
+    const payment = await checkPayment(conn, digest, { transactionHash: savedPayment?.transactionHash ?? paymentTransactionHash });
     if (!payment.paid) return [402, { error: "the digest is not paid", receiptStatus: payment.receiptStatus }];
-    await assertPaidProviderBinding(connection, payment, acceptance);
+    await assertPaidProviderBinding(conn, payment, acceptance);
+    enterCommit(); // payment is bound to this acceptance; from here a hint can no longer supersede this run
     // Upgrade legacy delivered stores too: persist only the independently
     // verified original transaction, before any successful return.
     if (!recoveryOnly) await persist(fileOf(digest, "payment"), { transactionHash: payment.providerPaid.transactionHash });
@@ -472,12 +474,12 @@ export function createProviderServer({ connection, account, endpointHash, price,
     // smart-provider key must not strand that result; payment binding is still
     // freshly established from the original canonical transaction.
     if (delivered) return [200, { result: earlier.result, delivery: delivered }];
-    const verified = await checkDeliveryPayment(connection, { acceptance, account, transactionHash: payment.providerPaid.transactionHash });
+    const verified = await checkDeliveryPayment(conn, { acceptance, account, transactionHash: payment.providerPaid.transactionHash });
     const produced = earlier ?? (await produce(digest, acceptance));
     // deliverResult reads the payment again and cross-checks its ProviderPaid.
     await store.assertConsistent();
     const deliveryAccount = store.witnessed ? { address: account.address, signTypedData: async typed => { await store.assertConsistent(); return account.signTypedData(typed); } } : account;
-    const { delivery } = await deliverResult(connection, {
+    const { delivery } = await deliverResult(conn, {
       acceptance,
       resultHash: resultHashOf(Buffer.from(produced.result, "base64")),
       resultRef: produced.resultRef ?? undefined,
@@ -486,6 +488,56 @@ export function createProviderServer({ connection, account, endpointHash, price,
     });
     const kept = await persist(fileOf(digest, "delivery"), delivery) ? delivery : await storedReceipt(digest, DELIVERY_KIND);
     return [200, { result: produced.result, delivery: kept }];
+  }
+
+  // ---- bounded recovery reads -------------------------------------------------------------------------------
+  // Every chain read of one /serve run goes through a client scoped to that run's AbortSignal. Aborting (the overall
+  // lookup deadline, or a better payment hint) makes the next and any pending scoped read fail at once, so a lookup loop stops
+  // issuing reads and unwinds, which also releases its recovery slot and its `serving` entry. An RPC already on the wire
+  // still ends under the transport's own per-request timeout; at most one such request per run is left behind. Nothing
+  // durable is skipped or fabricated. The deadline is cleared after canonical payment binding, before writes or signing.
+  const DEADLINE_MESSAGE = 'The original payment lookup timed out. Retry this saved purchase with its original payment transaction hash. Do not pay again.';
+  const SUPERSEDED_MESSAGE = 'A newer recovery request supplied a payment transaction hash. Retry this saved purchase. Do not pay again.';
+  function scopeConnection(base, signal) {
+    const reason = () => signal.reason ?? new Error('read aborted');
+    const guard = (call) => {
+      if (signal.aborted) return Promise.reject(reason());
+      return new Promise((resolve, reject) => {
+        const onAbort = () => reject(reason());
+        signal.addEventListener('abort', onAbort, { once: true });
+        Promise.resolve().then(() => { if (signal.aborted) throw reason(); return call(); })
+          .then(resolve, reject).finally(() => signal.removeEventListener('abort', onAbort));
+      });
+    };
+    const client = new Proxy(base.client, {
+      get(target, property) {
+        const value = Reflect.get(target, property);
+        return typeof value === 'function' ? (...args) => guard(() => value.apply(target, args)) : value;
+      },
+    });
+    return { ...base, client };
+  }
+
+  // One run per digest, as before. A request that brings the payment transaction hash replaces a run that is still only
+  // looking for the payment without one (nothing has been bound, persisted or signed in that phase).
+  function serveDigest(digest, paymentTransactionHash, mayReplace = true) {
+    const running = serving.get(digest);
+    if (running) {
+      if (mayReplace && paymentTransactionHash && !running.hinted && running.phase === 'lookup') {
+        running.controller.abort(new HttpError(SUPERSEDED_MESSAGE, 503));
+        const again = () => serveDigest(digest, paymentTransactionHash, false);
+        return running.promise.then(again, again);
+      }
+      return running.promise;
+    }
+    const controller = new AbortController();
+    const run = { hinted: Boolean(paymentTransactionHash), phase: 'lookup', controller, promise: null };
+    const timer = readDeadlineMs === null ? null : setTimeout(() => controller.abort(new HttpError(DEADLINE_MESSAGE, 503)), readDeadlineMs);
+    run.promise = serveOnce(digest, paymentTransactionHash, scopeConnection(connection, controller.signal), () => { run.phase = 'commit'; if (timer !== null) clearTimeout(timer); })
+      .catch((error) => { throw controller.signal.aborted ? controller.signal.reason : error; })
+      .finally(() => { if (timer !== null) clearTimeout(timer); if (serving.get(digest) === run) serving.delete(digest); });
+    serving.set(digest, run);
+    return run.promise;
   }
 
   // receiptStatus only: a status request never scans for the ProviderPaid log.
@@ -521,7 +573,7 @@ export function createProviderServer({ connection, account, endpointHash, price,
       const digest = parseBytes32("digest", input.digest, HttpError);
       const paymentTransactionHash = input.paymentTransactionHash === undefined ? undefined : parseBytes32("paymentTransactionHash", input.paymentTransactionHash, HttpError);
       context.digest = digest;
-      return once(serving, digest, () => serveOnce(digest, paymentTransactionHash));
+      return serveDigest(digest, paymentTransactionHash);
     }
     return [404, { error: "not found" }];
   }

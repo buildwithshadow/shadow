@@ -28,6 +28,22 @@ on:
 permissions:
   contents: read
 jobs:
+  recovery:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: ./.github/actions/setup-foundry
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+      - run: npm ci --prefix packages/provider-worker-runtime
+      - run: pnpm --dir app install --frozen-lockfile --ignore-scripts
+      - name: Cache the pinned Solidity compiler
+        run: forge build --root contracts
+      - name: Verify recovery deadlines against the local settled contract
+        run: SOLC_BIN="$HOME/.svm/0.8.24/solc-0.8.24" npm --prefix packages/provider-worker-runtime run test:recovery-deadline
+
   verify:
     runs-on: ubuntu-latest
     timeout-minutes: 10
