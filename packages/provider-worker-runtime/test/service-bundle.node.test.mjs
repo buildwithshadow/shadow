@@ -11,19 +11,19 @@ const require = createRequire(import.meta.url);
 
 // Unlike Vite's module loader, the normal Wrangler bundle must initialize
 // without import.meta.url-dependent package discovery or any credential.
-test('the active provider initializes as a normal Wrangler Worker bundle', { timeout: 30000 }, async () => {
+for (const [entry, coordinatorClass] of [['active-worker.ts', 'MainnetActiveProviderCoordinatorDO'], ['public-testnet-worker.ts', 'PublicTestnetProviderCoordinatorDO']]) test(`${entry} initializes as a normal Wrangler Worker bundle`, { timeout: 30000 }, async () => {
   const dir = mkdtempSync(join(tmpdir(), 'shadow-service-bundle-'));
-  const source = fileURLToPath(new URL('../src/active-worker.ts', import.meta.url));
+  const source = fileURLToPath(new URL(`../src/${entry}`, import.meta.url));
   const witness = fileURLToPath(new URL('../../provider-durable-store/src/do-witness.ts', import.meta.url));
   let child;
   try {
-    writeFileSync(join(dir, 'entry.mjs'), `export {default, MainnetActiveProviderCoordinatorDO, RecordStoreDO, ProviderAdmin} from ${JSON.stringify(source)};\nexport {StoreWitnessDO} from ${JSON.stringify(witness)};\n`);
+    writeFileSync(join(dir, 'entry.mjs'), `export {default, ${coordinatorClass}, RecordStoreDO, ProviderAdmin} from ${JSON.stringify(source)};\nexport {StoreWitnessDO} from ${JSON.stringify(witness)};\n`);
     writeFileSync(join(dir, 'wrangler.json'), JSON.stringify({ name: 'shadow-service-bundle-smoke', main: 'entry.mjs', compatibility_date: '2026-11-09', compatibility_flags: ['nodejs_compat'], workers_dev: false,
       durable_objects: { bindings: [
-        { name: 'PROVIDER_COORDINATOR', class_name: 'MainnetActiveProviderCoordinatorDO' },
+        { name: 'PROVIDER_COORDINATOR', class_name: coordinatorClass },
         { name: 'RECORD_STORE', class_name: 'RecordStoreDO' },
         { name: 'STORE_WITNESS', class_name: 'StoreWitnessDO' },
-      ] }, migrations: [{ tag: 'v1', new_sqlite_classes: ['MainnetActiveProviderCoordinatorDO', 'RecordStoreDO', 'StoreWitnessDO'] }],
+      ] }, migrations: [{ tag: 'v1', new_sqlite_classes: [coordinatorClass, 'RecordStoreDO', 'StoreWitnessDO'] }],
     }));
     const cli = join(dirname(require.resolve('wrangler/package.json')), 'bin/wrangler.js');
     child = spawn(process.execPath, [cli, 'dev', '--local', '--ip', '127.0.0.1', '--port', '0', '--config', join(dir, 'wrangler.json')], { env: { ...process.env, WRANGLER_SEND_METRICS: 'false', CI: 'true' }, stdio: ['ignore', 'pipe', 'pipe'] });
