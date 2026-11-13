@@ -6,7 +6,10 @@ export async function deliverMonitorAlert(vars,message,fetcher=fetch){
  if(typeof message!=='string'||message.length>4096||!/^Shadow Arc MAINNET monitor [\s\S]+/.test(message))throw Error('invalid monitor alert');
  await sendTelegram({token:vars.ALERT_BOT_TOKEN,chatId:vars.ALERT_DESTINATION_ID},message,async(url,options)=>{
   try {
-   const response=await fetcher(url,{...options,signal:AbortSignal.timeout(4000)});
+   // workerd rejects redirect:'error' (the shared Node sender's mode) with a TypeError before any request, so every delivery
+   // failed. 'manual' returns a redirect response unfollowed instead; any redirect is refused here and never confirms delivery.
+   const response=await fetcher(url,{...options,redirect:'manual',signal:AbortSignal.timeout(4000)});
+   if(response.type==='opaqueredirect'||response.status>=300&&response.status<400)throw Error();
    if(!response.body)throw Error();
    const reader=response.body.getReader();let size=0;const chunks=[];
    try {

@@ -35,5 +35,10 @@ export class TestPublicMonitorDO extends TestMonitorDO {
  }
  async due(){const schedule=this.readMeta('schedule');this.writeMeta('schedule',{...schedule,nextDue:0});await this.ctx.storage.sync();return this.step();}
 }
+// Production delivery path: the DEFAULT send hook of MonitorDO (private service binding to the separate AlertSink), not a stub.
+export class RealSinkMonitorDO extends TestPublicMonitorDO {
+ constructor(ctx,env){super(ctx,env);this.hooks={...this.hooks,send:async message=>{if(!env.ALERT_SINK)throw Error('alert sink unavailable');await env.ALERT_SINK.sendMonitorMessage(message);}};}
+}
+export {AlertSink} from '../../src/alert-sink.mjs';
 export {MonitorDO};
 export default {fetch(){return new Response('Not found',{status:404});}};
