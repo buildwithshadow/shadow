@@ -1,0 +1,24 @@
+{
+  // LOCAL TEST FIXTURE. Never deployed. Real public testnet identity, disposable synthetic keys, synthetic chain client.
+  "name": "provider-public-testnet-test",
+  "main": "test/public-testnet/worker.ts",
+  "compatibility_date": "2026-11-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "durable_objects": { "bindings": [
+    { "name": "PROVIDER_COORDINATOR", "class_name": "TestPublicTestnetCoordinatorDO" },
+    { "name": "RECORD_STORE", "class_name": "RecordStoreDO" },
+    { "name": "STORE_WITNESS", "class_name": "StoreWitnessDO" }
+  ] },
+  "migrations": [ { "tag": "v1", "new_sqlite_classes": ["TestPublicTestnetCoordinatorDO", "RecordStoreDO", "StoreWitnessDO"] } ],
+  "vars": {
+    "DEPLOYMENT": "shadow-public-testnet-v2-cycle",
+    "PROVIDER": "0x09Fd08732187D29Ee8D6879A55A47F49F0d446a1",
+    "CHAIN_ID": "5042002",
+    "CONTRACT": "0xB31d9e17410B10a619B66dF0c31f59acbb33B553",
+    "ENDPOINT_HASH": "0x5c4ef74d3d99bf24bca241546fd4a5e0e50639f4b2af5b970cec722cf4ceb495",
+    "PRICE": "50000",
+    "MANIFEST_APPROVED_SHA256": "47567333f9abc0a8317ae4ea854f6b8ad34f2c24cf3c16e81f434d787ef31602"
+  }
+}

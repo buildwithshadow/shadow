@@ -1,0 +1,38 @@
+{
+  // OPT-IN public Arc TESTNET entrypoint (chain 5042002 only). Not the mainnet active composition, and never selected
+  // by the default recovery Worker. Holds until the operator supplies the approved release manifest bytes and its
+  // SHA-256 (MANIFEST_JSON / MANIFEST_APPROVED_SHA256), RPC_WSS_URL, SHADOW_V2_REPORT_RPC_URLS (two distinct report
+  // read endpoints), and the provider signing secret (PROVIDER_SIGNING_KEY, a secret binding, never a var here).
+  // The public identifiers below are the existing public testnet service parameters.
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "shadow-provider-public-testnet-staging",
+  "main": "src/public-testnet-worker.ts",
+  "compatibility_date": "2026-11-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "observability": { "enabled": true, "head_sampling_rate": 1 },
+  "durable_objects": {
+    "bindings": [
+      { "name": "PROVIDER_COORDINATOR", "class_name": "PublicTestnetProviderCoordinatorDO" },
+      { "name": "RECORD_STORE", "class_name": "RecordStoreDO" },
+      { "name": "STORE_WITNESS", "class_name": "StoreWitnessDO", "script_name": "shadow-provider-witness-staging" }
+    ]
+  },
+  "migrations": [
+    { "tag": "v1", "new_sqlite_classes": ["PublicTestnetProviderCoordinatorDO", "RecordStoreDO"] }
+  ],
+  "vars": {
+    "DEPLOYMENT": "shadow-public-testnet-v2-cycle",
+    "PROVIDER": "0xFAF237F98f35A86149E901e18EB4BAd67bC0D347",
+    "CHAIN_ID": "5042002",
+    "CONTRACT": "0xB31d9e17410B10a619B66dF0c31f59acbb33B553",
+    "ENDPOINT_HASH": "0x5c4ef74d3d99bf24bca241546fd4a5e0e50639f4b2af5b970cec722cf4ceb495",
+    "PRICE": "50000",
+    "PROVIDER_MODE": "public-testnet-active",
+    "PROVIDER_ADMISSION_MODE": "testnet-unmonitored",
+    "PROVIDER_SERVICE": "shadow-v2-cycle",
+    "SHADOW_V2_PAYMENT_TX": "0x28d70ae57f6eda6ff27e0c2a5a13c3074ecf6792f79c726bae02f6f7c9c53b38",
+    "SHADOW_V2_REPAYMENT_TX": "0xc2290754ac4827fd0f214a205fa2aabf235180328f55b4dcbade29cf37f5b8f0"
+  }
+}
