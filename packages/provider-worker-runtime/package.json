@@ -7,7 +7,7 @@
   "scripts": {
     "types": "wrangler types --strict-vars=false -c wrangler.test.jsonc",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "node --test test/pages-ingress.node.test.mjs && vitest run --config vitest.config.ts",
+    "test": "node --test test/*.node.test.mjs && vitest run --config vitest.config.ts",
     "check": "npm run types && npm run typecheck && npm test"
   },
   "devDependencies": {

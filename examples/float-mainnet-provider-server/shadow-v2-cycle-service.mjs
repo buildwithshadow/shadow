@@ -1,7 +1,4 @@
-import { createRequire } from "node:module";
-
-const { createPublicClient, decodeEventLog, formatUnits, formatTransactionReceipt, getAddress, http, numberToHex, parseAbiItem } =
-  createRequire(new URL("../../app/package.json", import.meta.url))("viem");
+import { createPublicClient, decodeEventLog, formatUnits, formatTransactionReceipt, getAddress, http, numberToHex, parseAbiItem } from "../../app/scripts/float-mainnet-service-viem.mjs";
 
 const HASH = /^0x[0-9a-fA-F]{64}$/;
 const CHAIN_ID = 5042002;
