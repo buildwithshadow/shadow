@@ -9,7 +9,8 @@
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --test test/*.node.test.mjs && vitest run --config vitest.config.ts && npm run test:public-testnet",
     "test:public-testnet": "vitest run --config vitest.public-testnet.config.ts",
-    "check": "npm run types && npm run typecheck && npm test"
+    "check": "npm run types && npm run typecheck && npm test",
+    "test:recovery-deadline": "vitest run --config vitest.recovery-deadline.config.ts"
   },
   "devDependencies": {
     "@cloudflare/vitest-plugin": "1.6.0",

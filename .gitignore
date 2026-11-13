@@ -39,3 +39,6 @@ app/scripts/external-agents.json
 # Internal team roadmaps, including archived copies, stay outside the public repo.
 /docs/ROADMAP.md
 /docs/archive/ROADMAP*.md
+
+# Generated local recovery regression chain and compiler output.
+/packages/provider-worker-runtime/.recovery-deadline/

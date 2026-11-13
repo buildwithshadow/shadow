@@ -7,8 +7,8 @@ const METHODS = new Set(['eth_chainId', 'eth_getCode', 'eth_call', 'eth_getBlock
 // The caller owns its lifecycle. No HTTP fallback or broadcast path is added.
 export function createReadProviderTransport(provider, { spacingMs = 350, queueOptions = {} } = {}) {
   if (!provider || typeof provider.request !== 'function') throw new TypeError('Read provider needs request');
-  return () => {
-    const queue = createRpcReadQueue({ spacingMs, ...queueOptions });
+  const queue = createRpcReadQueue({ spacingMs, ...queueOptions });
+  const scoped = signal => () => {
     const built = createTransport({
       key: 'observer-read-provider', name: 'Serialized observer reads', type: 'custom', retryCount: 0,
       async request(input) {
@@ -31,9 +31,12 @@ export function createReadProviderTransport(provider, { spacingMs = 350, queueOp
             if (method === 'eth_call' && typeof error?.data === 'string' && error.data.length <= 8192 && /^0x(?:[0-9a-fA-F]{2})*$/.test(error.data)) failure.data = error.data;
             throw failure;
           }
-        });
+        }, { signal });
       },
     });
     return { ...built, request: (args, options) => built.request(args, { ...options, retryCount: 0 }) };
   };
+  const transport = scoped(undefined);
+  transport.withSignal = signal => scoped(signal);
+  return transport;
 }

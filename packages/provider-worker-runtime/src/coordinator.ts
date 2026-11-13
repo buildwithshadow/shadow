@@ -62,6 +62,12 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
   private administrative = 0;
   private idleTimer: ReturnType<typeof setTimeout> | null = null;
   protected idleDelayMs = 30000;
+  /**
+   * Bound on the payment lookup phase of one /serve recovery run. It is a deadline on
+   * reads only: it never skips a record, witness or attribution check and is not behind signing. Chosen above the typical
+   * cost of a hinted recovery and far below a lookback scan from a head millions of blocks away; adjust only with measurements.
+   */
+  protected readDeadlineMs = 25_000;
   protected serverFactory = createCompatibleProviderHttpServer;
   protected resetConnection = async (): Promise<void> => {
     if (this.active !== 0) throw new ProviderStoreHold('connection reset requires drained requests');
@@ -123,6 +129,7 @@ export class ProviderCoordinatorBase extends DurableObject<Env> {
         serverFactory: this.serverFactory,
         maxRequestsPerMinute: config.maxRequestsPerMinute,
         routeQuotaStore: durableRouteQuotas(this.ctx.storage),
+        readDeadlineMs: this.readDeadlineMs,
         trustLoopbackProxy: false,
         publicOrigin: 'https://www.shadowbuild.xyz',
         maxConcurrent: 4,

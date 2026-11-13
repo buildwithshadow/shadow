@@ -3,6 +3,37 @@ import test from "node:test";
 
 import { createRpcReadQueue, isTransientRpcReadError } from "./rpc-read-queue.mjs";
 
+test('retired reads neither retry nor dispatch queued work, while another scope proceeds', async () => {
+  const queue = createRpcReadQueue({spacingMs: 0, baseDelayMs: 0});
+  const controller = new AbortController();
+  let started, finish, attempts = 0, skipped = 0;
+  const entered = new Promise(resolve => { started = resolve; });
+  const wire = new Promise((_, reject) => { finish = reject; });
+  const first = queue('eth_getLogs', () => { attempts++; started(); return wire; }, {signal: controller.signal});
+  const firstRejected = assert.rejects(first, /retired lookup/);
+  await entered;
+  const stale = queue('eth_getCode', async () => { skipped++; }, {signal: controller.signal});
+  const staleRejected = assert.rejects(stale, /retired lookup/);
+  const healthy = queue('eth_chainId', async () => 'healthy');
+  controller.abort(new Error('retired lookup'));
+  finish(new Error('rate limit exceeded'));
+  await Promise.all([firstRejected, staleRejected]);
+  assert.equal(await healthy, 'healthy');
+  assert.equal(attempts, 1);
+  assert.equal(skipped, 0);
+});
+
+test('cancellation during backoff releases the queue without the next retry', async () => {
+  const controller = new AbortController(); let attempts = 0;
+  const queue = createRpcReadQueue({spacingMs: 0, baseDelayMs: 10000, maxDelayMs: 10000,
+    onRetry: () => setTimeout(() => controller.abort(new Error('retired backoff')), 5)});
+  const started = Date.now();
+  const retired = assert.rejects(queue('eth_getLogs', async () => { attempts++; throw Error('rate limit'); }, {signal: controller.signal}), /retired backoff/);
+  const healthy = queue('eth_chainId', async () => 'healthy');
+  await retired; assert.equal(await healthy, 'healthy');
+  assert.equal(attempts, 1); assert.ok(Date.now() - started < 1000);
+});
+
 test("serializes concurrent RPC reads", async () => {
   let active = 0;
   let maxActive = 0;

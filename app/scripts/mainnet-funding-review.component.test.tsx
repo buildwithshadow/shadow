@@ -142,7 +142,8 @@ test('shared mainnet line shows the onchain overview without a load click or wal
 
 test('edited invitation agent remains selected after reviewing and reloading the plan',async()=>{
   mount(`/mainnet?deployment=settled&agent=${account}`);
-  await screen.findByText('Arc mainnet connected');
+  // Wallet connection precedes the asynchronous sponsor snapshot. Edit only once setup is ready.
+  await waitFor(()=>expect((screen.getByRole('button',{name:'Review funding plan'}) as HTMLButtonElement).disabled).toBe(false));
   const chosen='0x4444444444444444444444444444444444444444';
   fireEvent.change(screen.getByLabelText('Agent wallet address'),{target:{value:chosen}});
   fireEvent.click(screen.getByRole('button',{name:'Review funding plan'}));

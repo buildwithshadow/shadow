@@ -166,8 +166,11 @@ export async function connectCandidate(deployment, { readOnly = false, readProvi
   if (mismatches.length) {
     throw new Error(`${deployment.address} is not this ShadowFloatMainnet generation (${mismatches.join(", ")} differ)`);
   }
-  return { chain, transport, client, address: deployment.address, chainId, accountingModel: model, deployBlock: deployment.deployBlock ?? null,
+  const connection = { chain, transport, client, address: deployment.address, chainId, accountingModel: model, deployBlock: deployment.deployBlock ?? null,
     ...(deployment.logChunkBlocks !== undefined ? { logChunkBlocks: deployment.logChunkBlocks } : {}) };
+  return { ...connection, withReadSignal: signal => ({ ...connection,
+    client: createPublicClient({ chain, transport: readTransport.withSignal(signal) }),
+  }) };
 }
 
 // A participant's key, read from env at runtime only. It is never printed:
