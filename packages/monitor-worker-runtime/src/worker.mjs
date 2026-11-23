@@ -28,6 +28,7 @@ export class MonitorDO extends DurableObject {
   this.backend=createMonitorSqlState(ctx.storage.sql);
   ctx.storage.sql.exec('CREATE TABLE IF NOT EXISTS monitor_meta (name TEXT PRIMARY KEY, bytes TEXT NOT NULL)');
   this.inFlight=false;
+  this.notificationInFlight=false;
   this.hooks={now:Date.now,context:()=>pinnedContext(env,this.backend),collect:context=>this.collect(context),send:async message=>{if(!env.ALERT_SINK)throw Error('alert sink unavailable');await env.ALERT_SINK.sendMonitorMessage(message);}};
  }
  readMeta=(name,fallback=null)=>{const rows=this.ctx.storage.sql.exec('SELECT bytes FROM monitor_meta WHERE name=?',name).toArray();return rows.length?JSON.parse(rows[0].bytes):fallback;}
@@ -63,8 +64,29 @@ export class MonitorDO extends DurableObject {
   }finally{clearTimeout(timer);transport.close();this.writeMeta('lastCollectionUsage',{...diagnostics,elapsedMs:Math.ceil(performance.now()-started),transport:transport.stats()});}
  }
  notify=async(context)=>{
-  return notifyMainnet({context,now:this.hooks.now(),previous:this.readMeta('notification'),destinationId:this.env.ALERT_DESTINATION_ID,
-   send:message=>boundedDelivery(this.hooks.send,message),save:async value=>{this.writeMeta('notification',value);await this.ctx.storage.sync();}});
+  if(this.notificationInFlight)return {sent:false,reason:'delivery-in-progress'};
+  this.notificationInFlight=true;
+  try{
+   return await notifyMainnet({context,now:this.hooks.now(),previous:this.readMeta('notification'),destinationId:this.env.ALERT_DESTINATION_ID,
+    send:message=>boundedDelivery(this.hooks.send,message),save:async value=>{this.writeMeta('notification',value);await this.ctx.storage.sync();}});
+  }finally{this.notificationInFlight=false;}
+ }
+ async watchdog(){
+  const context=this.context();
+  const schedule=this.readMeta('schedule');
+  if(!schedule?.enabled)return {skipped:'disabled'};
+  const alarm=await this.ctx.storage.getAlarm();
+  const current=this.readMeta('schedule');
+  if(!current?.enabled)return {skipped:'disabled'};
+  const hasLock=this.backend.has('runner.lock');
+  const restoredAlarm=alarm===null && !this.inFlight && !hasLock &&
+   current.nextDue===schedule.nextDue && current.attempts===schedule.attempts;
+  if(restoredAlarm)await this.ctx.storage.setAlarm(Math.max(current.nextDue,this.hooks.now()+1000));
+  if(!this.readMeta('schedule')?.enabled)return {skipped:'disabled'};
+  // The independent trigger catches stale heartbeats and expired locks even
+  // when the scan alarm never runs. Use the same notification suppression.
+  if(heartbeatStatus(context,this.hooks.now()).ok)return {restoredAlarm};
+  return {restoredAlarm,notification:await this.notify(context)};
  }
  step=async()=>{
   if(this.inFlight)return {skipped:'overlap'};this.inFlight=true;
@@ -133,4 +155,7 @@ export class MonitorAdmin extends WorkerEntrypoint {
  async exportState(){return selected(this.env).exportState();}
  async usage(){return selected(this.env).usage();}
 }
-export default {fetch(){return new Response('Not found',{status:404});}};
+export default {
+ fetch(){return new Response('Not found',{status:404});},
+ async scheduled(_controller,env){await selected(env).watchdog();},
+};
