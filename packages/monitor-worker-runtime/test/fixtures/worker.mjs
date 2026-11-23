@@ -23,6 +23,7 @@ export class TestMonitorDO extends MonitorDO {
  async interruptedLock(age=300000){const lock={token:'synthetic-interrupted-token',startedAt:new Date(this.hooks.now()-age).toISOString()};const bytes=JSON.stringify(lock);this.backend.write('runner.lock',bytes);await this.ctx.storage.sync();return createHash('sha256').update(bytes).digest('hex');}
  async incident(){return this.backend.has('hold.json')?JSON.parse(this.backend.read('hold.json')).incidentId:null;}
  async fire(){return this.step();}
+ async loseAlarm(){await this.ctx.storage.deleteAlarm();}
  async inspect(){await this.ctx.storage.sync();return {collections:this.readMeta('collections',0),sent:this.readMeta('sent',[]),schedule:this.readMeta('schedule'),alarm:await this.ctx.storage.getAlarm(),notification:this.readMeta('notification'),keys:this.ctx.storage.sql.exec('SELECT name FROM monitor_state ORDER BY name').toArray().map(row=>row.name)};}
 }
 export class TestPublicMonitorDO extends TestMonitorDO {

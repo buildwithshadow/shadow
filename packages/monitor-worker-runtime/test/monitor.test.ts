@@ -28,6 +28,37 @@ it('never clears a lock still inside its run timeout',async()=>{
  expect((await m.inspect()).keys).toContain('runner.lock');
 });
 
+it('restores a lost alarm without starting an extra scan or arming a stopped monitor',async()=>{
+ const m=stub('watchdog-alarm');await m.setup();await m.arm();await m.advance();await m.fire();
+ await m.loseAlarm();
+ expect(await m.watchdog()).toEqual({restoredAlarm:true});
+ const restored=await m.inspect();
+ expect(restored.alarm).toBe(restored.schedule.nextDue);
+ expect(restored.collections).toBe(1);
+ expect(await m.watchdog()).toEqual({restoredAlarm:false});
+ await m.stop();
+ expect(await m.watchdog()).toEqual({skipped:'disabled'});
+ expect((await m.inspect()).alarm).toBeNull();
+});
+
+it('alerts once on an expired lock without running a scan or dropping the lock',async()=>{
+ const m=stub('watchdog-interrupted');await m.setup();await m.arm();await m.advance();await m.fire();
+ await m.interruptedLock();await m.loseAlarm();
+ expect(await m.watchdog()).toMatchObject({restoredAlarm:false,notification:{sent:true,codes:['MONITOR_INTERRUPTED']}});
+ expect(await m.watchdog()).toMatchObject({notification:{sent:false,reason:'unchanged'}});
+ const held=await m.inspect();
+ expect(held.collections).toBe(1);
+ expect(held.sent).toHaveLength(2);
+ expect(held.keys).toContain('runner.lock');
+ expect((await m.status()).hold).toBe(true);
+});
+
+it('does not duplicate alerts when watchdog ticks overlap',async()=>{
+ const m=stub('watchdog-delivery');await m.setup();await m.arm();await m.interruptedLock();
+ await Promise.all([m.watchdog(),m.watchdog()]);
+ expect((await m.inspect()).sent).toHaveLength(1);
+});
+
 it('releases the generation when the alert sink never settles and retries later',async()=>{
  const m=stub('stalled-sink');await m.setup();await m.arm();await m.mode('delivery-stalled');await m.advance();
  let timer:ReturnType<typeof setTimeout>;

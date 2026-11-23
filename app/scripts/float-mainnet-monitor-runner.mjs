@@ -90,10 +90,10 @@ function stateRemove(context, path, force = false) {
   if (!context.stateBackend) return rmSync(path, { force });
   backendCall(context, "remove", stateKey(context, path), force);
 }
-function stateAcquire(context) {
+function stateAcquire(context, startedAt) {
   if (!context.stateBackend) return acquire(context.stateDir);
   const token = randomUUID();
-  const acquired = backendCall(context, "acquire", "runner.lock", canonicalJson({ token, startedAt: new Date().toISOString() }));
+  const acquired = backendCall(context, "acquire", "runner.lock", canonicalJson({ token, startedAt }));
   if (acquired !== true) throw new Error("runner lock exists; inspect the process before recovering a stale lock");
   return () => backendCall(context, "release", "runner.lock", token);
 }
@@ -182,7 +182,17 @@ export async function collectSnapshot(context, { rpcUrl = process.env.ARC_RPC_UR
 export function heartbeatStatus(context, nowMs = Date.now()) {
   const common = identity(context);
   try {
-    if (context.stateBackend && stateHas(context, resolve(context.stateDir, "runner.lock"))) return { ...common, ok: false, hold: true, status: "hold", alerts: [alert("CHECK_IN_PROGRESS", "durable monitor generation is active or interrupted")] };
+    if (context.stateBackend && stateHas(context, resolve(context.stateDir, "runner.lock"))) {
+      const lock = stateOptional(context, resolve(context.stateDir, "runner.lock"));
+      const startedAt = Date.parse(lock?.startedAt);
+      if (typeof lock?.token !== "string" || !lock.token || !Number.isFinite(startedAt) || startedAt > nowMs) {
+        return { ...common, ok: false, hold: true, status: "hold", alerts: [alert("LOCAL_STATE_INVALID", "durable monitor lock is malformed")] };
+      }
+      const interrupted = nowMs - startedAt > context.baseline.policy.runTimeoutMs;
+      return { ...common, ok: false, hold: true, status: "hold", alerts: [interrupted
+        ? alert("MONITOR_INTERRUPTED", "durable monitor lock exceeded its run timeout; inspect before recovery")
+        : alert("CHECK_IN_PROGRESS", "durable monitor generation is active")] };
+    }
     const heartbeat = stateOptional(context, paths(context).heartbeat);
     if (!heartbeat) return { ...common, ok: false, hold: true, status: "missing", alerts: [alert("HEARTBEAT_MISSING", "no completed monitor heartbeat")] };
     const alerts = [];
@@ -207,11 +217,12 @@ export function heartbeatStatus(context, nowMs = Date.now()) {
 }
 
 export async function runMonitorOnce(context, { collect = collectSnapshot, now = Date.now, afterCheckingPublished = async () => {}, afterSnapshotPublished = async () => {}, afterHoldLatched = async () => {} } = {}) {
-  const release = stateAcquire(context);
+  const started = now();
+  const startedAt = new Date(started).toISOString();
+  const release = stateAcquire(context, startedAt);
   let completedPublication = false;
   const file = paths(context);
-  const started = now();
-  const common = { ...identity(context), runId: randomUUID(), startedAt: new Date(started).toISOString(), completedAt: null, observedAt: null, snapshotHash: null, ok: false, hold: true, status: "checking", checks: { snapshotHealthy: false }, alerts: [alert("CHECK_IN_PROGRESS", "canonical read in progress; no spend authorization")] };
+  const common = { ...identity(context), runId: randomUUID(), startedAt, completedAt: null, observedAt: null, snapshotHash: null, ok: false, hold: true, status: "checking", checks: { snapshotHealthy: false }, alerts: [alert("CHECK_IN_PROGRESS", "canonical read in progress; no spend authorization")] };
   try {
     // Replace a previous healthy heartbeat before doing any network work.
     let previous;
@@ -318,7 +329,7 @@ export async function runMonitorOnce(context, { collect = collectSnapshot, now =
 
 export function acknowledgeHold(context, incidentId, nowMs = Date.now()) {
   if (typeof incidentId !== "string" || !/^[0-9a-f-]{36}$/.test(incidentId)) throw new Error("the exact incident-id is required");
-  const release = stateAcquire(context);
+  const release = stateAcquire(context, new Date(nowMs).toISOString());
   let mutating = false;
   let completedAcknowledgement = false;
   try {
